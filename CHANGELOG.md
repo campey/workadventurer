@@ -21,8 +21,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- `find-david.mjs` uses the continuous `follow()` loop and a lightweight
-  status log, replacing the 3-second `setInterval` that re-issued `navTo`.
+- Renamed `src/find-david.mjs` → `src/find-player.mjs` (the npm script too:
+  `npm run find-player`); it was already generic over the target name.
+- The driver uses the continuous `follow()` loop and a lightweight status log,
+  replacing the 3-second `setInterval` that re-issued `navTo`.
 
 ## [0.1.0] - 2026-09-08
 
@@ -54,7 +56,8 @@ afrolabs open-space, walks to a named player, and follows them.
   `open-space.wam` and its `.tmj` (collisions layer + tileset `collides` flags +
   `.wam` furniture entities).
 - `src/find-david.mjs`: driver that connects as `claude`, finds a named player,
-  navigates over, greets them, and follows.
+  navigates over, greets them, and follows. (Renamed to `find-player.mjs` in
+  Unreleased.)
 - `README.md`: the reverse-engineered protocol write-up.
 
 [Unreleased]: https://github.com/campey/workadventurer/compare/v0.1.0...HEAD

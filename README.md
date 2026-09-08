@@ -26,13 +26,13 @@ main takeaway.
 
 ```sh
 npm install
-node src/find-david.mjs            # join the room, find & follow a player called "David"
-node src/find-david.mjs Alice      # ... or whoever
+node src/find-player.mjs            # join the room, find & follow a player called "David"
+node src/find-player.mjs Alice      # ... or whoever
 ```
 
 `Ctrl-C` to leave the room.
 
-`find-david.mjs` connects anonymously as `claude`, spawns on the map's `start`
+`find-player.mjs` connects anonymously as `claude`, spawns on the map's `start`
 tile, waits for the roster, walks (routing around walls and furniture) to the
 first player whose name contains the target string, pops a speech bubble, then
 follows them continuously — stopping one "personal space" short, and waiting
@@ -66,7 +66,7 @@ open-space. With no `spawn`, the client picks a random tile from the map's
 |---|---|
 | `src/wa-client.mjs` | `WorkAdventureClient` — connection, protocol, world model, `navTo()` / `walkTo()` / `say()` |
 | `src/map-nav.mjs` | `MapNav` — A\* over the tile grid + line-of-sight smoothing |
-| `src/find-david.mjs` | the driver: connect → locate target → walk over → say hi → follow |
+| `src/find-player.mjs` | the driver: connect → locate target → walk over → say hi → follow |
 | `scripts/build-collision.mjs` | regenerates `map/collision.json` from the live `.wam` / `.tmj` |
 | `map/collision.json` | baked collision grid + spawn tiles + named areas |
 | `proto/messages.proto` | vendored from `workadventure` tag `v1.33.5` |

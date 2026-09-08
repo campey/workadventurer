@@ -1,7 +1,7 @@
 // Connect to the afrolabs open-space as "claude", find a named player, walk
 // over, and follow them for as long as this process runs.
 //
-//   node src/find-david.mjs [targetName]
+//   node src/find-player.mjs [targetName]      (targetName defaults to "David")
 
 import { WorkAdventureClient } from "./wa-client.mjs";
 

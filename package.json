@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Headless WorkAdventure client — connects to a room over the pusher WebSocket protocol and drives an avatar directly.",
   "scripts": {
-    "find-david": "node src/find-david.mjs"
+    "find-player": "node src/find-player.mjs"
   },
   "dependencies": {
     "protobufjs": "^7.4.0",
