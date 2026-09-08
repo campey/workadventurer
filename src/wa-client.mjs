@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import WebSocket from "ws";
 import protobuf from "protobufjs";
+import { MapNav } from "./map-nav.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -50,6 +51,16 @@ export class WorkAdventureClient extends EventEmitter {
     this._joined = false;
     this._keepAlive = null;
     this._outSeq = 1;
+    if (opts.nav !== undefined) {
+      this.nav = opts.nav;
+    } else {
+      try {
+        this.nav = MapNav.load();
+      } catch (e) {
+        this.nav = null;
+        this.emit("log", `map nav disabled: ${e.message}`);
+      }
+    }
   }
 
   async _loadProto() {
@@ -335,6 +346,51 @@ export class WorkAdventureClient extends EventEmitter {
       this._emitMove(true);
       await new Promise((r) => setTimeout(r, tickMs));
     }
+  }
+
+  /**
+   * Walk to (targetX,targetY) following an A* route around walls/furniture
+   * (falls back to straight-line if the map nav is unavailable or no route is
+   * found). Re-plans every `repathMs` so it tracks a moving `getTarget()`.
+   */
+  async navTo(targetX, targetY, { stopWithin = 48, getTarget = null, timeoutMs = 120000, repathMs = 2000 } = {}) {
+    if (this._navBusy) return { arrived: false, reason: "busy" };
+    this._navBusy = true;
+    try {
+      return await this._navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs });
+    } finally {
+      this._navBusy = false;
+    }
+  }
+
+  async _navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs }) {
+    if (!this.nav) return this.walkTo(targetX, targetY, { stopWithin, getTarget, timeoutMs });
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      let gx = targetX, gy = targetY;
+      if (getTarget) {
+        const t = getTarget();
+        if (!t) return { arrived: false, reason: "target-gone" };
+        gx = t.x; gy = t.y;
+      }
+      if (Math.hypot(gx - this.pos.x, gy - this.pos.y) <= stopWithin) {
+        this.pos.moving = false;
+        this._emitMove(false);
+        return { arrived: true };
+      }
+      const path = this.nav.findPath(this.pos.x, this.pos.y, gx, gy);
+      if (!path || path.length === 0) {
+        await this.walkTo(gx, gy, { stopWithin, timeoutMs: repathMs, getTarget });
+        continue;
+      }
+      const deadline = Date.now() + repathMs;
+      for (const [wx, wy] of path) {
+        if (Date.now() > deadline) break;
+        const r = await this.walkTo(wx, wy, { stopWithin: 12, stepPx: 40, tickMs: 100, timeoutMs: repathMs });
+        if (!r.arrived) break;
+      }
+    }
+    return { arrived: false, reason: "timeout" };
   }
 
   say(message) {

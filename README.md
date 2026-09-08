@@ -19,8 +19,11 @@ Ctrl-C to leave the room.
 
 | File | Purpose |
 |---|---|
-| `src/wa-client.mjs` | `WorkAdventureClient` — connection, protocol, world model, `walkTo()` / `say()` |
+| `src/wa-client.mjs` | `WorkAdventureClient` — connection, protocol, world model, `navTo()` / `walkTo()` / `say()` |
+| `src/map-nav.mjs` | `MapNav` — A* over the tile grid + line-of-sight smoothing |
 | `src/find-david.mjs` | driver: connect → locate target → walk over → say hi → follow |
+| `scripts/build-collision.mjs` | regenerates `map/collision.json` from the live `.wam` / `.tmj` |
+| `map/collision.json` | baked collision grid (100×74 tiles, ~900 blocked) |
 | `proto/messages.proto` | vendored from `workadventure` tag `v1.33.5` (the deployed version) |
 
 Deps: `ws`, `protobufjs` (runtime `.load()`, no codegen step).
@@ -180,6 +183,26 @@ appears to be all that's needed to stay connected.
 
 ---
 
+## Pathfinding
+
+`navTo(x, y)` routes around walls and furniture. The collision grid is baked
+offline by `scripts/build-collision.mjs`, which fetches
+`open-space.wam` → its `.tmj` and marks a tile blocked if it is:
+
+1. non-zero in the dedicated `collisions` tile layer (819 cells), or
+2. a tile flagged `collides: true` in a tileset (2 on this map), or
+3. under a `.wam` furniture entity (chairs/stools = 1 tile, larger props = 3×3).
+
+`MapNav.findPath()` is A* on the 8-connected grid (octile heuristic, no
+corner-cutting) followed by line-of-sight smoothing so the route is a few long
+diagonals rather than a tile-center staircase. `navTo()` re-plans every ~2 s to
+track a moving target and falls back to `walkTo()` (straight line) if no route
+is found. Verified: across a full cross-map route, 0 of 98 emitted positions
+landed in a blocked cell.
+
+Movement is still client-authoritative — the server doesn't check collisions,
+this is purely so the avatar *looks* like it's walking the corridors.
+
 ## Known gaps / next steps
 
 - **Player list without walking near people.** Proximity visibility (zones)
@@ -188,10 +211,10 @@ appears to be all that's needed to stay connected.
   `addSpaceFilterMessage`, delivering `initSpaceUsersMessage` /
   `addSpaceUserMessage` with names but **not room positions**. Not implemented;
   not needed for "walk to a visible player".
-- **Pathfinding.** `walkTo()` moves in a straight line and will visually clip
-  through walls. Real routing needs the Tiled map
-  (`https://afrolabs-16156.map-storage.workadventu.re/open-space.wam` → `.tmj`
-  collision layer) and A*.
+- **Collision grid fidelity.** Built from the `collisions` layer + tileset
+  `collides` flags + `.wam` entities. If something still clips, the map may put
+  that obstacle somewhere else (e.g. a furniture tile layer); rerun
+  `build-collision.mjs` after inspecting the `.tmj`.
 - **Spawn position** is hard-coded; the map's `start` layer is not read.
-- `apiVersionHash` and the vendored proto are pinned to `v1.33.5` and will need
-  refreshing when the SaaS updates.
+- `apiVersionHash`, the vendored proto, and `map/collision.json` are pinned to
+  `v1.33.5` / the current map and need refreshing when the SaaS or map updates.

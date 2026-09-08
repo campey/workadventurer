@@ -33,9 +33,9 @@ let target = wa.findPlayer(TARGET);
 
 if (!target) {
   log(`${TARGET} not visible yet — wandering to search…`);
-  const spots = [[800, 800], [1600, 400], [400, 1600], [1600, 1600], [1000, 1000]];
+  const spots = [[800, 800], [1600, 400], [2600, 1200], [1600, 1900], [500, 1600], [1000, 1000]];
   for (const [x, y] of spots) {
-    await wa.walkTo(x, y, { timeoutMs: 8000 });
+    await wa.navTo(x, y, { timeoutMs: 15000, stopWithin: 64 });
     target = wa.findPlayer(TARGET);
     if (target) break;
     log("  …still searching. roster:", roster());
@@ -46,7 +46,7 @@ if (!target) {
   log(`could not find ${TARGET}. Holding position; will keep watching.`);
 } else {
   log(`found ${JSON.stringify(target.name)} #${target.userId} at (${target.x|0},${target.y|0}) — walking over`);
-  const res = await wa.walkTo(target.x, target.y, {
+  const res = await wa.navTo(target.x, target.y, {
     stopWithin: 48,
     getTarget: () => wa.players.get(target.userId) || null,
     timeoutMs: 90000,
@@ -65,7 +65,7 @@ setInterval(() => {
   if (t) {
     const d = Math.hypot(t.x - wa.pos.x, t.y - wa.pos.y) | 0;
     log(`me ${me}  ${target.name} (${t.x|0},${t.y|0})  dist ${d}`);
-    if (d > 160) wa.walkTo(t.x, t.y, { stopWithin: 64, getTarget: () => wa.players.get(target.userId) || null, timeoutMs: 30000 });
+    if (d > 160) wa.navTo(t.x, t.y, { stopWithin: 64, getTarget: () => wa.players.get(target.userId) || null, timeoutMs: 30000 });
   } else {
     log(`me ${me}  roster: ${roster()}`);
     if (!target) { const found = wa.findPlayer(TARGET); if (found) { target = found; log(`${TARGET} appeared at (${found.x|0},${found.y|0})`); } }
