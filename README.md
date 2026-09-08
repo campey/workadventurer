@@ -32,9 +32,11 @@ node src/find-david.mjs Alice      # ... or whoever
 
 `Ctrl-C` to leave the room.
 
-`find-david.mjs` connects anonymously as `claude`, waits for the roster, walks
-(routing around walls and furniture) to the first player whose name contains the
-target string, pops a speech bubble, then loosely follows them.
+`find-david.mjs` connects anonymously as `claude`, spawns on the map's `start`
+tile, waits for the roster, walks (routing around walls and furniture) to the
+first player whose name contains the target string, pops a speech bubble, then
+follows them continuously — stopping one "personal space" short, and waiting
+just *outside* if the target steps into an enclosed room (a board room).
 
 ## Using the client directly
 
@@ -45,16 +47,18 @@ const wa = new WorkAdventureClient({ name: "claude" });
 wa.on("playerJoined", (p) => console.log("saw", p.name, "at", p.x, p.y));
 await wa.connect();                       // anon login + handshake + join
 
-await wa.navTo(2378, 1340);               // A* route around obstacles
-await wa.walkTo(2378, 1340);              // straight line, ignores walls
-wa.say("hello");                          // speech bubble
-console.log(wa.listPlayers());            // [{ userId, name, uuid, x, y }]
+await wa.navTo(2378, 1340);                 // A* route around obstacles
+await wa.walkTo(2378, 1340);                // straight line, ignores walls
+await wa.follow(() => wa.players.get(id));  // fluid continuous follow, room-aware
+wa.say("hello");                            // speech bubble
+console.log(wa.listPlayers());              // [{ userId, name, uuid, x, y }]
 wa.close();
 ```
 
 `new WorkAdventureClient(opts)` — `name`, `roomUrl`, `pusherUrl`, `version`
 (apiVersionHash), `wokaId`, `spawn`, `nav` all have defaults for the afrolabs
-open-space.
+open-space. With no `spawn`, the client picks a random tile from the map's
+`start` layer.
 
 ## Project layout
 
@@ -64,7 +68,7 @@ open-space.
 | `src/map-nav.mjs` | `MapNav` — A\* over the tile grid + line-of-sight smoothing |
 | `src/find-david.mjs` | the driver: connect → locate target → walk over → say hi → follow |
 | `scripts/build-collision.mjs` | regenerates `map/collision.json` from the live `.wam` / `.tmj` |
-| `map/collision.json` | baked collision grid (100×74 tiles, ~900 blocked) |
+| `map/collision.json` | baked collision grid + spawn tiles + named areas |
 | `proto/messages.proto` | vendored from `workadventure` tag `v1.33.5` |
 
 ## Regenerating the pinned artifacts
@@ -252,6 +256,16 @@ landed in a blocked cell.
 It's cosmetic — the server doesn't check collisions — it just makes the avatar
 *look* like it's walking the corridors.
 
+### Following
+
+`follow(getTarget)` runs a continuous control loop: small steps every ~100 ms
+along a route that's re-planned a few times a second, easing to a stop at
+`followPoint()`. `followPoint()` returns a spot one `spacing` short of the
+target — *unless* the target is inside an enclosed room (an area whose name
+matches `/board\s*room/i`) and the follower isn't, in which case it returns the
+nearest reachable free tile just outside that room. Named areas and the room
+test both come from `map/collision.json`.
+
 ## Limitations / ideas
 
 - **Roster only covers nearby players.** Proximity (zone) visibility works.
@@ -263,8 +277,13 @@ It's cosmetic — the server doesn't check collisions — it just makes the avat
 - **Collision-grid fidelity.** If something still clips, that obstacle probably
   lives in a map layer `build-collision.mjs` doesn't scan (e.g. a furniture tile
   layer); inspect the `.tmj` and widen the script.
-- **Spawn position** is hard-coded; the map's `start` layer isn't read.
-- Everything server-specific (`version`, `proto/messages.proto`,
+- **`followPoint()` "outside the room"** picks the nearest free tile outside the
+  room rectangle by straight-line distance to the target, filtered to ones that
+  are reachable at all — not the shortest *walk*. Usually lands near the door;
+  can pick a wrong-side spot on oddly shaped rooms.
+- **Room detection** is name-based (`/board\s*room/i` over the `.wam` areas), not
+  geometric.
+- Everything server-/map-specific (`version`, `proto/messages.proto`,
   `map/collision.json`) is pinned and needs refreshing on a WorkAdventure or map
   update.
 

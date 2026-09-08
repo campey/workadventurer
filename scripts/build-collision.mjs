@@ -1,8 +1,8 @@
-// Build a compact collision grid for the afrolabs open-space map.
+// Build a compact map-data file for the afrolabs open-space map.
 //
 // WorkAdventure's own pathfinding reads the Tiled map; we do the same, offline,
 // and bake the result to map/collision.json so the client doesn't parse a 1.3 MB
-// .tmj at runtime.
+// .tmj at runtime. The file also carries the spawn tiles and the named areas.
 //
 //   node scripts/build-collision.mjs
 //
@@ -10,6 +10,10 @@
 //   1. the dedicated `collisions` tile layer (any non-zero cell)
 //   2. tiles whose tileset entry has `collides: true` (only a couple on this map)
 //   3. furniture entities placed in the .wam (chairs, stools, tables)
+//
+// Plus:
+//   start  - tile indices of the `start` layer (WorkAdventure's default spawn)
+//   areas  - named rectangles from the .wam (rooms, benches, tables, ...)
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -87,19 +91,40 @@ async function main() {
   const indices = [];
   for (let i = 0; i < blocked.length; i++) if (blocked[i]) indices.push(i);
 
+  // Spawn: non-zero tiles of the `start` layer (WorkAdventure's default entry).
+  const start = [];
+  const startLayer = layers["start"];
+  if (startLayer?.data) {
+    for (let i = 0; i < startLayer.data.length; i++) if (startLayer.data[i] !== 0) start.push(i);
+  }
+
+  // Named areas from the .wam — rooms, seating, tables. Keep the named ones.
+  const areas = (wam.areas ?? [])
+    .filter((a) => a.name)
+    .map((a) => ({
+      name: a.name,
+      x: Math.round(a.x),
+      y: Math.round(a.y),
+      w: Math.round(a.width),
+      h: Math.round(a.height),
+    }));
+
   const out = {
     source: { wam: WAM_URL, map: wam.mapUrl },
     width: W,
     height: H,
     tile: TILE,
     blocked: indices,
+    start,
+    areas,
   };
   const dest = path.join(__dirname, "..", "map", "collision.json");
   await fs.mkdir(path.dirname(dest), { recursive: true });
   await fs.writeFile(dest, JSON.stringify(out));
   console.log(
     `wrote ${dest}: ${W}x${H} tiles, ${indices.length} blocked ` +
-      `(${entityCells} from ${Object.keys(wam.entities ?? {}).length} entities)`
+      `(${entityCells} from ${Object.keys(wam.entities ?? {}).length} entities), ` +
+      `${start.length} spawn tiles, ${areas.length} named areas`
   );
 }
 

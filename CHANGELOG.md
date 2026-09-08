@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Spawn on the map's `start` layer (a random one of its tiles) when no `spawn`
+  option is given, matching WorkAdventure's own default entry.
+- `WorkAdventureClient.follow(getTarget)` — a continuous control loop that steps
+  every ~100 ms along a frequently re-planned route, for smooth tracking instead
+  of periodic catch-up hops.
+- `followPoint()` / room-aware following: stop one `spacing` short of the
+  target, or — if the target is inside an enclosed room and the follower isn't —
+  wait at the nearest reachable tile just outside it.
+- `map/collision.json` now also carries the `start` tiles and the named `.wam`
+  areas; `MapNav` gains `randomSpawnPx()`, `roomAt()`, `pointOutsideRoom()`.
+
+### Changed
+
+- `find-david.mjs` uses the continuous `follow()` loop and a lightweight
+  status log, replacing the 3-second `setInterval` that re-issued `navTo`.
+
 ## [0.1.0] - 2026-09-08
 
 First working version: a headless client that holds a real avatar in the

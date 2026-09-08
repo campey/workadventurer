@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/** Areas whose name marks an enclosed room you shouldn't barge into. */
+const DEFAULT_ROOM_RE = /board\s*room/i;
+
 export class MapNav {
   constructor(json) {
     this.w = json.width;
@@ -15,6 +18,60 @@ export class MapNav {
     this.tile = json.tile;
     this.blocked = new Uint8Array(this.w * this.h);
     for (const i of json.blocked) this.blocked[i] = 1;
+    this.startTiles = json.start ?? [];
+    this.areas = json.areas ?? [];
+  }
+
+  /** A random spawn point (pixel centre of a `start` tile), or null. */
+  randomSpawnPx() {
+    if (!this.startTiles.length) return null;
+    const idx = this.startTiles[(Math.random() * this.startTiles.length) | 0];
+    return this.tileCenterPx(idx % this.w, (idx / this.w) | 0);
+  }
+
+  /** The enclosed room area containing (px,py), or null. */
+  roomAt(px, py, roomRe = DEFAULT_ROOM_RE) {
+    for (const a of this.areas) {
+      if (!roomRe.test(a.name)) continue;
+      if (px >= a.x && px < a.x + a.w && py >= a.y && py < a.y + a.h) return a;
+    }
+    return null;
+  }
+
+  _rectContains(a, px, py, pad = 0) {
+    return px >= a.x - pad && px < a.x + a.w + pad && py >= a.y - pad && py < a.y + a.h + pad;
+  }
+
+  /**
+   * A reachable free point just OUTSIDE `room`, as close as possible to
+   * (targetX,targetY) — i.e. "wait by the door". `reachable(px,py)` should
+   * return true if we can path there from where we are.
+   */
+  pointOutsideRoom(room, targetX, targetY, reachable) {
+    const T = this.tile;
+    const candidates = [];
+    // ring of tiles from just outside the room wall outward
+    for (let ring = 1; ring <= 6; ring++) {
+      const x0 = Math.floor((room.x) / T) - ring;
+      const x1 = Math.floor((room.x + room.w) / T) + ring;
+      const y0 = Math.floor((room.y) / T) - ring;
+      const y1 = Math.floor((room.y + room.h) / T) + ring;
+      for (let ty = y0; ty <= y1; ty++) {
+        for (let tx = x0; tx <= x1; tx++) {
+          const onRing = tx === x0 || tx === x1 || ty === y0 || ty === y1;
+          if (!onRing || this.isTileBlocked(tx, ty)) continue;
+          const [cx, cy] = this.tileCenterPx(tx, ty);
+          if (this._rectContains(room, cx, cy)) continue; // still inside
+          candidates.push([cx, cy, (cx - targetX) ** 2 + (cy - targetY) ** 2]);
+        }
+      }
+      if (candidates.length) break; // nearest ring with any free tile wins
+    }
+    candidates.sort((a, b) => a[2] - b[2]);
+    for (const [cx, cy] of candidates.slice(0, 12)) {
+      if (!reachable || reachable(cx, cy)) return [cx, cy];
+    }
+    return candidates.length ? [candidates[0][0], candidates[0][1]] : null;
   }
 
   static load(file = path.join(__dirname, "..", "map", "collision.json")) {
