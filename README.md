@@ -118,7 +118,7 @@ The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
 
 | Call | Effect |
 |---|---|
-| `GET /state` | `{ name, pos, area, following:{name,paused}|null, players:[…] }` |
+| `GET /state` | `{ name, pos, facing, area, following:{name,paused}|null, players:[…] }` |
 | `POST /goto` `{x,y}` or `{player}` | walk there (cancels any follow) |
 | `POST /follow` `{player}` | approach + follow (searches the map if not in view) |
 | `POST /unfollow` | stop and forget |

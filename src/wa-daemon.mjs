@@ -8,7 +8,7 @@
 //   WA_DAEMON_PORT=8787 WA_NAME=claude node src/wa-daemon.mjs
 //
 // Control API (http://127.0.0.1:<port>, JSON bodies):
-//   GET  /state                    -> { name, pos, area, following:{name,paused}|null, players }
+//   GET  /state                    -> { name, pos, facing, area, following:{name,paused}|null, players }
 //   POST /goto           {x,y}|{player}  -> walk there (cancels any follow)
 //   POST /follow         {player}        -> approach + follow continuously
 //   POST /unfollow                       -> stop and forget the follow subject
@@ -154,10 +154,31 @@ function resume() {
   return { ok: true, resuming: name };
 }
 
+// How far to stand from a player when we deliberately walk over to them
+// (`wa to`, `greet`) — plus navTo's ~16px stop tolerance, so ~40-56px in
+// practice. Close enough to read as "next to them", not crowding.
+const STAND_GAP = 40;
+
+// Walk over next to a player: aim at a spot STAND_GAP px short of them
+// (re-derived each tick from their live position, so it tracks if they drift),
+// stop close to that spot, and finish facing them.
+async function walkToPlayer(p, timeoutMs = 60_000) {
+  const live = () => liveById(p.userId);
+  return wa.navTo(p.x, p.y, {
+    stopWithin: 16,
+    getTarget: () => {
+      const lp = live();
+      return lp ? wa.followPoint(lp, STAND_GAP) : { x: p.x, y: p.y };
+    },
+    face: () => live() ?? p,
+    timeoutMs,
+  });
+}
+
 async function greet(nameNeedle) {
   const p = findByName(nameNeedle);
   if (!p) return { ok: false, error: `no player matching "${nameNeedle}"` };
-  await wa.navTo(p.x, p.y, { stopWithin: 96, getTarget: () => liveById(p.userId), timeoutMs: 60_000 });
+  await walkToPlayer(p);
   wa.speechBubble(`hi ${p.name}`);
   return { ok: true, greeted: p.name };
 }
@@ -171,6 +192,7 @@ function state() {
     reconnecting,
     myUserId: wa.myUserId,
     pos: { x: Math.round(wa.pos.x), y: Math.round(wa.pos.y) },
+    facing: ["up", "right", "down", "left"][wa.pos.direction] ?? null,
     area: wa.nav?.areaAt(wa.pos.x, wa.pos.y)?.name ?? null,
     following: follow
       ? {
@@ -252,8 +274,8 @@ const server = http.createServer(async (req, res) => {
           if (body.player) {
             const p = findByName(body.player);
             if (!p) return send(404, { ok: false, error: `no player matching "${body.player}"` });
-            gx = p.x;
-            gy = p.y;
+            walkToPlayer(p, 90_000).then((r) => log("goto (player) result", JSON.stringify(r)));
+            return send(202, { ok: true, goingTo: { player: p.name } });
           }
           if (typeof gx !== "number" || typeof gy !== "number")
             return send(400, { ok: false, error: "need {x,y} or {player}" });

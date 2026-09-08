@@ -11,6 +11,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`wa clear-bubble`** (`POST /clear-bubble`, `WaClient.clearBubble()`) —
   dismiss whatever speech or thought bubble is showing. WorkAdventure clears the
   bubble on an empty `SayMessage`. Closes #1.
+- **`/state` now reports `facing`** (`up`/`right`/`down`/`left`); `wa status`
+  shows it inline.
+
+### Changed
+
+- **Walking over to a player (`wa to`, `wa greet`) now stops ~40px away and
+  turns to face them**, instead of halting up to ~130px off still facing its
+  travel direction. `navTo()` gained a `face` option; the daemon aims at a
+  point `STAND_GAP` px short of the player (re-derived from their live position)
+  via a shared `walkToPlayer()`. Closes #4.
 
 ## [0.2.0] - 2026-09-08
 
