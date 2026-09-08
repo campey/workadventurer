@@ -21,6 +21,7 @@ Start of a session: `wa status`; if it says "not joined", run `wa join --detach`
 | `wa resume` | walk back and resume following |
 | `wa greet <player>` | walk over + "hi" speech bubble |
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text over the avatar |
+| `wa clear-bubble` | dismiss whatever bubble is showing |
 | `wa goto <x> <y>` | walk to raw coordinates |
 | `wa leave` | disconnect and stop |
 

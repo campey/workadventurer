@@ -32,6 +32,7 @@ const USAGE = `wa — WorkAdventure presence control
   wa greet <player>           walk over + "hi" speech bubble
   wa speech-bubble <text…>
   wa thought-bubble <text…>
+  wa clear-bubble             dismiss whatever bubble is showing
 
   global: --json  --if-running (no-op if the daemon isn't up)  --port <P>
 `;
@@ -248,6 +249,11 @@ switch (cmd) {
     if (!text) die(`usage: wa ${cmd} <text>`, 2);
     await needDaemon();
     report((await api("POST", `/${cmd}`, { text })).json);
+    break;
+  }
+  case "clear-bubble": {
+    await needDaemon();
+    report((await api("POST", "/clear-bubble", {})).json);
     break;
   }
   default:

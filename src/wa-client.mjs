@@ -518,6 +518,12 @@ export class WorkAdventureClient extends EventEmitter {
     this._send({ setPlayerDetailsMessage: { sayMessage: { message, type: 1 } } });
   }
 
+  // Dismiss whatever bubble is showing. WorkAdventure clears the bubble on an
+  // empty `message`; `type` is irrelevant in that case.
+  clearBubble() {
+    this._send({ setPlayerDetailsMessage: { sayMessage: { message: "", type: 0 } } });
+  }
+
   close() {
     if (this._keepAlive) clearInterval(this._keepAlive);
     this.ws?.close();
