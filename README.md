@@ -143,7 +143,7 @@ reconnects (bounded retries) if the socket drops.
 | `src/wa-daemon.mjs` | long-running presence + localhost HTTP control API |
 | `src/wa-audio.mjs` | `WaAudio` — P2P WebRTC (werift) into proximity meetings; publishes Opus |
 | `src/ogg-opus.mjs` | dependency-free Ogg demuxer — Opus packets out of `.ogg`/`.opus` |
-| `sounds/` | bundled Ogg/Opus clips for `wa sound` |
+| `sounds/` | bundled Ogg/Opus clips for `wa sound` (credits in `sounds/ATTRIBUTION.md`) |
 | `src/config.mjs` | config resolution (flags → env → `~/.config` → defaults) |
 | `src/find-player.mjs` | standalone one-shot: connect → locate → walk over → greet → follow |
 | `plugin/` | Claude Code plugin — hooks, `/wa` command, skill, subagent |
