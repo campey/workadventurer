@@ -10,5 +10,10 @@
   "dependencies": {
     "protobufjs": "^7.4.0",
     "ws": "^8.18.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/campey/workadventurer.git"
   }
 }
