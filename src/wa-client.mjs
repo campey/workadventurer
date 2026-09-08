@@ -361,18 +361,28 @@ export class WorkAdventureClient extends EventEmitter {
    * (falls back to straight-line if the map nav is unavailable or no route is
    * found). Re-plans every `repathMs` so it tracks a moving `getTarget()`.
    */
-  async navTo(targetX, targetY, { stopWithin = 48, getTarget = null, timeoutMs = 120000, repathMs = 2000 } = {}) {
+  async navTo(targetX, targetY, { stopWithin = 48, getTarget = null, timeoutMs = 120000, repathMs = 2000, face = null } = {}) {
     if (this._navBusy) return { arrived: false, reason: "busy" };
     this._navBusy = true;
     try {
-      return await this._navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs });
+      return await this._navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs, face });
     } finally {
       this._navBusy = false;
     }
   }
 
-  async _navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs }) {
-    if (!this.nav) return this.walkTo(targetX, targetY, { stopWithin, getTarget, timeoutMs });
+  // `face` may be a {x,y} point or a () => {x,y} getter; on arrival the avatar
+  // turns to look at it instead of keeping its last travel direction.
+  async _navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs, face }) {
+    const lookAt = () => {
+      const p = typeof face === "function" ? face() : face;
+      if (p) this._faceToward(p.x, p.y);
+    };
+    if (!this.nav) {
+      const r = await this.walkTo(targetX, targetY, { stopWithin, getTarget, timeoutMs });
+      if (r.arrived) lookAt();
+      return r;
+    }
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
       let gx = targetX, gy = targetY;
@@ -384,6 +394,7 @@ export class WorkAdventureClient extends EventEmitter {
       if (Math.hypot(gx - this.pos.x, gy - this.pos.y) <= stopWithin) {
         this.pos.moving = false;
         this._emitMove(false);
+        lookAt();
         return { arrived: true };
       }
       const path = this.nav.findPath(this.pos.x, this.pos.y, gx, gy);

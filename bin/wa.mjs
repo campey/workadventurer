@@ -128,7 +128,7 @@ async function waitForDaemon(ms = 15000) {
 
 function prettyStatus(s) {
   const L = [];
-  L.push(`${s.name}  @ (${s.pos.x},${s.pos.y})${s.area ? `  in ${s.area}` : ""}${s.connected ? "" : s.reconnecting ? "  [reconnecting]" : "  [disconnected]"}`);
+  L.push(`${s.name}  @ (${s.pos.x},${s.pos.y})${s.facing ? ` facing ${s.facing}` : ""}${s.area ? `  in ${s.area}` : ""}${s.connected ? "" : s.reconnecting ? "  [reconnecting]" : "  [disconnected]"}`);
   if (s.following) {
     L.push(`following ${s.following.name}${s.following.paused ? " (paused — quiet)" : ""}` +
       (s.following.pos ? `  they're at (${s.following.pos.x},${s.following.pos.y})${s.following.area ? ` in ${s.following.area}` : ""}` : "  (not visible)"));
@@ -207,7 +207,7 @@ switch (cmd) {
   case "to": {
     if (!args[0]) die("usage: wa to <player>", 2);
     await needDaemon();
-    const r = await api("POST", "/goto", { player: args.join(" "), stopWithin: 96 });
+    const r = await api("POST", "/goto", { player: args.join(" ") });
     if (!r.ok) die(r.json.error || `to failed (${r.status})`);
     report(r.json);
     break;
