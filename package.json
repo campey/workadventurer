@@ -1,11 +1,27 @@
 {
   "name": "workadventurer",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.2.0",
   "type": "module",
-  "description": "Headless WorkAdventure client — connects to a room over the pusher WebSocket protocol and drives an avatar directly.",
+  "description": "Headless WorkAdventure client + `wa` CLI — hold a real avatar in a room over the pusher WebSocket protocol, with pathfinding and a control daemon.",
+  "bin": {
+    "wa": "./bin/wa.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "map/",
+    "proto/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "find-player": "node src/find-player.mjs"
+    "wa": "node bin/wa.mjs",
+    "find-player": "node src/find-player.mjs",
+    "build:collision": "node scripts/build-collision.mjs"
   },
   "dependencies": {
     "protobufjs": "^7.4.0",

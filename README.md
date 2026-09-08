@@ -17,26 +17,72 @@ main takeaway.
 > it to break when either changes. Point it at spaces you're allowed to be in,
 > and don't be a nuisance to the people already there.
 
-## Requirements
-
-- Node 18+ (uses the built-in `fetch`)
-- `npm install` (`ws`, `protobufjs` — protobuf is loaded at runtime, no codegen)
-
-## Quick start
+## Install
 
 ```sh
-npm install
-node src/find-player.mjs            # join the room, find & follow a player called "David"
-node src/find-player.mjs Alice      # ... or whoever
+npm i -g workadventurer     # gives you the `wa` command
+# or run it ad-hoc:  npx workadventurer wa <…>
 ```
 
-`Ctrl-C` to leave the room.
+Needs Node 18+ (built-in `fetch`). Runtime deps are `ws` and `protobufjs`
+(protobuf is loaded at runtime — no codegen step).
 
-`find-player.mjs` connects anonymously as `claude`, spawns on the map's `start`
-tile, waits for the roster, walks (routing around walls and furniture) to the
-first player whose name contains the target string, pops a speech bubble, then
-follows them continuously — stopping one "personal space" short, and waiting
-just *outside* if the target steps into an enclosed room (a board room).
+## The `wa` CLI
+
+`wa` talks to a small background **daemon** that holds the WebSocket connection;
+`wa join` starts it, other commands are picked up in the same session, and any
+command auto-starts the daemon if it isn't running.
+
+```sh
+wa join --detach --follow David   # join the room as "claude", start following David
+wa status                         # where am I, who's around, am I following anyone
+wa quiet                          # step away to the nearest empty area (pauses the follow)
+wa resume                         # walk back and resume following
+wa greet Alice                    # walk over to Alice + a "hi Alice" speech bubble
+wa speech-bubble "brb"            # text over the avatar's head
+wa leave                          # disconnect and stop the daemon
+```
+
+| Command | Does |
+|---|---|
+| `wa join [--detach] [--follow <player>]` | join the room (runs the daemon) |
+| `wa leave` | leave and stop the daemon |
+| `wa status [--json]` | position, area, follow state, visible players |
+| `wa to <player>` | walk next to a player, no follow |
+| `wa follow <player>` | follow continuously (wanders the map to find them if needed) |
+| `wa unfollow` | stop and forget |
+| `wa quiet` / `wa resume` | pause the follow and sit in an empty area / walk back and resume |
+| `wa greet <player>` | walk over + "hi" speech bubble (no state change) |
+| `wa speech-bubble <text>` / `wa thought-bubble <text>` | text bubble |
+| `wa goto <x> <y>` | walk to raw coordinates |
+
+`--if-running` makes any command a silent no-op when no daemon is up (used by
+the plugin hooks). Config precedence: flags > env (`WA_ROOM`, `WA_NAME`,
+`WA_DAEMON_PORT`, …) > `~/.config/workadventurer/config.json` > built-in
+defaults. The detached daemon logs to `~/.workadventurer/daemon.log`.
+
+## Claude Code plugin
+
+`plugin/` is a Claude Code plugin that wires the avatar to your session's
+rhythm: while Claude is working the avatar goes and sits somewhere quiet, and
+when Claude finishes it walks back to whoever it was following.
+
+```sh
+claude --plugin-dir ./plugin        # load it from a checkout
+# or, from the marketplace in this repo:
+claude plugin install workadventure@campey/workadventurer
+```
+
+Then, in a session, opt in with `wa join --detach --follow <yourName>`. Two
+hooks do the rest — `UserPromptSubmit` → `wa quiet`, `Stop` → `wa resume` —
+and both no-op instantly when no daemon is running, so a plain session pays
+nothing. The plugin also ships:
+
+- **`/wa <args>`** — a passthrough to the CLI
+- **the `workadventure` skill** — natural-language steering ("follow David",
+  "who's in the room", "go quiet")
+- **the `workadventure` subagent** — for a long back-and-forth steered session
+  you drive with `SendMessage`
 
 ## Using the client directly
 
@@ -45,12 +91,12 @@ import { WorkAdventureClient } from "./src/wa-client.mjs";
 
 const wa = new WorkAdventureClient({ name: "claude" });
 wa.on("playerJoined", (p) => console.log("saw", p.name, "at", p.x, p.y));
-await wa.connect();                       // anon login + handshake + join
+await wa.connect();                         // anon login + handshake + join
 
 await wa.navTo(2378, 1340);                 // A* route around obstacles
 await wa.walkTo(2378, 1340);                // straight line, ignores walls
 await wa.follow(() => wa.players.get(id));  // fluid continuous follow, room-aware
-wa.say("hello");                            // speech bubble
+wa.speechBubble("hello");                   // text over the avatar (also: thoughtBubble)
 console.log(wa.listPlayers());              // [{ userId, name, uuid, x, y }]
 wa.close();
 ```
@@ -60,56 +106,41 @@ wa.close();
 open-space. With no `spawn`, the client picks a random tile from the map's
 `start` layer.
 
-## Control daemon
+`node src/find-player.mjs [name]` is a standalone one-shot: connect, find the
+named player (default `David`), walk over, greet, follow.
 
-`find-player.mjs` is one-shot. For an interactive session — something else
-steering the avatar over time — run the daemon, which stays connected and serves
-a localhost HTTP API:
+## Daemon API (reference)
 
-```sh
-node src/wa-daemon.mjs &          # WA_DAEMON_PORT / WA_NAME / WA_ROOM to override
-```
+The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
+`http://127.0.0.1:8787` (`WA_DAEMON_PORT` to change); it advertises itself at
+`$TMPDIR/wa-daemon.json` and `~/.workadventurer/daemon.json`.
 
 | Call | Effect |
 |---|---|
-| `GET /state` | `{ name, pos, area, following, players:[{name,userId,pos,room}] }` |
+| `GET /state` | `{ name, pos, area, following:{name,paused}|null, players:[…] }` |
 | `POST /goto` `{x,y}` or `{player}` | walk there (cancels any follow) |
-| `POST /follow` `{player, greet?}` | approach, optionally greet, then follow continuously |
-| `POST /unfollow` | stop following, hold position |
-| `POST /say` `{text}` | speech bubble |
+| `POST /follow` `{player}` | approach + follow (searches the map if not in view) |
+| `POST /unfollow` | stop and forget |
+| `POST /quiet` / `POST /resume` | pause follow + go to an empty area / walk back and resume |
+| `POST /greet` `{player}` | walk over + "hi" speech bubble |
+| `POST /speech-bubble` `{text}` / `POST /thought-bubble` `{text}` | text bubble |
 | `POST /leave` | disconnect and exit |
 
-```sh
-curl -s localhost:8787/state
-curl -s -XPOST localhost:8787/follow -d '{"player":"David","greet":true}'
-```
-
-`$TMPDIR/wa-daemon.json` advertises the running daemon's pid/port.
-
-### As a Claude Code subagent
-
-`.claude/agents/workadventure.md` defines an agent that manages the daemon and
-translates natural-language requests into API calls, so a main session can keep
-an avatar in the room without holding the connection itself:
-
-```
-Agent(subagent_type: "workadventure",
-      prompt: "join the afrolabs open-space and follow David, greeting him")
-# then, later:
-SendMessage("workadventure", "who else is around now?")
-SendMessage("workadventure", "go wait by the Left Board Room door")
-SendMessage("workadventure", "leave the room")
-```
+The daemon answers WebSocket pings, keeps the follow loop running, and
+reconnects (bounded retries) if the socket drops.
 
 ## Project layout
 
 | Path | What |
 |---|---|
-| `src/wa-client.mjs` | `WorkAdventureClient` — connection, protocol, world model, `navTo()` / `walkTo()` / `follow()` / `say()` |
-| `src/map-nav.mjs` | `MapNav` — A\* over the tile grid + line-of-sight smoothing, spawn tiles, room areas |
-| `src/find-player.mjs` | one-shot driver: connect → locate target → walk over → say hi → follow |
+| `bin/wa.mjs` | the `wa` CLI |
+| `src/wa-client.mjs` | `WorkAdventureClient` — connection, protocol, world model, `navTo()` / `walkTo()` / `follow()` / `speechBubble()` |
+| `src/map-nav.mjs` | `MapNav` — A\* over the tile grid + line-of-sight smoothing, spawn tiles, named areas, `nearestEmptyArea()` |
 | `src/wa-daemon.mjs` | long-running presence + localhost HTTP control API |
-| `.claude/agents/workadventure.md` | Claude Code subagent that drives the daemon |
+| `src/config.mjs` | config resolution (flags → env → `~/.config` → defaults) |
+| `src/find-player.mjs` | standalone one-shot: connect → locate → walk over → greet → follow |
+| `plugin/` | Claude Code plugin — hooks, `/wa` command, skill, subagent |
+| `.claude-plugin/marketplace.json` | single-plugin marketplace for `claude plugin install` |
 | `scripts/build-collision.mjs` | regenerates `map/collision.json` from the live `.wam` / `.tmj` |
 | `map/collision.json` | baked collision grid + spawn tiles + named areas |
 | `proto/messages.proto` | vendored from `workadventure` tag `v1.33.5` |
@@ -263,13 +294,15 @@ nowhere near yourself and see nobody. The viewport must be a **normal-sized
 window centred on your current position** (this client uses ±1920 × ±1080).
 Getting this right is what made `:David` show up.
 
-### 7. Talking
+### 7. Text bubbles
 
 ```
 → ClientToServerMessage { setPlayerDetailsMessage: { sayMessage: { message, type: 0 } } }
 ```
 
-`type` 0 = speech bubble, 1 = thinking cloud.
+`type` 0 = speech bubble, 1 = thinking cloud. (The client methods are
+`speechBubble()` / `thoughtBubble()` — the wire field is named `sayMessage` but
+this is text over the avatar, not voice.)
 
 ### 8. Pings
 

@@ -1,0 +1,8 @@
+{
+  "name": "workadventure",
+  "displayName": "WorkAdventure Presence",
+  "version": "0.2.0",
+  "description": "Keep a WorkAdventure avatar in your virtual office: it sits somewhere quiet while Claude works and walks back to whoever it's following when Claude is done. Needs the `workadventurer` npm package (>=0.2.0) for the `wa` CLI.",
+  "author": { "name": "campey" },
+  "hooks": "./hooks/hooks.json"
+}

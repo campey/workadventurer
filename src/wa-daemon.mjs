@@ -1,46 +1,66 @@
 // Long-running WorkAdventure presence with a localhost HTTP control API.
 //
-// A subagent (or anything that can curl) drives the avatar through this; the
-// daemon is what actually stays connected — answering pings, running the follow
-// loop — between commands.
+// The `wa` CLI (and anything else that can POST JSON) drives the avatar through
+// this; the daemon is what actually stays connected — answering pings, running
+// the follow loop, reconnecting after a drop — between commands.
 //
 //   node src/wa-daemon.mjs                 # foreground
-//   node src/wa-daemon.mjs &               # background
 //   WA_DAEMON_PORT=8787 WA_NAME=claude node src/wa-daemon.mjs
 //
-// Control API (all on http://127.0.0.1:<port>, JSON bodies):
-//   GET  /state                       -> { name, pos, room, following, players }
-//   POST /goto     {x,y} | {player}   -> navigate there (cancels any follow)
-//   POST /follow   {player, greet?}   -> approach + optionally greet + follow
-//   POST /unfollow                    -> stop following, hold position
-//   POST /say      {text}             -> speech bubble
-//   POST /leave                       -> disconnect and exit the process
+// Control API (http://127.0.0.1:<port>, JSON bodies):
+//   GET  /state                    -> { name, pos, area, following:{name,paused}|null, players }
+//   POST /goto           {x,y}|{player}  -> walk there (cancels any follow)
+//   POST /follow         {player}        -> approach + follow continuously
+//   POST /unfollow                       -> stop and forget the follow subject
+//   POST /quiet                          -> step away to the nearest empty area; pause (remember) the follow
+//   POST /resume                         -> walk back to the follow subject and resume
+//   POST /greet          {player}        -> walk over + "hi" speech bubble (no state change)
+//   POST /speech-bubble  {text}          -> speech bubble over the avatar
+//   POST /thought-bubble {text}          -> thinking cloud over the avatar
+//   POST /leave                          -> disconnect and exit
 //
-// A small file at $TMPDIR/wa-daemon.json advertises { pid, port, room, name }.
+// Advertises itself at $TMPDIR/wa-daemon.json and ~/.workadventurer/daemon.json.
 
 import http from "node:http";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { WorkAdventureClient } from "./wa-client.mjs";
+import { resolveConfig } from "./config.mjs";
 
-const PORT = Number(process.env.WA_DAEMON_PORT || 8787);
-const NAME = process.env.WA_NAME || "claude";
-const ROOM = process.env.WA_ROOM || undefined; // undefined -> client default
-const INFO_FILE = path.join(os.tmpdir(), "wa-daemon.json");
+const cfg = resolveConfig();
+const PORT = cfg.port;
+const QUIET_EXCLUDE = /board\s*room|podium|audience/i;
+
+const INFO_FILES = [
+  path.join(os.tmpdir(), "wa-daemon.json"),
+  path.join(os.homedir(), ".workadventurer", "daemon.json"),
+];
 
 const ts = () => new Date().toISOString().slice(11, 19);
 const log = (...a) => console.log(ts(), ...a);
 
-const wa = new WorkAdventureClient({ name: NAME, ...(ROOM ? { roomUrl: ROOM } : {}) });
-wa.on("log", (m) => log("·", m));
-wa.on("error", (e) => log("!!", e.message));
-wa.on("close", (c) => { log("socket closed", c.code, c.reason || ""); shutdown(c.code === 1000 ? 0 : 1); });
-
-let follow = null; // { name, userId, controller, greet }
+let wa;
+let follow = null; // { name, userId, controller, paused }
+let deliberateShutdown = false;
+let reconnecting = false;
 
 const findByName = (needle) => wa.findPlayer(needle);
 const liveById = (id) => wa.players.get(id) || null;
+const liveFollowTarget = () => (follow ? liveById(follow.userId) : null);
+
+function wireClient(client) {
+  client.on("log", (m) => log("·", m));
+  client.on("error", (e) => log("!!", e.message));
+  client.on("close", (c) => {
+    log("socket closed", c.code, c.reason || "");
+    if (deliberateShutdown) return shutdown(0);
+    attemptReconnect().catch((e) => {
+      log("reconnect gave up:", e.message);
+      shutdown(1);
+    });
+  });
+}
 
 function stopFollow() {
   if (follow) {
@@ -49,45 +69,158 @@ function stopFollow() {
   }
 }
 
-async function startFollow(name, greet) {
-  const p = findByName(name);
-  if (!p) return { ok: false, error: `no player matching "${name}"` };
+/** Start (or restart) the approach + continuous-follow task for `follow`. */
+function runFollowTask() {
+  if (!follow) return;
+  const { controller, userId, name } = follow;
+  (async () => {
+    const t = liveById(userId);
+    if (t) {
+      await wa.navTo(t.x, t.y, {
+        stopWithin: 96,
+        getTarget: () => liveById(userId),
+        timeoutMs: 90_000,
+      });
+    }
+    if (controller.signal.aborted) return;
+    await wa.follow(() => liveById(userId), { spacing: 80, signal: controller.signal });
+    if (follow && follow.controller === controller) follow = null;
+  })().catch((e) => log(`follow task error (${name}):`, e.message));
+}
+
+// A short wander sweep so we can pick up a player who isn't in view yet.
+const SEARCH_SPOTS = [
+  [1600, 1520], [2400, 1000], [1900, 1800], [900, 1600], [1300, 900], [2200, 1500],
+];
+async function searchFor(nameNeedle, signal) {
+  for (const [x, y] of SEARCH_SPOTS) {
+    if (signal?.aborted) return null;
+    const hit = findByName(nameNeedle);
+    if (hit) return hit;
+    await wa.navTo(x, y, { stopWithin: 80, timeoutMs: 12_000 });
+  }
+  return findByName(nameNeedle);
+}
+
+async function startFollow(nameNeedle) {
   stopFollow();
   const controller = new AbortController();
-  follow = { name: p.name, userId: p.userId, controller, greet: !!greet };
+  follow = { name: nameNeedle, userId: -1, controller, paused: false, searching: true };
 
-  // approach, then hand off to the continuous follow loop
-  (async () => {
-    const t = liveById(p.userId) || p;
-    await wa.navTo(t.x, t.y, { stopWithin: 96, getTarget: () => liveById(p.userId), timeoutMs: 90000 });
-    if (controller.signal.aborted) return;
-    if (greet) wa.say(`hi ${p.name}`);
-    await wa.follow(() => liveById(p.userId), { spacing: 80, signal: controller.signal });
-    if (follow && follow.controller === controller) follow = null;
-  })().catch((e) => log("follow task error:", e.message));
+  let p = findByName(nameNeedle);
+  if (!p) {
+    log(`"${nameNeedle}" not visible — searching…`);
+    p = await searchFor(nameNeedle, controller.signal);
+  }
+  if (controller.signal.aborted) return { ok: false, error: "cancelled" };
+  if (!p) {
+    follow = null;
+    return { ok: false, error: `could not find a player matching "${nameNeedle}"` };
+  }
+  if (follow?.controller !== controller) return { ok: false, error: "superseded" };
+  follow = { name: p.name, userId: p.userId, controller, paused: false };
+  runFollowTask();
+  return { ok: true, following: p.name };
+}
 
-  return { ok: true, following: follow.name };
+async function quiet() {
+  if (follow && !follow.paused) {
+    follow.controller.abort();
+    follow.paused = true;
+  }
+  const players = wa.listPlayers();
+  const here = wa.nav?.areaAt(wa.pos.x, wa.pos.y);
+  if (
+    here &&
+    !QUIET_EXCLUDE.test(here.name) &&
+    players.every((pl) => !wa.nav._rectContains(here, pl.x, pl.y, 48))
+  ) {
+    return { ok: true, quietSpot: here.name, alreadyQuiet: true, followPaused: follow?.paused ?? false };
+  }
+  const area = wa.nav?.nearestEmptyArea(wa.pos.x, wa.pos.y, players, { excludeRe: QUIET_EXCLUDE });
+  if (!area) return { ok: true, quietSpot: null, followPaused: follow?.paused ?? false };
+  wa.navTo(area.x, area.y, { stopWithin: 64, timeoutMs: 60_000 }).then((r) =>
+    log(`quiet -> "${area.name}"`, JSON.stringify(r))
+  );
+  return { ok: true, quietSpot: area.name, followPaused: follow?.paused ?? false };
+}
+
+function resume() {
+  if (!follow) return { ok: true, nothingToResume: true };
+  if (!follow.paused) return { ok: true, following: follow.name, alreadyFollowing: true };
+  const name = follow.name;
+  startFollow(name).then((r) => log("resume:", JSON.stringify(r)));
+  return { ok: true, resuming: name };
+}
+
+async function greet(nameNeedle) {
+  const p = findByName(nameNeedle);
+  if (!p) return { ok: false, error: `no player matching "${nameNeedle}"` };
+  await wa.navTo(p.x, p.y, { stopWithin: 96, getTarget: () => liveById(p.userId), timeoutMs: 60_000 });
+  wa.speechBubble(`hi ${p.name}`);
+  return { ok: true, greeted: p.name };
 }
 
 function state() {
-  const t = follow ? liveById(follow.userId) : null;
+  const t = liveFollowTarget();
   return {
-    name: NAME,
+    name: cfg.name,
     room: wa.cfg.roomUrl,
     connected: wa.ws?.readyState === 1,
+    reconnecting,
     myUserId: wa.myUserId,
     pos: { x: Math.round(wa.pos.x), y: Math.round(wa.pos.y) },
-    area: wa.nav?.roomAt(wa.pos.x, wa.pos.y)?.name ?? null,
+    area: wa.nav?.areaAt(wa.pos.x, wa.pos.y)?.name ?? null,
     following: follow
-      ? { name: follow.name, userId: follow.userId, pos: t ? { x: t.x | 0, y: t.y | 0 } : null, targetRoom: t ? wa.nav?.roomAt(t.x, t.y)?.name ?? null : null }
+      ? {
+          name: follow.name,
+          paused: follow.paused,
+          pos: t ? { x: t.x | 0, y: t.y | 0 } : null,
+          area: t ? wa.nav?.areaAt(t.x, t.y)?.name ?? null : null,
+        }
       : null,
     players: wa.listPlayers().map((p) => ({
       name: p.name,
       userId: p.userId,
       pos: { x: p.x | 0, y: p.y | 0 },
-      room: wa.nav?.roomAt(p.x, p.y)?.name ?? null,
+      area: wa.nav?.areaAt(p.x, p.y)?.name ?? null,
     })),
   };
+}
+
+async function attemptReconnect() {
+  reconnecting = true;
+  const prevFollow = follow ? { name: follow.name, paused: follow.paused } : null;
+  const delays = [2000, 5000, 10000, 20000, 30000];
+  for (let i = 0; i < delays.length; i++) {
+    await new Promise((r) => setTimeout(r, delays[i]));
+    log(`reconnect attempt ${i + 1}/${delays.length}…`);
+    const client = new WorkAdventureClient({
+      name: cfg.name,
+      roomUrl: cfg.roomUrl,
+      pusherUrl: cfg.pusherUrl,
+      version: cfg.version,
+      wokaId: cfg.wokaId,
+    });
+    wireClient(client);
+    try {
+      await client.connect();
+      wa = client;
+      reconnecting = false;
+      log(`reconnected as userId ${wa.myUserId}`);
+      follow = null;
+      if (prevFollow && !prevFollow.paused) {
+        startFollow(prevFollow.name).then((r) => log("post-reconnect follow:", JSON.stringify(r)));
+      } else if (prevFollow) {
+        follow = { name: prevFollow.name, userId: -1, controller: new AbortController(), paused: true };
+      }
+      return;
+    } catch (e) {
+      log(`  attempt ${i + 1} failed: ${e.message}`);
+      try { client.close(); } catch {}
+    }
+  }
+  throw new Error("exhausted reconnect attempts");
 }
 
 const readBody = (req) =>
@@ -123,19 +256,35 @@ const server = http.createServer(async (req, res) => {
           }
           if (typeof gx !== "number" || typeof gy !== "number")
             return send(400, { ok: false, error: "need {x,y} or {player}" });
-          wa.navTo(gx, gy, { stopWithin: body.stopWithin ?? 48, timeoutMs: 90000 })
-            .then((r) => log("goto result", JSON.stringify(r)));
+          wa.navTo(gx, gy, { stopWithin: body.stopWithin ?? 48, timeoutMs: 90_000 }).then((r) =>
+            log("goto result", JSON.stringify(r))
+          );
           return send(202, { ok: true, goingTo: { x: Math.round(gx), y: Math.round(gy) } });
         }
-        case "/follow":
-          return send(200, await startFollow(body.player, body.greet));
+        case "/follow": {
+          if (!body.player) return send(400, { ok: false, error: "need {player}" });
+          startFollow(body.player).then((r) => log("follow:", JSON.stringify(r)));
+          return send(202, { ok: true, following: body.player, note: "approaching (searching if not yet visible)" });
+        }
         case "/unfollow":
           stopFollow();
           return send(200, { ok: true, following: null });
-        case "/say":
+        case "/quiet":
+          return send(200, await quiet());
+        case "/resume":
+          return send(200, resume());
+        case "/greet": {
+          const r = await greet(body.player);
+          return send(r.ok ? 200 : 404, r);
+        }
+        case "/speech-bubble":
           if (!body.text) return send(400, { ok: false, error: "need {text}" });
-          wa.say(String(body.text));
-          return send(200, { ok: true, said: String(body.text) });
+          wa.speechBubble(String(body.text));
+          return send(200, { ok: true, speechBubble: String(body.text) });
+        case "/thought-bubble":
+          if (!body.text) return send(400, { ok: false, error: "need {text}" });
+          wa.thoughtBubble(String(body.text));
+          return send(200, { ok: true, thoughtBubble: String(body.text) });
         case "/leave":
           send(200, { ok: true, leaving: true });
           return shutdown(0);
@@ -148,9 +297,10 @@ const server = http.createServer(async (req, res) => {
 });
 
 function shutdown(code) {
-  try { fs.unlinkSync(INFO_FILE); } catch {}
+  deliberateShutdown = true;
+  for (const f of INFO_FILES) { try { fs.unlinkSync(f); } catch {} }
   try { server.close(); } catch {}
-  try { wa.close(); } catch {}
+  try { wa?.close(); } catch {}
   setTimeout(() => process.exit(code), 150);
 }
 process.on("SIGINT", () => shutdown(0));
@@ -158,17 +308,43 @@ process.on("SIGTERM", () => shutdown(0));
 
 server.on("error", (e) => {
   if (e.code === "EADDRINUSE") {
-    log(`port ${PORT} in use — a daemon is probably already running (see ${INFO_FILE})`);
+    log(`port ${PORT} in use — a daemon is probably already running (see ${INFO_FILES[0]})`);
     process.exit(3);
   }
   throw e;
 });
 
-log(`connecting to WorkAdventure as "${NAME}"…`);
+log(`connecting to WorkAdventure as "${cfg.name}"…`);
+wa = new WorkAdventureClient({
+  name: cfg.name,
+  roomUrl: cfg.roomUrl,
+  pusherUrl: cfg.pusherUrl,
+  version: cfg.version,
+  wokaId: cfg.wokaId,
+});
+wireClient(wa);
 await wa.connect();
 log(`joined as userId ${wa.myUserId}; spawn (${wa.pos.x | 0},${wa.pos.y | 0})`);
 
+if (process.env.WA_FOLLOW) {
+  startFollow(process.env.WA_FOLLOW).then((r) => log("join --follow:", JSON.stringify(r)));
+}
+
 server.listen(PORT, "127.0.0.1", () => {
-  fs.writeFileSync(INFO_FILE, JSON.stringify({ pid: process.pid, port: PORT, room: wa.cfg.roomUrl, name: NAME, startedAt: new Date().toISOString() }));
-  log(`control API on http://127.0.0.1:${PORT}  (info: ${INFO_FILE})`);
+  const info = JSON.stringify({
+    pid: process.pid,
+    port: PORT,
+    room: wa.cfg.roomUrl,
+    name: cfg.name,
+    startedAt: new Date().toISOString(),
+  });
+  for (const f of INFO_FILES) {
+    try {
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, info);
+    } catch (e) {
+      log(`could not write ${f}: ${e.message}`);
+    }
+  }
+  log(`control API on http://127.0.0.1:${PORT}`);
 });

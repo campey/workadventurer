@@ -6,32 +6,57 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-08
+
+A `wa` CLI, a control daemon, and a Claude Code plugin, so the avatar can be
+driven from a shell — or ambiently by a Claude Code session (quiet while Claude
+works, back at your side when it's done).
+
 ### Added
 
-- Spawn on the map's `start` layer (a random one of its tiles) when no `spawn`
-  option is given, matching WorkAdventure's own default entry.
-- `WorkAdventureClient.follow(getTarget)` — a continuous control loop that steps
-  every ~100 ms along a frequently re-planned route, for smooth tracking instead
-  of periodic catch-up hops.
-- `followPoint()` / room-aware following: stop one `spacing` short of the
-  target, or — if the target is inside an enclosed room and the follower isn't —
-  wait at the nearest reachable tile just outside it.
-- `map/collision.json` now also carries the `start` tiles and the named `.wam`
-  areas; `MapNav` gains `randomSpawnPx()`, `roomAt()`, `pointOutsideRoom()`.
-
-- `src/wa-daemon.mjs` — a long-running presence that stays connected (pings,
-  keepalive, follow loop) and serves a localhost HTTP control API
-  (`/state`, `/goto`, `/follow`, `/unfollow`, `/say`, `/leave`).
-- `.claude/agents/workadventure.md` — a Claude Code subagent that starts/drives
-  the daemon, so a main session can keep an avatar in the room and steer it with
-  follow-up messages without holding the connection itself.
+- **`wa` CLI** (`bin/wa.mjs`, `npm i -g workadventurer`): `join`, `leave`,
+  `status`, `to`, `follow`, `unfollow`, `quiet`, `resume`, `greet`,
+  `speech-bubble`, `thought-bubble`, `goto`. Auto-starts the daemon on demand;
+  `--if-running` makes any command a no-op when no daemon is up.
+- **`src/wa-daemon.mjs`** — long-running presence: holds the socket, answers
+  pings, runs the follow loop, reconnects (bounded retries) on a socket drop.
+  HTTP control API on `127.0.0.1:8787`. Advertises itself at
+  `$TMPDIR/wa-daemon.json` and `~/.workadventurer/daemon.json`; detached, it
+  logs to `~/.workadventurer/daemon.log`.
+- **`wa quiet` / `wa resume`** — pause the follow and walk to the nearest empty
+  named area; then walk back and resume. `MapNav.nearestEmptyArea()` /
+  `areaAt()`.
+- **`wa follow`** searches the map (a short wander sweep) for a player who isn't
+  in view yet, instead of failing.
+- **`src/config.mjs`** — config resolution: flags → env
+  (`WA_ROOM`/`WA_NAME`/`WA_DAEMON_PORT`/…) → `~/.config/workadventurer/config.json`
+  → built-in defaults.
+- **Claude Code plugin** (`plugin/`): `UserPromptSubmit` → `wa quiet` and
+  `Stop` → `wa resume` hooks (no-op when no daemon), a `/wa` command, a
+  `workadventure` skill, and the `workadventure` subagent. A root
+  `.claude-plugin/marketplace.json` for `claude plugin install`.
+- Spawn on the map's `start` layer when no `spawn` is given; `map/collision.json`
+  carries the `start` tiles and named `.wam` areas; `MapNav` gains
+  `randomSpawnPx()`, `roomAt()`, `pointOutsideRoom()`.
+- `WorkAdventureClient.follow(getTarget)` — continuous ~100 ms control loop for
+  smooth tracking; room-aware `followPoint()` waits just outside an enclosed
+  room rather than following in.
 
 ### Changed
 
-- Renamed `src/find-david.mjs` → `src/find-player.mjs` (the npm script too:
-  `npm run find-player`); it was already generic over the target name.
-- The driver uses the continuous `follow()` loop and a lightweight status log,
-  replacing the 3-second `setInterval` that re-issued `navTo`.
+- Package is publishable: `bin`, `files`, `engines`, `"private"` removed.
+- Renamed `src/find-david.mjs` → `src/find-player.mjs` (npm script
+  `find-player`); it was already generic over the target name.
+- The follow subject survives `wa quiet` (paused) and is dropped only by
+  `wa unfollow` — no separate "target" concept.
+- The subagent/agent drives the `wa` CLI instead of raw `curl`.
+
+### Breaking
+
+- Text-bubble action renamed `say` → `speech-bubble` / `thought-bubble`:
+  `WorkAdventureClient.say()` → `speechBubble()` + `thoughtBubble()`; daemon
+  `POST /say` → `POST /speech-bubble` + `POST /thought-bubble`. `say` is
+  reserved for a future voice feature.
 
 ## [0.1.0] - 2026-09-08
 
@@ -67,5 +92,6 @@ afrolabs open-space, walks to a named player, and follows them.
   Unreleased.)
 - `README.md`: the reverse-engineered protocol write-up.
 
-[Unreleased]: https://github.com/campey/workadventurer/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/campey/workadventurer/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/campey/workadventurer/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/campey/workadventurer/releases/tag/v0.1.0

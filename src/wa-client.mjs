@@ -508,9 +508,14 @@ export class WorkAdventureClient extends EventEmitter {
     }
   }
 
-  say(message) {
-    // Speech bubble above the avatar (SayMessageType.SpeechBubble = 0).
+  // Text over the avatar's head. WorkAdventure's `SayMessage.type` is
+  // 0 = SpeechBubble, 1 = ThinkingCloud. Named literally — this is NOT voice.
+  speechBubble(message) {
     this._send({ setPlayerDetailsMessage: { sayMessage: { message, type: 0 } } });
+  }
+
+  thoughtBubble(message) {
+    this._send({ setPlayerDetailsMessage: { sayMessage: { message, type: 1 } } });
   }
 
   close() {
@@ -519,4 +524,4 @@ export class WorkAdventureClient extends EventEmitter {
   }
 }
 
-export { DIRECTION };
+export { DIRECTION, DEFAULTS };

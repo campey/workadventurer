@@ -42,6 +42,42 @@ export class MapNav {
     return px >= a.x - pad && px < a.x + a.w + pad && py >= a.y - pad && py < a.y + a.h + pad;
   }
 
+  /** Any named area containing (px,py), or null. */
+  areaAt(px, py, pad = 0) {
+    for (const a of this.areas) if (this._rectContains(a, px, py, pad)) return a;
+    return null;
+  }
+
+  /**
+   * The named area nearest (fromX,fromY) that has no `players` inside or within
+   * `pad` px of it. If every area is occupied, returns the least-crowded, then
+   * nearest, area anyway (never null when there are areas). The returned
+   * `{x,y}` is snapped to a free tile at the area centre.
+   */
+  nearestEmptyArea(fromX, fromY, players = [], { excludeRe, pad = 48 } = {}) {
+    const count = (a) =>
+      players.reduce((n, p) => n + (this._rectContains(a, p.x, p.y, pad) ? 1 : 0), 0);
+    const dist = (a) =>
+      Math.hypot(a.x + a.w / 2 - fromX, a.y + a.h / 2 - fromY);
+
+    let best = null;
+    for (const a of this.areas) {
+      if (excludeRe && excludeRe.test(a.name)) continue;
+      const c = count(a);
+      const d = dist(a);
+      if (!best || c < best.c || (c === best.c && d < best.d)) best = { a, c, d };
+    }
+    if (!best) return null;
+
+    const a = best.a;
+    let cx = a.x + a.w / 2;
+    let cy = a.y + a.h / 2;
+    const [tx, ty] = this.pxToTile(cx, cy);
+    const free = this.nearestFree(tx, ty);
+    if (free) [cx, cy] = this.tileCenterPx(free[0], free[1]);
+    return { name: a.name, x: cx, y: cy, occupied: best.c };
+  }
+
   /**
    * A reachable free point just OUTSIDE `room`, as close as possible to
    * (targetX,targetY) — i.e. "wait by the door". `reachable(px,py)` should

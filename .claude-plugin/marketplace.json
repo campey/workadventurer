@@ -1,0 +1,15 @@
+{
+  "name": "campey",
+  "owner": { "name": "campey" },
+  "metadata": {
+    "description": "campey's Claude Code plugins",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "workadventure",
+      "source": "./plugin",
+      "description": "Keep a WorkAdventure avatar in your virtual office — quiet while Claude works, back at your side when it's done."
+    }
+  ]
+}

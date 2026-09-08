@@ -57,7 +57,7 @@ async function approachAndFollow() {
   log(`found ${JSON.stringify(target.name)} #${target.userId} at (${t.x|0},${t.y|0}) — heading over`);
   const res = await wa.navTo(t.x, t.y, { stopWithin: 96, getTarget: liveTarget, timeoutMs: 90000 });
   log("approach:", JSON.stringify(res));
-  wa.say(`hi ${target.name}`);
+  wa.speechBubble(`hi ${target.name}`);
 
   // Fluid continuous follow. Stops one "personal space" short; if the target is
   // in an enclosed room, waits just outside instead of walking in.
