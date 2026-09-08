@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`wa clear-bubble`** (`POST /clear-bubble`, `WaClient.clearBubble()`) —
+  dismiss whatever speech or thought bubble is showing. WorkAdventure clears the
+  bubble on an empty `SayMessage`. Closes #1.
+
 ## [0.2.0] - 2026-09-08
 
 A `wa` CLI, a control daemon, and a Claude Code plugin, so the avatar can be

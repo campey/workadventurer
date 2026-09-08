@@ -17,6 +17,7 @@
 //   POST /greet          {player}        -> walk over + "hi" speech bubble (no state change)
 //   POST /speech-bubble  {text}          -> speech bubble over the avatar
 //   POST /thought-bubble {text}          -> thinking cloud over the avatar
+//   POST /clear-bubble                   -> dismiss whatever bubble is showing
 //   POST /leave                          -> disconnect and exit
 //
 // Advertises itself at $TMPDIR/wa-daemon.json and ~/.workadventurer/daemon.json.
@@ -285,6 +286,9 @@ const server = http.createServer(async (req, res) => {
           if (!body.text) return send(400, { ok: false, error: "need {text}" });
           wa.thoughtBubble(String(body.text));
           return send(200, { ok: true, thoughtBubble: String(body.text) });
+        case "/clear-bubble":
+          wa.clearBubble();
+          return send(200, { ok: true, bubble: null });
         case "/leave":
           send(200, { ok: true, leaving: true });
           return shutdown(0);

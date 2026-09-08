@@ -1,6 +1,6 @@
 ---
 description: Drive the WorkAdventure avatar — passthrough to the `wa` CLI
-argument-hint: "<join|leave|status|to|follow|unfollow|quiet|resume|greet|speech-bubble|thought-bubble> …"
+argument-hint: "<join|leave|status|to|follow|unfollow|quiet|resume|greet|speech-bubble|thought-bubble|clear-bubble> …"
 allowed-tools: Bash
 ---
 

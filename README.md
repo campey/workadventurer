@@ -54,6 +54,7 @@ wa leave                          # disconnect and stop the daemon
 | `wa quiet` / `wa resume` | pause the follow and sit in an empty area / walk back and resume |
 | `wa greet <player>` | walk over + "hi" speech bubble (no state change) |
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text bubble |
+| `wa clear-bubble` | dismiss whatever bubble is showing |
 | `wa goto <x> <y>` | walk to raw coordinates |
 
 `--if-running` makes any command a silent no-op when no daemon is up (used by
@@ -124,6 +125,7 @@ The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
 | `POST /quiet` / `POST /resume` | pause follow + go to an empty area / walk back and resume |
 | `POST /greet` `{player}` | walk over + "hi" speech bubble |
 | `POST /speech-bubble` `{text}` / `POST /thought-bubble` `{text}` | text bubble |
+| `POST /clear-bubble` | dismiss whatever bubble is showing |
 | `POST /leave` | disconnect and exit |
 
 The daemon answers WebSocket pings, keeps the follow loop running, and
