@@ -51,6 +51,15 @@ export class WorkAdventureClient extends EventEmitter {
     this._keepAlive = null;
     this._outSeq = 1;
 
+    // Proximity-meeting ("Space") state, populated once the server asks us to
+    // join a Space (which it does when we enter a bubble). See _handle().
+    this.micOn = !!opts.micOn;
+    this._qid = 1;
+    this._pendingQueries = new Map(); // id -> { resolve, reject, timer }
+    /** @type {Map<string,{spaceUserId:string,propertiesToSync:string[]}>} */
+    this.spaces = new Map(); // spaceName -> our membership
+    this.groupId = null; // current proximity group, or null
+
     if (opts.nav !== undefined) {
       this.nav = opts.nav;
     } else {
@@ -99,7 +108,7 @@ export class WorkAdventureClient extends EventEmitter {
     u.searchParams.set("version", this.cfg.version);
     u.searchParams.set("roomName", "");
     u.searchParams.set("cameraState", "false");
-    u.searchParams.set("microphoneState", "false");
+    u.searchParams.set("microphoneState", this.micOn ? "true" : "false");
     u.searchParams.set("screenSharingState", "false");
     u.searchParams.set("chatID", "");
     u.searchParams.set("tabId", randomUUID().slice(0, 12));
@@ -195,6 +204,79 @@ export class WorkAdventureClient extends EventEmitter {
     this.ws.send(this._wrap(buf));
   }
 
+  /**
+   * Send a `queryMessage` and resolve with the matching `answerMessage`'s inner
+   * answer. `kind` is the oneof field name (e.g. "joinSpaceQuery"). Rejects on
+   * an error answer or timeout.
+   */
+  query(kind, payload, { timeoutMs = 10000 } = {}) {
+    const id = this._qid++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingQueries.delete(id);
+        reject(new Error(`query ${kind} #${id} timed out`));
+      }, timeoutMs);
+      this._pendingQueries.set(id, { resolve, reject, timer });
+      this._send({ queryMessage: { id, [kind]: payload } });
+    });
+  }
+
+  _resolveQuery(answer) {
+    const pend = this._pendingQueries.get(answer.id);
+    if (!pend) return;
+    this._pendingQueries.delete(answer.id);
+    clearTimeout(pend.timer);
+    if (answer.error) pend.reject(new Error(answer.error.message || "query error"));
+    else pend.resolve(answer);
+  }
+
+  /**
+   * Join the proximity-meeting Space the server just asked us into. Returns our
+   * `spaceUserId`. Also announces our current mic state to the other members.
+   */
+  async _joinSpace(spaceName, propertiesToSync) {
+    const props = propertiesToSync?.length
+      ? propertiesToSync
+      : ["cameraState", "microphoneState", "screenSharingState"];
+    const answer = await this.query("joinSpaceQuery", {
+      spaceName,
+      filterType: 0, // ALL_USERS
+      propertiesToSync: props,
+    });
+    const spaceUserId = answer.joinSpaceAnswer?.spaceUserId ?? "";
+    this.spaces.set(spaceName, { spaceUserId, propertiesToSync: props });
+    this.emit("log", `joined space ${spaceName} as ${spaceUserId}`);
+    this.emit("spaceJoined", { spaceName, spaceUserId });
+    if (this.micOn) this.setSpaceMicState(spaceName, true);
+    return spaceUserId;
+  }
+
+  _leaveSpace(spaceName) {
+    if (!this.spaces.delete(spaceName)) return;
+    this.emit("log", `left space ${spaceName}`);
+    this.emit("spaceLeft", { spaceName });
+  }
+
+  /** Tell the other Space members whether our mic is live. */
+  setSpaceMicState(spaceName, on) {
+    const mine = this.spaces.get(spaceName);
+    if (!mine) return;
+    this._send({
+      updateSpaceUserMessage: {
+        spaceName,
+        user: { spaceUserId: mine.spaceUserId, microphoneState: !!on },
+        updateMask: { paths: ["microphoneState"] },
+      },
+    });
+  }
+
+  /** Send a PrivateSpaceEvent (webRtcSignal, webRtcStartMessage, …) to one member. */
+  sendSpacePrivateEvent(spaceName, receiverUserId, event) {
+    this._send({
+      privateEvent: { spaceName, receiverUserId, spaceEvent: event },
+    });
+  }
+
   _onMessage(data) {
     const bytes = data instanceof ArrayBuffer ? Buffer.from(new Uint8Array(data)) : data;
     let payloads;
@@ -254,6 +336,21 @@ export class WorkAdventureClient extends EventEmitter {
     if (obj.errorMessage) { this.emit("log", `errorMessage: ${obj.errorMessage.message}`); return; }
     if (obj.invalidCharacterTextureMessage) { this.emit("error", new Error("invalid character texture")); return; }
     if (obj.tokenExpiredMessage) { this.emit("error", new Error("token expired")); return; }
+
+    if (obj.answerMessage) { this._resolveQuery(obj.answerMessage); return; }
+    if (obj.joinSpaceRequestMessage) {
+      const { spaceName, propertiesToSync } = obj.joinSpaceRequestMessage;
+      if (!this.spaces.has(spaceName)) {
+        this._joinSpace(spaceName, propertiesToSync).catch((e) =>
+          this.emit("log", `joinSpace failed: ${e.message}`)
+        );
+      }
+      return;
+    }
+    if (obj.leaveSpaceRequestMessage) {
+      this._leaveSpace(obj.leaveSpaceRequestMessage.spaceName);
+      return;
+    }
     // roomConnectedMessage, worldConnectionMessage, refreshRoomMessage, etc. — ignored.
   }
 
@@ -286,7 +383,44 @@ export class WorkAdventureClient extends EventEmitter {
       this.emit("playerLeft", sub.userLeftMessage.userId);
       return;
     }
-    // groupUpdateMessage, emoteEventMessage, variableMessage, space* — ignored.
+    if (sub.groupUpdateMessage) {
+      const g = sub.groupUpdateMessage;
+      // Group updates arrive for any group in view, not just ours — only track
+      // the one we're actually a member of.
+      const mine = g.userIds?.includes(this.myUserId);
+      if (mine && this.groupId !== g.groupId) {
+        this.groupId = g.groupId;
+        this.emit("bubbleEntered", { groupId: g.groupId });
+      } else if (!mine && this.groupId === g.groupId) {
+        this.groupId = null;
+        this.emit("bubbleLeft", {});
+      }
+      if (mine) this.emit("group", { groupId: g.groupId, userIds: g.userIds ?? [] });
+      return;
+    }
+    if (sub.groupDeleteMessage) {
+      if (this.groupId === sub.groupDeleteMessage.groupId) {
+        this.groupId = null;
+        this.emit("bubbleLeft", {});
+      }
+      return;
+    }
+    if (sub.privateEvent) {
+      const pe = sub.privateEvent;
+      const ev = pe.spaceEvent ?? {};
+      const [kind] = Object.keys(ev);
+      if (kind) {
+        this.emit("spaceEvent", {
+          spaceName: pe.spaceName,
+          senderUserId: pe.sender?.spaceUserId ?? pe.senderUserId,
+          sender: pe.sender,
+          kind,
+          payload: ev[kind],
+        });
+      }
+      return;
+    }
+    // emoteEventMessage, variableMessage, publicEvent, other space* — ignored.
   }
 
   _startKeepAlive() {
@@ -537,6 +671,11 @@ export class WorkAdventureClient extends EventEmitter {
 
   close() {
     if (this._keepAlive) clearInterval(this._keepAlive);
+    for (const { reject, timer } of this._pendingQueries.values()) {
+      clearTimeout(timer);
+      reject(new Error("client closed"));
+    }
+    this._pendingQueries.clear();
     this.ws?.close();
   }
 }
