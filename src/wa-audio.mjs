@@ -23,6 +23,7 @@ import {
   RtpHeader,
 } from "werift";
 import { readOggOpus } from "./ogg-opus.mjs";
+import { ensureOpus } from "./transcode.mjs";
 
 const OPUS = new RTCRtpCodecParameters({
   mimeType: "audio/opus",
@@ -74,13 +75,18 @@ export class WaAudio extends EventEmitter {
 
   _onSpaceEvent({ spaceName, senderUserId, kind, payload }) {
     switch (kind) {
-      case "webRtcStartMessage":
+      case "webRtcStartMessage": {
+        const initiator = !!payload.initiator;
         this.emit(
           "log",
-          `webRtcStart conn=${payload.connectionId} from=${senderUserId} initiator=${!!payload.initiator}`
+          `webRtcStart conn=${payload.connectionId} from=${senderUserId} initiator=${initiator}`
         );
-        this._peer(spaceName, senderUserId, payload.connectionId);
+        const p = this._peer(spaceName, senderUserId, payload.connectionId);
+        // The server assigns the role per connection: initiator sends the offer,
+        // the other side waits for it. (It varies — don't assume either.)
+        if (initiator) this._makeOffer(p).catch((e) => this.emit("log", `offer failed: ${e.message}`));
         break;
+      }
       case "webRtcSignal":
         this._onSignal(spaceName, senderUserId, payload.connectionId, payload.signal);
         break;
@@ -139,6 +145,19 @@ export class WaAudio extends EventEmitter {
     p = { pc, track, spaceName, remoteUserId, connectionId };
     this.peers.set(connectionId, p);
     return p;
+  }
+
+  // We're the initiator for this connection: create and send the SDP offer.
+  async _makeOffer(p) {
+    await p.pc.setLocalDescription(await p.pc.createOffer());
+    await this._iceComplete(p.pc);
+    this.client.sendSpacePrivateEvent(p.spaceName, p.remoteUserId, {
+      webRtcSignal: {
+        connectionId: p.connectionId,
+        signal: JSON.stringify({ type: "offer", sdp: p.pc.localDescription.sdp }),
+      },
+    });
+    this.emit("log", `[${p.connectionId}] offered`);
   }
 
   async _onSignal(spaceName, remoteUserId, connectionId, signalJson) {
@@ -206,11 +225,13 @@ export class WaAudio extends EventEmitter {
   }
 
   /**
-   * Play an Ogg/Opus clip into every connected peer. Resolves when the clip
-   * finishes or is superseded by another play() / hangup().
+   * Play an audio clip into every connected peer. Any format ffmpeg can read is
+   * accepted (transcoded to Opus on first use); Opus-in-Ogg plays as-is.
+   * Resolves when the clip finishes or is superseded by another play()/hangup().
    */
   async play(file) {
-    const { packets, totalSamples } = await readOggOpus(file);
+    const opus = await ensureOpus(file);
+    const { packets, totalSamples } = await readOggOpus(opus);
     if (!packets.length) return { played: false, reason: "empty clip" };
 
     this._play?.stop();
@@ -260,7 +281,9 @@ export class WaAudio extends EventEmitter {
   }
 
   _setSpeaking(on) {
-    // Light up the "this avatar is speaking" indicator in each meeting Space.
+    // Show the "speaking" indicator, and (re)assert mic-on while we do — the
+    // one-shot mic-state announce at join sometimes doesn't stick on the other
+    // clients' UI, leaving a phantom muted icon. See #10.
     for (const spaceName of this.client.spaces.keys()) {
       const mine = this.client.spaces.get(spaceName);
       if (!mine) continue;
@@ -268,8 +291,12 @@ export class WaAudio extends EventEmitter {
         this.client._send({
           updateSpaceUserMessage: {
             spaceName,
-            user: { spaceUserId: mine.spaceUserId, showVoiceIndicator: !!on },
-            updateMask: { paths: ["showVoiceIndicator"] },
+            user: {
+              spaceUserId: mine.spaceUserId,
+              showVoiceIndicator: !!on,
+              microphoneState: true,
+            },
+            updateMask: { paths: ["showVoiceIndicator", "microphoneState"] },
           },
         });
       } catch {}
