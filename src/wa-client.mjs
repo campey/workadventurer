@@ -246,6 +246,11 @@ export class WorkAdventureClient extends EventEmitter {
     const spaceUserId = answer.joinSpaceAnswer?.spaceUserId ?? "";
     this.spaces.set(spaceName, { spaceUserId, propertiesToSync: props });
     this.emit("log", `joined space ${spaceName} as ${spaceUserId}`);
+    // "Watch" the Space. Without this the back keeps us in `users` but not
+    // `usersToNotify`, and never sets up peer connections (WebRTCCommunication
+    // Strategy.addUser bails for non-watchers). This is what makes the meeting
+    // actually connect.
+    this._send({ addSpaceFilterMessage: { spaceFilterMessage: { spaceName } } });
     this.emit("spaceJoined", { spaceName, spaceUserId });
     if (this.micOn) this.setSpaceMicState(spaceName, true);
     return spaceUserId;

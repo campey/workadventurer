@@ -55,6 +55,7 @@ wa leave                          # disconnect and stop the daemon
 | `wa greet <player>` | walk over + "hi" speech bubble (no state change) |
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text bubble |
 | `wa clear-bubble` | dismiss whatever bubble is showing |
+| `wa sound <name\|file>` | play a clip into the proximity voice chat (see [Voice](#9-voice)) |
 | `wa goto <x> <y>` | walk to raw coordinates |
 
 `--if-running` makes any command a silent no-op when no daemon is up (used by
@@ -118,7 +119,7 @@ The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
 
 | Call | Effect |
 |---|---|
-| `GET /state` | `{ name, pos, facing, area, following:{name,paused}|null, players:[…] }` |
+| `GET /state` | `{ name, pos, facing, area, audio:{peers,connected,inMeeting}|null, following:…, players:[…] }` |
 | `POST /goto` `{x,y}` or `{player}` | walk there (cancels any follow) |
 | `POST /follow` `{player}` | approach + follow (searches the map if not in view) |
 | `POST /unfollow` | stop and forget |
@@ -126,6 +127,7 @@ The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
 | `POST /greet` `{player}` | walk over + "hi" speech bubble |
 | `POST /speech-bubble` `{text}` / `POST /thought-bubble` `{text}` | text bubble |
 | `POST /clear-bubble` | dismiss whatever bubble is showing |
+| `POST /sound` `{name}` | play a clip into the proximity voice chat |
 | `POST /leave` | disconnect and exit |
 
 The daemon answers WebSocket pings, keeps the follow loop running, and
@@ -139,6 +141,9 @@ reconnects (bounded retries) if the socket drops.
 | `src/wa-client.mjs` | `WorkAdventureClient` — connection, protocol, world model, `navTo()` / `walkTo()` / `follow()` / `speechBubble()` |
 | `src/map-nav.mjs` | `MapNav` — A\* over the tile grid + line-of-sight smoothing, spawn tiles, named areas, `nearestEmptyArea()` |
 | `src/wa-daemon.mjs` | long-running presence + localhost HTTP control API |
+| `src/wa-audio.mjs` | `WaAudio` — P2P WebRTC (werift) into proximity meetings; publishes Opus |
+| `src/ogg-opus.mjs` | dependency-free Ogg demuxer — Opus packets out of `.ogg`/`.opus` |
+| `sounds/` | bundled Ogg/Opus clips for `wa sound` |
 | `src/config.mjs` | config resolution (flags → env → `~/.config` → defaults) |
 | `src/find-player.mjs` | standalone one-shot: connect → locate → walk over → greet → follow |
 | `plugin/` | Claude Code plugin — hooks, `/wa` command, skill, subagent |
@@ -311,6 +316,30 @@ this is text over the avatar, not voice.)
 No application-level `pingMessage` was seen from the deployed server —
 WebSocket protocol-level ping/pong (handled by the `ws` library automatically)
 is enough to stay connected.
+
+### 9. Voice
+
+`wa sound <name>` plays an audio clip into the proximity voice chat — the same
+channel real users talk on. The avatar is a genuine mic participant, not a
+special case. The path (`src/wa-audio.mjs`, `src/ogg-opus.mjs`):
+
+1. Connect with `microphoneState=true`.
+2. On entering a bubble the server sends `joinSpaceRequestMessage`. Answer with
+   a `joinSpaceQuery`, then **`addSpaceFilterMessage`** to *watch* the Space —
+   without the watch the back never sets up peer connections.
+3. The server picks a transport: `switchMessage { strategy: "WEBRTC" }` for
+   small bubbles (P2P mesh), LiveKit once a meeting grows past its threshold.
+4. Each other member's client sends a WebRTC **offer** (simple-peer `SignalData`
+   JSON — SDP + trickle ICE) via `PrivateSpaceEvent.webRtcSignal`. We answer
+   with [werift](https://github.com/shinyoshiaki/werift-webrtc), one peer
+   connection per `connectionId`. A data channel is negotiated too — simple-peer
+   only reports "connected" once it opens.
+5. `wa sound` streams a pre-encoded Ogg/Opus clip straight out as RTP (WebRTC
+   audio is Opus, so no transcoding). Bundled clips live in `sounds/`; a path
+   argument plays any local `.ogg`/`.opus`.
+
+LiveKit escalation is detected and logged but not yet implemented — audio stops
+publishing when a meeting switches away from WEBRTC.
 
 ---
 

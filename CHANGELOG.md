@@ -8,11 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`wa sound <name|file>`** (`POST /sound`) — play an audio clip into the
+  WorkAdventure **proximity voice chat**. The avatar joins the meeting as a real
+  mic participant: answers the P2P WebRTC offer with
+  [werift](https://github.com/shinyoshiaki/werift-webrtc) (one peer per
+  `connectionId`), then streams a pre-encoded Ogg/Opus clip out as RTP. New
+  `src/wa-audio.mjs` + dependency-free `src/ogg-opus.mjs`; bundled clips in
+  `sounds/`. `wa-client.mjs` gained the Space/meeting layer (query round-trips,
+  `joinSpaceQuery` + `addSpaceFilterMessage`, `spaceEvent` plumbing) and a
+  `micOn` option. First step toward agent speech (issue #2). LiveKit escalation
+  is detected but not yet implemented.
 - **`wa clear-bubble`** (`POST /clear-bubble`, `WaClient.clearBubble()`) —
   dismiss whatever speech or thought bubble is showing. WorkAdventure clears the
   bubble on an empty `SayMessage`. Closes #1.
-- **`/state` now reports `facing`** (`up`/`right`/`down`/`left`); `wa status`
-  shows it inline.
+- **`/state` now reports `facing`** (`up`/`right`/`down`/`left`) and `audio`
+  (`{peers, connected, inMeeting}`); `wa status` shows `facing` inline.
 
 ### Changed
 

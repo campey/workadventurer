@@ -30,6 +30,7 @@ yourself.
 | `wa greet <player>` | walk over + "hi" speech bubble (no state change) |
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text over the avatar's head |
 | `wa clear-bubble` | dismiss whatever bubble is showing |
+| `wa sound <name>` | play a clip (`chime`, `blip`) into the proximity voice chat — needs someone in the bubble |
 | `wa goto <x> <y>` | walk to raw coordinates |
 | `wa leave` | disconnect and stop the daemon |
 

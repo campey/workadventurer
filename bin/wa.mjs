@@ -33,6 +33,7 @@ const USAGE = `wa — WorkAdventure presence control
   wa speech-bubble <text…>
   wa thought-bubble <text…>
   wa clear-bubble             dismiss whatever bubble is showing
+  wa sound <name|file>        play a clip into the proximity voice chat
 
   global: --json  --if-running (no-op if the daemon isn't up)  --port <P>
 `;
@@ -148,7 +149,7 @@ function report(json) {
   if (flags.json) { process.stdout.write(JSON.stringify(json, null, 2) + "\n"); return; }
   if (json.raw) { process.stdout.write(String(json.raw).trim() + "\n"); return; }
   const bits = [];
-  for (const k of ["following", "goingTo", "quietSpot", "greeted", "speechBubble", "thoughtBubble", "nothingToResume", "alreadyQuiet", "alreadyFollowing", "leaving"]) {
+  for (const k of ["following", "goingTo", "quietSpot", "greeted", "speechBubble", "thoughtBubble", "sound", "nothingToResume", "alreadyQuiet", "alreadyFollowing", "leaving"]) {
     if (json[k] !== undefined && json[k] !== null && json[k] !== false) bits.push(`${k}: ${typeof json[k] === "object" ? JSON.stringify(json[k]) : json[k]}`);
   }
   process.stdout.write((bits.length ? bits.join(", ") : "ok") + "\n");
@@ -254,6 +255,14 @@ switch (cmd) {
   case "clear-bubble": {
     await needDaemon();
     report((await api("POST", "/clear-bubble", {})).json);
+    break;
+  }
+  case "sound": {
+    if (!args[0]) die("usage: wa sound <name|file>", 2);
+    await needDaemon();
+    const r = await api("POST", "/sound", { name: args.join(" "), cwd: process.cwd() });
+    if (!r.ok) die(r.json.error || `sound failed (${r.status})`);
+    report(r.json);
     break;
   }
   default:
