@@ -60,13 +60,56 @@ wa.close();
 open-space. With no `spawn`, the client picks a random tile from the map's
 `start` layer.
 
+## Control daemon
+
+`find-player.mjs` is one-shot. For an interactive session — something else
+steering the avatar over time — run the daemon, which stays connected and serves
+a localhost HTTP API:
+
+```sh
+node src/wa-daemon.mjs &          # WA_DAEMON_PORT / WA_NAME / WA_ROOM to override
+```
+
+| Call | Effect |
+|---|---|
+| `GET /state` | `{ name, pos, area, following, players:[{name,userId,pos,room}] }` |
+| `POST /goto` `{x,y}` or `{player}` | walk there (cancels any follow) |
+| `POST /follow` `{player, greet?}` | approach, optionally greet, then follow continuously |
+| `POST /unfollow` | stop following, hold position |
+| `POST /say` `{text}` | speech bubble |
+| `POST /leave` | disconnect and exit |
+
+```sh
+curl -s localhost:8787/state
+curl -s -XPOST localhost:8787/follow -d '{"player":"David","greet":true}'
+```
+
+`$TMPDIR/wa-daemon.json` advertises the running daemon's pid/port.
+
+### As a Claude Code subagent
+
+`.claude/agents/workadventure.md` defines an agent that manages the daemon and
+translates natural-language requests into API calls, so a main session can keep
+an avatar in the room without holding the connection itself:
+
+```
+Agent(subagent_type: "workadventure",
+      prompt: "join the afrolabs open-space and follow David, greeting him")
+# then, later:
+SendMessage("workadventure", "who else is around now?")
+SendMessage("workadventure", "go wait by the Left Board Room door")
+SendMessage("workadventure", "leave the room")
+```
+
 ## Project layout
 
 | Path | What |
 |---|---|
-| `src/wa-client.mjs` | `WorkAdventureClient` — connection, protocol, world model, `navTo()` / `walkTo()` / `say()` |
-| `src/map-nav.mjs` | `MapNav` — A\* over the tile grid + line-of-sight smoothing |
-| `src/find-player.mjs` | the driver: connect → locate target → walk over → say hi → follow |
+| `src/wa-client.mjs` | `WorkAdventureClient` — connection, protocol, world model, `navTo()` / `walkTo()` / `follow()` / `say()` |
+| `src/map-nav.mjs` | `MapNav` — A\* over the tile grid + line-of-sight smoothing, spawn tiles, room areas |
+| `src/find-player.mjs` | one-shot driver: connect → locate target → walk over → say hi → follow |
+| `src/wa-daemon.mjs` | long-running presence + localhost HTTP control API |
+| `.claude/agents/workadventure.md` | Claude Code subagent that drives the daemon |
 | `scripts/build-collision.mjs` | regenerates `map/collision.json` from the live `.wam` / `.tmj` |
 | `map/collision.json` | baked collision grid + spawn tiles + named areas |
 | `proto/messages.proto` | vendored from `workadventure` tag `v1.33.5` |

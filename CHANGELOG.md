@@ -19,6 +19,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `map/collision.json` now also carries the `start` tiles and the named `.wam`
   areas; `MapNav` gains `randomSpawnPx()`, `roomAt()`, `pointOutsideRoom()`.
 
+- `src/wa-daemon.mjs` — a long-running presence that stays connected (pings,
+  keepalive, follow loop) and serves a localhost HTTP control API
+  (`/state`, `/goto`, `/follow`, `/unfollow`, `/say`, `/leave`).
+- `.claude/agents/workadventure.md` — a Claude Code subagent that starts/drives
+  the daemon, so a main session can keep an avatar in the room and steer it with
+  follow-up messages without holding the connection itself.
+
 ### Changed
 
 - Renamed `src/find-david.mjs` → `src/find-player.mjs` (the npm script too:
