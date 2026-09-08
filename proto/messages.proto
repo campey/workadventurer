@@ -1,0 +1,1927 @@
+
+syntax = "proto3";
+
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/field_mask.proto";
+
+/*********** PARTIAL MESSAGES **************/
+
+enum AvailabilityStatus {
+  UNCHANGED = 0;
+  ONLINE = 1;
+  SILENT = 2;
+  AWAY = 3;
+  JITSI = 4;
+  BBB = 5;
+  DENY_PROXIMITY_MEETING = 6;
+  SPEAKER = 7;
+  BUSY = 8;
+  DO_NOT_DISTURB = 9;
+  BACK_IN_A_MOMENT = 10;
+  LIVEKIT = 11;
+  LISTENER = 12;
+  // Set automatically when the browser refuses to play audio for lack of a user
+  // gesture. Unlike BACK_IN_A_MOMENT, which the user picks, this one is imposed and
+  // clears on the next click.
+  SOUND_BLOCKED = 13;
+}
+
+message PositionMessage {
+  int32 x = 1;
+  int32 y = 2;
+  enum Direction {
+    UP = 0;
+    RIGHT = 1;
+    DOWN = 2;
+    LEFT = 3;
+  }
+  Direction direction = 3;
+  bool moving = 4;
+}
+
+message PointMessage {
+  int32 x = 1;
+  int32 y = 2;
+}
+
+message ViewportMessage {
+  int32 left = 1;
+  int32 top = 2;
+  int32 right = 3;
+  int32 bottom = 4;
+}
+
+message CharacterTextureMessage {
+  string url = 1;
+  string id = 2;
+}
+
+message ApplicationMessage {
+  string name = 1;
+  optional string script = 2;
+  optional string doc = 3;
+  optional string description = 4;
+  optional string image = 5;
+  optional bool enabled = 6;
+  optional string regexUrl = 7;
+  optional string targetUrl = 8;
+  optional bool default = 9;
+  optional bool forceNewTab = 10;
+  optional bool allowAPI = 11;
+  optional string policy = 12;
+  optional string imageLogo = 13;
+}
+
+message CompanionTextureMessage {
+  string url = 1;
+  string id = 2;
+}
+
+// Wrapper for all messages destined to a specific zone
+message ZoneMessage {
+  int32 x = 1;
+  int32 y = 2;
+  oneof message {
+    UserJoinedZoneMessage userJoinedZoneMessage = 3;
+    GroupUpdateZoneMessage groupUpdateZoneMessage = 4;
+    UserMovedMessage userMovedMessage = 5;
+    GroupLeftZoneMessage groupLeftZoneMessage = 6;
+    UserLeftZoneMessage userLeftZoneMessage = 7;
+    EmoteEventMessage emoteEventMessage = 11;
+    PlayerDetailsUpdatedMessage playerDetailsUpdatedMessage = 12;
+    GroupUsersUpdateMessage groupUsersUpdateMessage = 13;
+  }
+}
+
+/*********** CLIENT TO SERVER MESSAGES *************/
+
+message PingMessage {
+
+}
+
+message UpdateMapToNewestMessage {
+  optional string commandId = 1;
+}
+
+message UpdateMapToNewestWithKeyMessage {
+  string mapKey = 1;
+  UpdateMapToNewestMessage updateMapToNewestMessage = 2;
+}
+
+message SetPlayerDetailsMessage {
+  google.protobuf.UInt32Value outlineColor = 3;
+  google.protobuf.BoolValue removeOutlineColor = 4;
+  google.protobuf.BoolValue showVoiceIndicator = 5;
+  AvailabilityStatus availabilityStatus = 6;
+  SetPlayerVariableMessage setVariable = 7;
+  google.protobuf.StringValue chatID = 8;
+  SayMessage sayMessage = 9;
+}
+
+message SayMessage {
+  string message = 1;
+  SayMessageType type = 2;
+}
+
+enum SayMessageType {
+  SpeechBubble = 0;
+  ThinkingCloud = 1;
+}
+
+
+message UserMovesMessage {
+  PositionMessage position = 1;
+  ViewportMessage viewport = 2;
+}
+
+message WebRtcSignal {
+  string signal = 2;
+  string connectionId = 3;
+}
+
+enum VideoQualityStreamCategory {
+  VIDEO_QUALITY_STREAM_CATEGORY_UNSPECIFIED = 0;
+  VIDEO_QUALITY_STREAM_CATEGORY_VIDEO = 1;
+  VIDEO_QUALITY_STREAM_CATEGORY_SCREEN_SHARING = 2;
+}
+
+enum VideoQualityTransportType {
+  VIDEO_QUALITY_TRANSPORT_TYPE_UNSPECIFIED = 0;
+  VIDEO_QUALITY_TRANSPORT_TYPE_P2P = 1;
+  VIDEO_QUALITY_TRANSPORT_TYPE_LIVEKIT = 2;
+}
+
+enum VideoQualityRelayProtocol {
+  VIDEO_QUALITY_RELAY_PROTOCOL_UNSPECIFIED = 0;
+  VIDEO_QUALITY_RELAY_PROTOCOL_UDP = 1;
+  VIDEO_QUALITY_RELAY_PROTOCOL_TCP = 2;
+  VIDEO_QUALITY_RELAY_PROTOCOL_TLS = 3;
+}
+
+message VideoQualitySampleMessage {
+  uint64 clientEventTimeMs = 1;
+  optional uint64 sampleSeq = 2;
+  string streamId = 3;
+  optional string connectionId = 4;
+  optional string sessionId = 5;
+  optional string remoteUserUuid = 6;
+  string remoteSpaceUserId = 7;
+  string spaceName = 8;
+  VideoQualityStreamCategory streamCategory = 9;
+  VideoQualityTransportType transportType = 10;
+  optional bool relay = 11;
+  optional VideoQualityRelayProtocol relayProtocol = 12;
+  optional string livekitServerUrl = 13;
+  double fps = 14;
+  optional double fpsStdDev = 15;
+  double jitter = 16;
+  double bandwidthBytesPerSecond = 17;
+  uint32 frameWidth = 18;
+  uint32 frameHeight = 19;
+  optional string mimeType = 20;
+}
+
+message VideoQualityReportMessage {
+  repeated VideoQualitySampleMessage samples = 1;
+}
+
+message ReportPlayerMessage {
+  string reportedUserUuid = 1;
+  string reportComment = 2;
+}
+
+message BanPlayerMessage {
+  string banUserUuid = 1;
+  string banUserName = 2;
+}
+
+message UpdateChatIdMessage {
+  string email = 1;
+  string chatId = 2;
+}
+
+message LeaveChatRoomAreaMessage {
+  string roomID = 1;
+}
+
+
+
+
+message EmotePromptMessage {
+  string emote = 2;
+}
+
+message EmoteEventMessage {
+  int32 actorUserId = 1;
+  string emote = 2;
+}
+
+message FollowRequestMessage {
+  int32 leader = 1;
+  bool forceFollow = 2;
+}
+
+message FollowConfirmationMessage {
+  int32 leader = 1;
+  int32 follower = 2;
+}
+
+message FollowAbortMessage {
+  int32 leader = 1;
+  int32 follower = 2;
+}
+
+message LockGroupPromptMessage {
+  bool lock = 1;
+}
+
+/*********** MAP EDITOR MESSAGES *************/
+
+message EditMapMessage {
+  oneof message {
+    ModifyAreaMessage modifyAreaMessage = 1;
+    CreateAreaMessage createAreaMessage = 2;
+    DeleteAreaMessage deleteAreaMessage = 3;
+    ModifyEntityMessage modifyEntityMessage = 4;
+    CreateEntityMessage createEntityMessage = 5;
+    DeleteEntityMessage deleteEntityMessage = 6;
+    UpdateWAMSettingsMessage updateWAMSettingsMessage = 7;
+    ErrorCommandMessage errorCommandMessage = 8;
+    UploadEntityMessage uploadEntityMessage = 9;
+    ModifyCustomEntityMessage modifyCustomEntityMessage = 10;
+    DeleteCustomEntityMessage deleteCustomEntityMessage = 11;
+    ModifiyWAMMetadataMessage modifiyWAMMetadataMessage = 12;
+    UploadFileMessage uploadFileMessage = 13;
+  }
+}
+
+message ErrorCommandMessage {
+  string reason = 1;
+}
+
+message UpdateWAMSettingsMessage {
+  oneof message {
+    UpdateMegaphoneSettingMessage updateMegaphoneSettingMessage = 1;
+    UpdateRecordingSettingMessage updateRecordingSettingMessage = 2;
+  }
+}
+
+message UpdateMegaphoneSettingMessage {
+  google.protobuf.Value settings = 1;
+}
+
+message UpdateRecordingSettingMessage {
+  google.protobuf.Value settings = 1;
+}
+
+message EditMapCommandMessage {
+  string id = 1;
+  EditMapMessage editMapMessage = 2;
+}
+
+message EditMapCommandsArrayMessage {
+  repeated EditMapCommandMessage editMapCommands = 1;
+}
+
+message EditMapCommandWithKeyMessage {
+  string mapKey = 1;
+  EditMapCommandMessage editMapCommandMessage = 2;
+  repeated string connectedUserTags = 3;
+  bool userCanEdit = 4;
+  string userUUID = 5;
+}
+
+message ModifyAreaMessage {
+  string id = 1;
+  optional string name = 2;
+  optional int32 x = 3;
+  optional int32 y = 4;
+  optional uint32 width = 5;
+  optional uint32 height = 6;
+  repeated google.protobuf.Value properties = 7;
+  optional bool modifyProperties = 8;
+  optional bool modifyServerData = 9;
+}
+
+message DeleteAreaMessage {
+  string id = 1;
+}
+
+message CreateAreaMessage {
+  string id = 1;
+  int32 x = 2;
+  int32 y = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+  string name = 6;
+  repeated google.protobuf.Value properties = 7;
+}
+
+message CreateEntityMessage {
+  string id = 1;
+  int32 x = 2;
+  int32 y = 3;
+  string collectionName = 4;
+  string prefabId = 5;
+  repeated google.protobuf.Value properties = 6;
+  optional string name = 7;
+  uint32 width = 8;
+  uint32 height = 9;
+}
+
+message DeleteEntityMessage {
+  string id = 1;
+}
+
+message CollisionGridRow {
+  repeated uint32 row = 1;
+}
+
+enum CustomEntityDirection {
+  Up = 0;
+  Right = 1;
+  Down = 2;
+  Left = 3;
+}
+
+message UploadEntityMessage {
+  bytes file = 1;
+  string id = 2;
+  string name = 3;
+  repeated string tags = 4;
+  string imagePath = 5;
+  CustomEntityDirection direction = 6;
+  string color = 7;
+  optional google.protobuf.Value collisionGrid = 8;
+  optional int32 depthOffset = 9;
+  // UUID of the user who uploaded the entity. Always overwritten by map-storage with the
+  // authenticated user UUID: any value sent by the client is discarded. It is sent back in the
+  // broadcast copy of the command so every client knows who owns the asset.
+  optional string ownerId = 10;
+}
+
+message UploadFileMessage {
+  bytes file = 1;
+  string id = 2;
+  string name = 3;
+  string propertyId = 4;
+  optional string areaId = 5;
+  optional string entityId = 6;  
+}
+
+message ModifyCustomEntityMessage {
+  string id = 1;
+  string name = 2;
+  repeated string tags = 3;
+  optional google.protobuf.Value collisionGrid = 4;
+  optional int32 depthOffset = 5;
+}
+
+message DeleteCustomEntityMessage {
+  string id = 1;
+}
+
+message ModifyEntityMessage {
+  string id = 1;
+  int32 x = 2;
+  int32 y = 3;
+  repeated google.protobuf.Value properties = 4;
+  optional bool modifyProperties = 5;
+  optional string name = 6;
+  uint32 width = 7;
+  uint32 height = 8;
+}
+
+// Transport envelope for websocket frames sent from front to pusher.
+message FrontToPusherWebSocketMessage {
+  uint32 nonce = 1;
+  ClientToServerMessage message = 2;
+}
+
+// Transport envelope for websocket frames sent from pusher to front.
+message PusherToFrontWebSocketMessage {
+  uint32 nonce = 1;
+  ServerToClientMessage message = 2;
+}
+
+message ClientToServerMessage {
+  oneof message {
+    JoinRoomFrontMessage joinRoomFrontMessage = 1;
+    UserMovesMessage userMovesMessage = 2;
+    ViewportMessage viewportMessage = 4;
+    ItemEventMessage itemEventMessage = 5;
+    SetPlayerDetailsMessage setPlayerDetailsMessage = 6;
+    PlayGlobalMessage playGlobalMessage = 9;
+    ReportPlayerMessage reportPlayerMessage = 11;
+    EmotePromptMessage emotePromptMessage = 13;
+    VariableMessage variableMessage = 14;
+    FollowRequestMessage followRequestMessage = 15;
+    FollowConfirmationMessage followConfirmationMessage = 16;
+    FollowAbortMessage followAbortMessage = 17;
+    LockGroupPromptMessage lockGroupPromptMessage = 18;
+    QueryMessage queryMessage = 20;
+    AbortQueryMessage abortQueryMessage = 27;
+    PingMessage pingMessage = 21;
+    //XmppMessage xmppMessage = 22;
+    AskPositionMessage askPositionMessage = 23;
+    EditMapCommandMessage editMapCommandMessage = 24;
+    AddSpaceFilterMessage addSpaceFilterMessage = 25;
+    RemoveSpaceFilterMessage removeSpaceFilterMessage = 26;
+    UpdateSpaceUserMessage updateSpaceUserMessage = 30;
+    UpdateSpaceMetadataMessage updateSpaceMetadataMessage = 35;
+    BanPlayerMessage banPlayerMessage = 41;
+    UpdateChatIdMessage updateChatIdMessage = 42;
+    PublicEventFrontToPusher publicEvent = 43;
+    PrivateEventFrontToPusher privateEvent = 44;
+    BackEventFrontToPusherMessage backEvent = 47;
+    LeaveChatRoomAreaMessage leaveChatRoomAreaMessage = 45;
+    MeetingInvitationRequestMessage meetingInvitationRequestMessage = 48;
+    MeetingInvitationResponseMessage meetingInvitationResponseMessage = 49;
+    SetAreaPropertyVariableMessage setAreaPropertyVariableMessage = 46;
+    VideoQualityReportMessage videoQualityReportMessage = 50;
+    UserMessageReadMessage userMessageReadMessage = 51;
+  }
+}
+
+message ReceivedEventMessage {
+  string name = 1;
+  google.protobuf.Value data = 2;
+  optional int32 senderId = 3;
+}
+
+message ModifiyWAMMetadataMessage{
+  string name = 1;
+  optional string description = 2;
+  optional string copyright = 3;
+  optional string thumbnail = 4;
+  optional string tags = 5;
+}
+
+/************ BI-DIRECTIONAL MESSAGES **************/
+
+message ItemEventMessage {
+  int32 itemId = 1;
+  string event = 2;
+  string stateJson = 3;
+  string parametersJson = 4;
+}
+
+message VariableMessage {
+  string name = 1;
+  string value = 2;
+}
+
+// Message to set/update a property variable attached to an area property
+message SetAreaPropertyVariableMessage {
+  string areaId = 1;
+  string propertyId = 2;
+  string key = 3;
+  string value = 4;
+}
+
+// Message for broadcasting property variable changes and initial state
+message AreaPropertyVariableMessage {
+  string areaId = 1;
+  string propertyId = 2;
+  string key = 3;
+  string value = 4;
+}
+
+message SetPlayerVariableMessage {
+  string name = 1;
+  string value = 2;
+  bool public = 3;
+  bool persist = 4;
+  google.protobuf.Int32Value ttl = 5;
+  enum Scope {
+    ROOM = 0;
+    WORLD = 1;
+  }
+  Scope scope = 6;
+}
+
+// Should replace the VariableMessage in the long run.
+// Not working because Value seems to be serialized differently in ts-proto and grpc-node....
+/*message UpdateVariableMessage {
+  string name = 1;
+  google.protobuf.Value value = 2;
+}*/
+
+
+/**
+ * A variable, along the tag describing who it is targeted at
+ */
+message VariableWithTagMessage {
+  string name = 1;
+  string value = 2;
+  string readableBy = 3;
+}
+
+message PlayGlobalMessage {
+  string type = 1;
+  string content = 2;
+  bool broadcastToWorld = 3;
+}
+
+/************ Queries and answers ****************/
+
+message QueryMessage {
+  int32 id = 1;
+  oneof query {
+    JitsiJwtQuery jitsiJwtQuery = 2;
+    JoinBBBMeetingQuery joinBBBMeetingQuery = 20;
+    RoomTagsQuery roomTagsQuery = 3;
+    EmbeddableWebsiteQuery embeddableWebsiteQuery = 4;
+    RoomsFromSameWorldQuery roomsFromSameWorldQuery = 5;
+    SendEventQuery sendEventQuery = 6;
+    SearchMemberQuery searchMemberQuery = 7;
+    GetMemberQuery getMemberQuery = 8;
+    IceServersQuery iceServersQuery = 9;
+    ChatMembersQuery chatMembersQuery = 10;
+    SearchTagsQuery searchTagsQuery = 11;
+    OauthRefreshTokenQuery oauthRefreshTokenQuery = 12;
+    EnterChatRoomAreaQuery enterChatRoomAreaQuery = 13;
+    JoinSpaceQuery joinSpaceQuery = 14;
+    LeaveSpaceQuery leaveSpaceQuery = 15;
+    MapStorageJwtQuery mapStorageJwtQuery = 16;
+    GetRecordingsQuery getRecordingsQuery = 17;
+    DeleteRecordingQuery deleteRecordingQuery = 18;
+    GetSignedUrlQuery getSignedUrlQuery = 19;
+    StartRecordingQuery startRecordingQuery = 21;
+    StopRecordingQuery stopRecordingQuery = 22;
+  }
+}
+
+message GetSignedUrlQuery {
+  string key = 1;
+}
+message AbortQueryMessage {
+  int32 id = 1;
+}
+
+message MapStorageJwtQuery {
+}
+
+message JitsiJwtQuery {
+  string jitsiRoom = 1;
+}
+
+message JoinBBBMeetingQuery {
+  string meetingId = 1; /* a hash of domain, instance and localMeetingId */
+  string localMeetingId = 2; /* bbbMeeting field from the map  */
+  string meetingName = 3;
+  // Fix me Pusher linter fails because eslint-plugin version < 3.0
+  // map<string, string> userdata = 3;
+}
+
+message RoomTagsQuery {
+}
+
+message EmbeddableWebsiteQuery {
+  string url = 1;
+}
+
+message RoomsFromSameWorldQuery {
+}
+
+message SendEventQuery {
+  string name = 1;
+  google.protobuf.Value data = 2;
+  repeated int32 targetUserIds = 3;
+}
+
+message SearchMemberQuery {
+  string searchText = 1;
+}
+
+message GetMemberQuery {
+  string uuid = 1;
+}
+
+message ChatMembersQuery {
+  string searchText = 1;
+}
+
+message OauthRefreshTokenQuery {
+  string tokenToRefresh = 1;
+  optional string provider = 2;
+  optional string userIdentifier = 3;
+}
+
+message  SearchTagsQuery{
+  string searchText = 1;
+}
+
+message EnterChatRoomAreaQuery{
+  string roomID = 1;
+}
+
+message JoinSpaceQuery{
+  string spaceName = 1;
+  FilterType filterType = 2;
+  repeated string propertiesToSync = 3;
+}
+
+message LeaveSpaceQuery{
+  string spaceName = 1;
+}
+
+message GetRecordingsQuery {
+  optional string uuid = 2;
+}
+
+message DeleteRecordingQuery {
+  string recordingId = 1;
+}
+
+message StartRecordingQuery {
+  string spaceName = 1;
+}
+
+message StopRecordingQuery {
+  string spaceName = 1;
+}
+
+message AnswerMessage {
+  int32 id = 1;
+  oneof answer {
+    ErrorMessage error = 2;
+    JitsiJwtAnswer jitsiJwtAnswer = 3;
+    JoinBBBMeetingAnswer joinBBBMeetingAnswer = 4;
+    RoomTagsAnswer roomTagsAnswer = 5;
+    EmbeddableWebsiteAnswer embeddableWebsiteAnswer = 6;
+    RoomsFromSameWorldAnswer roomsFromSameWorldAnswer = 7;
+    SendEventAnswer sendEventAnswer = 8;
+    SearchMemberAnswer searchMemberAnswer = 9;
+    GetMemberAnswer getMemberAnswer = 10;
+    IceServersAnswer iceServersAnswer = 11;
+    ChatMembersAnswer chatMembersAnswer = 12;
+    SearchTagsAnswer searchTagsAnswer = 13;
+    OauthRefreshTokenAnswer oauthRefreshTokenAnswer = 14;
+    EnterChatRoomAreaAnswer enterChatRoomAreaAnswer = 15;
+    JoinSpaceAnswer joinSpaceAnswer = 16;
+    LeaveSpaceAnswer leaveSpaceAnswer = 17;
+    MapStorageJwtAnswer mapStorageJwtAnswer = 18;
+    GetRecordingsAnswer getRecordingsAnswer = 19;
+    DeleteRecordingAnswer deleteRecordingAnswer = 20;
+    GetSignedUrlAnswer getSignedUrlAnswer = 21;
+    StartRecordingAnswer startRecordingAnswer = 22;
+    StopRecordingAnswer stopRecordingAnswer = 23;
+  }
+}
+
+
+
+message JitsiJwtAnswer {
+  string jwt = 1;
+  string url = 2;
+}
+
+message MapStorageJwtAnswer {
+  string jwt = 1;
+}
+
+message JoinBBBMeetingAnswer {
+  string meetingId = 1;
+  string clientURL = 2;
+}
+
+message RoomTagsAnswer {
+  repeated string tags = 1;
+}
+
+message EmbeddableWebsiteAnswer {
+  string url = 1;
+  bool state = 2;
+  bool embeddable = 3;
+  optional string message = 4;
+}
+
+message RoomShortDescription {
+  string name = 1;
+  string roomUrl = 2;
+  optional string wamUrl = 3;
+  optional string description = 4;
+  optional string copyright = 5;
+  optional string thumbnail = 6;
+  optional int32 areasSearchable = 7;
+  optional int32 entitiesSearchable = 8;
+}
+
+message RoomsFromSameWorldAnswer {
+  repeated RoomShortDescription roomDescriptions = 1;
+}
+
+message SendEventAnswer {
+}
+
+message StartRecordingAnswer {
+}
+
+message StopRecordingAnswer {
+}
+
+message SearchMemberAnswer {
+  repeated Member members = 1;
+}
+
+message GetMemberAnswer {
+  Member member = 1;
+}
+
+message ChatMembersAnswer {
+  int64 total = 1;
+  repeated ChatMember members = 2;
+}
+
+message OauthRefreshTokenAnswer {
+  string message = 1;
+  string token = 2;
+}
+message EnterChatRoomAreaAnswer{
+}
+
+message JoinSpaceAnswer{
+  string spaceUserId = 1;
+}
+
+message LeaveSpaceAnswer{
+}
+
+message SearchTagsAnswer{
+  repeated string tags = 1;
+}
+
+message GetRecordingsAnswer {
+  repeated Recording recordings = 1;
+}
+
+message DeleteRecordingAnswer {
+  bool success = 1;
+  optional string errorMessage = 2;
+}
+
+message GetSignedUrlAnswer {
+  string signedUrl = 1;
+}
+
+message Member {
+  string id = 1;
+  optional string name = 2;
+  optional string email = 3;
+  optional string visitCardUrl = 4;
+  optional string chatID = 5;
+}
+
+message IceServer {
+  repeated string urls = 1;
+  optional string username = 2;
+  optional string credential = 3;
+  optional string credentialType = 4;
+}
+
+message IceServersAnswer {
+  repeated IceServer iceServers = 1;
+}
+
+message IceServersQuery {}
+message ChatMember {
+  string uuid = 1;
+  optional string wokaName = 2;
+  optional string email = 3;
+  optional string chatId = 4;
+  repeated string tags = 5;
+}
+
+message Recording {
+  string timestamp = 1;
+  string baseFilename = 2;
+  VideoFile videoFile = 3;
+  repeated Thumbnail thumbnails = 4;
+}
+
+message VideoFile {
+  string key = 1;
+  string filename = 2;
+  optional uint64 size = 3;
+}
+
+message Thumbnail {
+  string key = 1;
+  string url = 2;
+  string filename = 3;
+  optional uint64 size = 4;
+  optional int32 sequenceNumber = 5;
+  optional int32 timestampSeconds = 6;
+}
+
+/*********** PUSHER TO BACK QUERYMESSAGES *************/
+
+message SpaceQueryMessage {
+  int32 id = 1;
+  string spaceName = 2;
+  oneof query {
+    AddSpaceUserQuery addSpaceUserQuery = 5;
+    RemoveSpaceUserQuery removeSpaceUserQuery = 6;
+    StartSpaceRecordingQuery startSpaceRecordingQuery = 7;
+    StopSpaceRecordingQuery stopSpaceRecordingQuery = 8;
+  }
+}
+
+message AddSpaceUserQuery {
+  string spaceName = 1;
+  SpaceUser user = 2;
+  FilterType filterType = 3;
+}
+
+message RemoveSpaceUserQuery { 
+  string spaceName = 1;
+  string spaceUserId = 2;
+}
+
+message StartSpaceRecordingQuery {
+  string spaceName = 1;
+  string spaceUserId = 2;
+}
+
+message StopSpaceRecordingQuery {
+  string spaceName = 1;
+  string spaceUserId = 2;
+}
+
+/*********** PUSHER TO BACK ANSWER MESSAGES *************/
+
+message SpaceAnswerMessage {
+  int32 id = 1;
+  string spaceName = 2;
+  oneof answer {
+    ErrorMessage error = 3;
+    AddSpaceUserAnswer addSpaceUserAnswer = 4;
+    RemoveSpaceUserAnswer removeSpaceUserAnswer = 5;
+    JoinSpaceAnswer joinSpaceAnswer = 6;
+    LeaveSpaceAnswer leaveSpaceAnswer = 7;
+    StartSpaceRecordingAnswer startSpaceRecordingAnswer = 8;
+    StopSpaceRecordingAnswer stopSpaceRecordingAnswer = 9;
+  }
+}
+
+message AddSpaceUserAnswer {
+  string spaceName = 1;
+  string spaceUserId = 2;
+}
+
+message RemoveSpaceUserAnswer {
+  string spaceName = 1;
+  string spaceUserId = 2;
+}
+
+message StartSpaceRecordingAnswer {
+}
+
+message StopSpaceRecordingAnswer {
+}
+
+enum RecordingWebhookPhase {
+  RECORDING_WEBHOOK_PHASE_UNSPECIFIED = 0;
+  RECORDING_WEBHOOK_PHASE_STARTED = 1;
+  RECORDING_WEBHOOK_PHASE_ENDED = 2;
+}
+
+message HandleRecordingWebhookRequest {
+  string spaceName = 1;
+  string eventId = 2;
+  string recordingSessionId = 3;
+  string egressId = 4;
+  string roomName = 5;
+  RecordingWebhookPhase phase = 6;
+  string status = 7;
+  string error = 8;
+  int64 createdAt = 9;
+}
+
+message HandleLivekitWebhookRequest {
+  string spaceName = 1;
+  string recordingSessionId = 2;
+  bytes rawBody = 3;
+  string authorizationHeader = 4;
+}
+
+/*********** SERVER TO CLIENT MESSAGES *************/
+
+message UserMovedMessage {
+  int32 userId = 1;
+  PositionMessage position = 2;
+}
+
+message MoveToPositionMessage{
+  PositionMessage position = 1;
+}
+
+message LocatePositionMessage{
+  PositionMessage position = 1;
+  int32 userId = 2;
+  string userUuid = 3;
+}
+
+message SubMessage {
+  oneof message {
+    UserMovedMessage userMovedMessage = 1;
+    GroupUpdateMessage groupUpdateMessage = 2;
+    GroupDeleteMessage groupDeleteMessage = 3;
+    UserJoinedMessage userJoinedMessage = 4;
+    UserLeftMessage userLeftMessage = 5;
+    ItemEventMessage itemEventMessage = 6;
+    EmoteEventMessage emoteEventMessage = 7;
+    VariableMessage variableMessage = 8;
+    ErrorMessage errorMessage = 9;
+    PlayerDetailsUpdatedMessage playerDetailsUpdatedMessage = 10;
+    PingMessage pingMessage = 11;
+    EditMapCommandMessage editMapCommandMessage = 13;
+    AddSpaceUserMessage addSpaceUserMessage = 16;
+    UpdateSpaceUserPusherToFrontMessage updateSpaceUserMessage = 17;
+    RemoveSpaceUserPusherToFrontMessage removeSpaceUserMessage = 18;
+    ReceivedEventMessage receivedEventMessage = 20;
+    UpdateSpaceMetadataMessage updateSpaceMetadataMessage = 21;
+    GroupUsersUpdateMessage groupUsersUpdateMessage = 24;
+    // FIXME: remove all this
+    KickOffMessage kickOffMessage = 22;
+    PublicEvent publicEvent = 29;
+    PrivateEventPusherToFront privateEvent = 30;
+
+    SpaceDestroyedMessage spaceDestroyedMessage = 23;
+    InitSpaceUsersMessage initSpaceUsersMessage = 25;
+    AreaPropertyVariableMessage areaPropertyVariableMessage = 26;
+    DuplicateUserConnectedMessage duplicateUserConnectedMessage = 27;
+  }
+}
+
+message BatchMessage {
+  string event = 1; // FIXME: event seems to be useless
+  repeated SubMessage payload = 2;
+}
+
+message GroupUpdateMessage {
+  int32 groupId = 1;
+  PointMessage position = 2;
+  google.protobuf.UInt32Value groupSize = 3;
+  google.protobuf.BoolValue locked = 4;
+  repeated int32 userIds = 5;
+}
+
+message GroupDeleteMessage {
+  int32 groupId = 1;
+}
+
+message UserJoinedMessage {
+  int32 userId = 1;
+  string name = 3;
+  repeated CharacterTextureMessage characterTextures = 4;
+  PositionMessage position = 5;
+  CompanionTextureMessage companionTexture = 6;
+  string visitCardUrl = 7;
+  string userUuid = 8;
+  uint32 outlineColor = 9;
+  bool hasOutline = 10;
+  AvailabilityStatus availabilityStatus = 11;
+  map<string, string> variables = 12;
+  optional string chatID = 13;
+  SayMessage sayMessage = 14;
+}
+
+message UserLeftMessage {
+  int32 userId = 1;
+}
+
+/*
+ * ErrorMessage is only used to console.error the message in the front
+ */
+message ErrorMessage {
+  string message = 1;
+}
+
+/*
+ * ErrorScreenMessage is used to show the ErrorScreen in the front
+ */
+message ErrorScreenMessage {
+  string type = 1;
+  google.protobuf.StringValue code = 2;
+  google.protobuf.StringValue title = 3;
+  google.protobuf.StringValue subtitle = 4;
+  google.protobuf.StringValue details = 5;
+  google.protobuf.Int32Value timeToRetry = 6;
+  google.protobuf.BoolValue canRetryManual = 7;
+  google.protobuf.StringValue urlToRedirect = 8;
+  google.protobuf.StringValue buttonTitle = 9;
+  google.protobuf.StringValue image = 10;
+  google.protobuf.StringValue imageLogo = 11;
+}
+
+message ItemStateMessage {
+  int32 itemId = 1;
+  string stateJson = 2;
+}
+
+message GroupUsersUpdateMessage {
+  int32 groupId = 1;
+  repeated int32 userIds = 2;
+}
+
+message RoomConnectedMessage {
+  EditMapCommandsArrayMessage editMapCommandsArrayMessage = 13;
+  repeated string tag = 5;
+}
+
+message RoomJoinedMessage {
+  //repeated UserJoinedMessage user = 1;
+  //repeated GroupUpdateMessage group = 2;
+  repeated ItemStateMessage item = 3;
+  int32 currentUserId = 4;
+  repeated VariableMessage variable = 6;
+  string userRoomToken = 7;
+  // We send the current skin of the current player.
+  repeated CharacterTextureMessage characterTextures = 8;
+  bool activatedInviteUser = 9;
+  repeated VariableMessage playerVariable = 10;
+  repeated ApplicationMessage applications = 11;
+  bool canEdit = 16;
+  CompanionTextureMessage companionTexture = 18;
+  repeated AreaPropertyVariableMessage areaPropertyVariable = 19;
+}
+
+message WebRtcStartMessage {
+  string userId = 1;
+  bool initiator = 3;
+  string connectionId = 4;
+}
+
+message MeetingConnectionRestartMessage {
+  // Optional. Present for WebRTC reconnections to specify which peer to reconnect with.
+  // Absent for LiveKit reconnections, where no specific peer is targeted.
+  optional string userId = 1;
+  // Optional for backward compatibility during rolling deployments.
+  // Once all clients send it, this can become required in the next protocol version.
+  optional string connectionId = 2;
+}
+
+message WebRtcDisconnectMessage {
+  string userId = 1;
+}
+
+message TeleportMessageMessage{
+  string map = 1;
+}
+
+message SendUserMessage{
+  string type = 1;
+  string message = 2;
+  // Identifier of the message on the admin side. Sent back by the client in a
+  // UserMessageReadMessage once the message has been read, so the admin can stop sending it.
+  // Empty when the admin did not provide one.
+  string id = 3;
+}
+
+// Sent by the client when the user acknowledged a message received in a SendUserMessage
+// (typically by clicking the "Ok" button of the moderation warning popup).
+message UserMessageReadMessage{
+  string id = 1;
+}
+
+message WorldFullWarningMessage{
+}
+message WorldFullWarningToRoomMessage{
+  string roomId = 1;
+}
+message RefreshRoomPromptMessage{
+  string roomId = 1;
+}
+message RefreshRoomMessage{
+  string roomId = 1;
+  int32 versionNumber = 2;
+  optional int32 timeToRefresh = 4;
+}
+
+message DeleteMapMessage{
+}
+
+message TokenExpiredMessage{
+}
+
+message InvalidCharacterTextureMessage{
+  string message = 1;
+}
+
+message InvalidCompanionTextureMessage{
+  string message = 1;
+}
+
+message WorldConnectionMessage{
+  string message = 2;
+}
+
+message BanUserMessage{
+  string type = 1;
+  string message = 2;
+  // See SendUserMessage.id
+  string id = 3;
+}
+
+message AskPositionMessage{
+  string userIdentifier = 1;
+  string playUri = 2;
+  enum AskType {
+    MOVE = 0;
+    LOCATE = 1;
+  }
+  AskType askType = 3;
+  optional int32 userId = 4;
+}
+
+/** Sent by a user in a meeting to invite another user (by uuid) to join. */
+message MeetingInvitationRequestMessage {
+  string receiverUserUuid = 1;
+  optional int32 receiverUserId = 2;
+}
+
+/** Sent by the server to the invitee with sender info (accept/decline popup, and to walk to sender on accept). */
+message MeetingInvitationRequestReceivedMessage {
+  string senderUserUuid = 1;
+  string senderPlayUri = 2;
+  string senderName = 3;
+  optional int32 senderUserId = 4;
+}
+
+/** Sent by the invitee to accept or decline the invitation. */
+message MeetingInvitationResponseMessage {
+  bool accept = 1;
+  string requestSenderUserUuid = 2;
+}
+
+/** Sent by the server to the requester when the invitee has accepted or declined. */
+message MeetingInvitationResponseReceivedMessage {
+  bool accepted = 1;
+  string responderName = 2;
+}
+
+/** Send by the server to show invitation request limitation. */
+message MeetingInvitationRequestTooHighMessage {
+}
+
+/** Send a close request message when the user accepts or declines the invitation to clear the invitation if there are multiple users with the same account connected */
+message MeetingInvitationRequestClosedMessage {
+}
+
+// A request sent within a space to mute the audio of a specific user
+message MuteAudioPrivateMessage {
+  // The "force" field is filled by the pusher server if the user is an admin
+  bool force = 1;
+}
+
+// A request sent within a space to mute the video of a specific user
+message MuteVideoPrivateMessage {
+  // The "force" field is filled by the pusher server if the user is an admin
+  bool force = 1;
+}
+
+message MuteAudioForEverybodyPublicMessage {
+}
+
+message MuteVideoForEverybodyPublicMessage {
+}
+
+message KickOffUserPrivateMessage {
+}
+
+message RecordingUnexpectedlyStoppedPrivateMessage {
+}
+
+message PublicEventFrontToPusher {
+  string spaceName = 1;
+  SpaceEvent spaceEvent = 2;
+}
+
+message BackEventFrontToPusherMessage {
+  string spaceName = 1;
+  BackEvent backEvent = 2;
+}
+
+message PublicEvent {
+  string spaceName = 1;
+  SpaceEvent spaceEvent = 2;
+  string senderUserId = 3;
+}
+
+message SpaceEvent {
+  oneof event {
+    SpaceMessage spaceMessage = 1;
+    SpaceIsTyping spaceIsTyping = 2;
+    MuteAudioForEverybodyPublicMessage muteAudioForEverybody = 3;
+    MuteVideoForEverybodyPublicMessage muteVideoForEverybody = 4;
+  }
+}
+
+message PrivateSpaceEvent {
+  oneof event {
+    MuteVideoPrivateMessage muteVideo = 1;
+    MuteAudioPrivateMessage muteAudio = 2;
+    KickOffUserPrivateMessage kickOffUser = 3;
+    WebRtcStartMessage webRtcStartMessage = 4;
+    WebRtcSignal webRtcSignal = 6;
+    WebRtcSignal webRtcScreenSharingSignal = 8;
+    WebRtcDisconnectMessage webRtcDisconnectMessage = 9;
+    CommunicationStrategyMessage communicationStrategyMessage = 10;
+    SwitchMessage switchMessage = 11;
+    FinalizeSwitchMessage finalizeSwitchMessage = 12;
+    LivekitInvitationMessage livekitInvitationMessage = 13;
+    LivekitDisconnectMessage livekitDisconnectMessage = 14;
+    AddSpaceUserMessage addSpaceUserMessage = 16;
+    UpdateSpaceUserMessage updateSpaceUserMessage = 17;
+    RemoveSpaceUserMessage removeSpaceUserMessage = 18;
+    BlockUserMessage blockUserMessage = 20;
+    UnblockUserMessage unblockUserMessage = 21;
+    MeetingConnectionRestartMessage meetingConnectionRestartMessage = 22;
+    RecordingUnexpectedlyStoppedPrivateMessage recordingUnexpectedlyStoppedMessage = 23;
+  }
+}
+
+message CommunicationStrategyMessage {
+  string strategy = 1;
+}
+
+message SwitchMessage {
+  string strategy = 1;
+}
+
+message FinalizeSwitchMessage {
+  string strategy = 1;
+}
+
+message BlockUserMessage {
+}
+
+message UnblockUserMessage {
+}
+
+message LivekitInvitationMessage {
+  string token = 1;
+  string serverUrl = 2;
+}
+
+message LivekitDisconnectMessage {
+}
+
+message SpaceMessage {
+  string message = 1;
+  repeated CharacterTextureMessage characterTextures = 2;
+  optional string name = 3;
+}
+
+message SpaceIsTyping {
+  bool isTyping = 1;
+  repeated CharacterTextureMessage characterTextures = 2;
+  optional string name = 3;
+}
+
+message BackEventMessage {
+  string spaceName = 1;
+  string senderUserId = 3;
+  BackEvent backEvent = 4;
+}
+
+message BackEvent {
+  oneof event {
+    MeetingConnectionRestartMessage meetingConnectionRestartMessage = 2;
+  }
+}
+
+message PrivateEvent {
+  string spaceName = 1;
+  string receiverUserId = 2;
+  string senderUserId = 3;
+  PrivateSpaceEvent spaceEvent = 4;
+}
+
+message PrivateEventBackToPusher {
+  string spaceName = 1;
+  string receiverUserId = 2;
+  SpaceUser sender = 3;
+  PrivateSpaceEvent spaceEvent = 4;
+}
+
+message PrivateEventPusherToFront {
+  string spaceName = 1;
+  string receiverUserId = 2;
+  SpaceUser sender = 3;
+  PrivateSpaceEvent spaceEvent = 4;
+}
+
+message PrivateEventFrontToPusher {
+  string spaceName = 1;
+  string receiverUserId = 2;
+  PrivateSpaceEvent spaceEvent = 4;
+}
+
+/**
+ * Messages going from server to the client to ask the client to join a space
+ */
+message JoinSpaceRequestMessage {
+  string spaceName = 1;
+  repeated string propertiesToSync = 2;
+}
+
+/**
+ * Messages going from server to the client to ask the client to leave a space
+ */
+message LeaveSpaceRequestMessage {
+  string spaceName = 1;
+}
+
+/**
+ * Sent to the client when the same user is already connected in this room (duplicate connection).
+ * The client should show a popup and offer to close the page.
+ */
+message DuplicateUserConnectedMessage {
+}
+
+/**
+ * Internal message sent by the back to the pusher just before closing the
+ * joinRoom stream. The pusher must consume it and never forward it to the
+ * front.
+ */
+message BackConnectionCloseReasonMessage {
+  string reason = 1;
+}
+
+/**
+ * Messages going from back and pusher to the front
+ */
+message ServerToClientMessage {
+  oneof message {
+    BatchMessage batchMessage = 1;
+    ErrorMessage errorMessage = 2;
+    RoomConnectedMessage roomConnectedMessage = 3;
+    RoomJoinedMessage roomJoinedMessage = 4;
+    TeleportMessageMessage teleportMessageMessage = 10;
+    SendUserMessage sendUserMessage = 12;
+    BanUserMessage banUserMessage = 13;
+    //AdminRoomMessage adminRoomMessage = 14;
+    WorldFullWarningMessage worldFullWarningMessage = 15;
+    RefreshRoomMessage refreshRoomMessage = 17;
+    WorldConnectionMessage worldConnectionMessage = 18;
+    //EmoteEventMessage emoteEventMessage = 19;
+    TokenExpiredMessage tokenExpiredMessage = 20;
+    FollowRequestMessage followRequestMessage = 21;
+    FollowConfirmationMessage followConfirmationMessage = 22;
+    FollowAbortMessage followAbortMessage = 23;
+    InvalidCharacterTextureMessage invalidCharacterTextureMessage = 24;
+    DeleteMapMessage deleteMapMessage = 25;
+    ErrorScreenMessage errorScreenMessage = 26;
+    AnswerMessage answerMessage = 28;
+    MoveToPositionMessage moveToPositionMessage = 31;
+    InvalidCompanionTextureMessage invalidCompanionTextureMessage = 32;
+    JoinSpaceRequestMessage joinSpaceRequestMessage = 33;
+    LeaveSpaceRequestMessage leaveSpaceRequestMessage = 34;
+    ExternalModuleMessage externalModuleMessage = 35;
+    LocatePositionMessage locatePositionMessage = 36;
+    MeetingInvitationRequestReceivedMessage meetingInvitationRequestReceivedMessage = 37;
+    MeetingInvitationResponseReceivedMessage meetingInvitationResponseReceivedMessage = 38;
+    MeetingInvitationRequestTooHighMessage meetingInvitationRequestTooHighMessage = 39;
+    MeetingInvitationRequestClosedMessage meetingInvitationRequestClosedMessage = 40;
+    DuplicateUserConnectedMessage duplicateUserConnectedMessage = 41;
+    BackConnectionCloseReasonMessage backConnectionCloseReasonMessage = 42;
+  }
+}
+
+
+/************************** SERVICES **************************/
+
+/**
+  * Message sent from the pusher to the back when a user connects to a room, before joining it
+ */
+message ConnectToRoomMessage {
+  string roomId = 1;
+  google.protobuf.StringValue lastCommandId = 2;
+  repeated string tag = 3;
+}
+
+/**
+ * Message sent by the client to the pusher when joining a room
+ */
+message JoinRoomFrontMessage {
+  PositionMessage positionMessage = 1;
+  ViewportMessage viewportMessage = 2;
+  string name = 3;
+  AvailabilityStatus availabilityStatus = 6;
+}
+
+/**
+ * Message sent by the pusher to the back when a user joins a room
+ */
+message JoinRoomMessage {
+  PositionMessage positionMessage = 1;
+  string name = 2;
+  repeated CharacterTextureMessage characterTextures = 3;
+  string userUuid = 4;
+  repeated string tag = 6;
+  string IPAddress = 7;
+  CompanionTextureMessage companionTexture = 8;
+  google.protobuf.StringValue visitCardUrl = 9;
+  string userRoomToken = 10;
+  AvailabilityStatus availabilityStatus = 11;
+  bool activatedInviteUser = 12;
+  bool isLogged = 13;
+  repeated ApplicationMessage applications = 14;
+  bool canEdit = 17;
+  google.protobuf.StringValue chatID = 18;
+  // Unique identifier for the browser tab, used to detect reconnections from the same tab
+  // and kill stale connections immediately instead of waiting for ping timeout
+  //TODO : remove the optional when the tabId is always present in the query string (next version of the app )
+  optional string tabId = 19;
+}
+
+message UserJoinedZoneMessage {
+  int32 userId = 1;
+  string name = 3;
+  repeated CharacterTextureMessage characterTextures = 4;
+  PositionMessage position = 5;
+  Zone fromZone = 6;
+  CompanionTextureMessage companionTexture = 7;
+  string visitCardUrl = 8;
+  string userUuid = 9;
+  uint32 outlineColor = 10;
+  bool hasOutline = 11;
+  AvailabilityStatus availabilityStatus = 12;
+  map<string, string> variables = 13;
+  optional string chatID = 14;
+  SayMessage sayMessage = 15;
+}
+
+message UserLeftZoneMessage {
+  int32 userId = 1;
+  Zone toZone = 2;
+}
+
+message GroupUpdateZoneMessage {
+  int32 groupId = 1;
+  PointMessage position = 2;
+  int32  groupSize = 3;
+  Zone fromZone = 4;
+  bool locked = 5;
+  repeated int32 userIds = 6;
+}
+
+message GroupLeftZoneMessage {
+  int32 groupId = 1;
+  Zone toZone = 2;
+}
+
+message PlayerDetailsUpdatedMessage {
+  int32 userId = 1;
+  SetPlayerDetailsMessage details = 2;
+}
+
+message Zone {
+  int32 x = 1;
+  int32 y = 2;
+}
+
+message SubscribeZoneMessage {
+  int32 x = 1;
+  int32 y = 2;
+}
+
+message UnsubscribeZoneMessage {
+  int32 x = 1;
+  int32 y = 2;
+}
+
+message RoomMessage {
+  string roomId = 1;
+}
+
+message PusherToBackRoomMessage {
+  oneof message {
+    InitRoomMessage initRoomMessage = 3;
+    SubscribeZoneMessage subscribeZoneMessage = 1;
+    UnsubscribeZoneMessage unsubscribeZoneMessage = 2;
+  }
+}
+
+message InitRoomMessage {
+  string roomId = 1;
+}
+
+message PusherToBackMessage {
+  oneof message {
+    ConnectToRoomMessage connectToRoomMessage = 1;
+    JoinRoomMessage joinRoomMessage = 2;
+    UserMovesMessage userMovesMessage = 3;
+    ItemEventMessage itemEventMessage = 4;
+    SetPlayerDetailsMessage setPlayerDetailsMessage = 5;
+    SendUserMessage sendUserMessage = 12;
+    BanUserMessage banUserMessage = 13;
+    EmotePromptMessage emotePromptMessage = 14;
+    VariableMessage variableMessage = 15;
+    FollowRequestMessage followRequestMessage = 16;
+    FollowConfirmationMessage followConfirmationMessage = 17;
+    FollowAbortMessage followAbortMessage = 18;
+    LockGroupPromptMessage lockGroupPromptMessage = 19;
+    QueryMessage queryMessage = 21;
+    AbortQueryMessage abortQueryMessage = 25;
+    AskPositionMessage askPositionMessage = 22;
+    EditMapCommandMessage editMapCommandMessage = 23;
+    PingMessage pingMessage = 24;
+    PublicEvent publicEvent = 30;
+    PrivateEvent privateEvent = 31;
+    MeetingInvitationRequestMessage meetingInvitationRequestMessage = 32;
+    MeetingInvitationResponseMessage meetingInvitationResponseMessage = 33;
+    SetAreaPropertyVariableMessage setAreaPropertyVariableMessage = 34;
+  }
+}
+
+
+message BatchToPusherRoomMessage {
+  repeated SubToPusherRoomMessage payload = 2;
+}
+
+message SubToPusherRoomMessage {
+  oneof message {
+    // Room-wide messages
+    VariableWithTagMessage variableMessage = 1;
+    ErrorMessage errorMessage = 2;
+    EditMapCommandMessage editMapCommandMessage = 3;
+    ReceivedEventMessage receivedEventMessage = 6;
+    // Zone-specific messages (all grouped in ZoneMessage)
+    ZoneMessage zoneMessage = 7;
+    AreaPropertyVariableMessage areaPropertyVariableMessage = 8;
+  }
+}
+
+/*message BatchToAdminPusherMessage {
+  repeated SubToAdminPusherMessage payload = 2;
+}*/
+
+/*message SubToAdminPusherMessage {
+  oneof message {
+    string userUuidJoinedRoom = 1;
+    string userUuidLeftRoom = 2;
+  }
+}
+
+message ServerToAdminClientMessage {
+  repeated SubToAdminPusherMessage payload = 2;
+}*/
+
+message UserJoinedRoomMessage {
+  string uuid = 1;
+  string ipAddress = 2;
+  string name = 3;
+}
+
+message UserLeftRoomMessage {
+  string uuid = 1;
+}
+
+message ServerToAdminClientMessage {
+  oneof message {
+    UserJoinedRoomMessage userJoinedRoom = 1;
+    UserLeftRoomMessage userLeftRoom = 2;
+    ErrorMessage errorMessage = 3;
+  }
+}
+
+message AdminPusherToBackMessage {
+  oneof message {
+    string subscribeToRoom = 1;
+    // TODO ban, unban
+  }
+}
+
+message MapStorageRefreshMessage {
+  string comment = 1;
+}
+
+message MapStorageToBackMessage {
+  oneof message {
+    MapStorageRefreshMessage mapStorageRefreshMessage = 1;
+  }
+}
+
+message MapStorageUrlMessage {
+  string mapUrl = 1;
+  string roomId = 2;
+}
+
+message MapStorageClearAfterUploadMessage {
+  string wamUrl = 1;
+}
+
+message MapStorageDeleteMessage {
+  string wamUrl = 1;
+}
+
+// A message sent by an administrator to a recipient
+message AdminMessage {
+  string message = 1;
+  string recipientUuid = 2;
+  string roomId = 3;
+  string type = 4;
+  // See SendUserMessage.id
+  string id = 5;
+}
+
+// A message sent by an administrator to everyone in a specific room
+message AdminRoomMessage {
+  string message = 1;
+  string roomId = 2;
+  string type = 3;
+}
+
+// A message sent by an administrator to absolutely everybody
+message AdminGlobalMessage {
+  string message = 1;
+}
+
+message BanMessage {
+  string recipientUuid = 1;
+  string roomId = 2;
+  string type = 3;
+  string message = 4;
+}
+
+message RoomDescription {
+  string roomId = 1;
+  int32 nbUsers = 2;
+}
+
+message RoomsList {
+  repeated RoomDescription roomDescription = 1;
+}
+
+message DispatchGlobalEventRequest {
+  string name = 1;
+  google.protobuf.Value value = 2;
+}
+
+message ExternalModuleMessage {
+  string moduleId = 1;
+  optional string recipientUuid = 2;
+  optional string roomId = 3;
+  google.protobuf.Value message = 4;
+}
+
+/********************************************************************************
+ * Start Spaces messages
+ ********************************************************************************/
+message PusherToBackSpaceMessage{
+  oneof message {
+    JoinSpaceMessage joinSpaceMessage = 1;
+    LeaveSpaceMessage leaveSpaceMessage = 2;
+    UpdateSpaceUserMessage updateSpaceUserMessage = 4;
+    PingMessage pongMessage = 6;
+    UpdateSpaceMetadataPusherToBackMessage updateSpaceMetadataPusherToBackMessage = 7;
+    // FIXME: the kick of message should be global to the room (unless we apply it on the world space???)
+    KickOffMessage kickOffMessage = 8;
+    PublicEvent publicEvent = 15;
+    PrivateEvent privateEvent = 16;
+    SyncSpaceUsersMessage syncSpaceUsersMessage = 17;
+    SpaceQueryMessage spaceQueryMessage = 18;
+    AddSpaceUserToNotifyMessage addSpaceUserToNotifyMessage = 19;
+    DeleteSpaceUserToNotifyMessage deleteSpaceUserToNotifyMessage = 20;
+    BackEventMessage backEvent = 22;
+  }
+}
+
+message BackToPusherSpaceMessage{
+  oneof message {
+    AddSpaceUserMessage addSpaceUserMessage = 1;
+    UpdateSpaceUserMessage updateSpaceUserMessage = 2;
+    RemoveSpaceUserMessage removeSpaceUserMessage = 3;
+    PingMessage pingMessage = 4;
+    UpdateSpaceMetadataMessage updateSpaceMetadataMessage = 5;
+    // FIXME: the kick of message should be global to the room (unless we apply it on the world space???)
+    KickOffMessage kickOffMessage = 6;
+    PublicEvent publicEvent = 13;
+    PrivateEventBackToPusher privateEvent = 14;
+    SpaceAnswerMessage spaceAnswerMessage = 15;
+    InitSpaceUsersMessage initSpaceUsersMessage = 16;
+  }
+}
+
+/**
+ * Message sent by the user to join a space as a participant.
+ */
+message JoinSpaceMessage{
+  string spaceName = 1;
+  repeated string propertiesToSync = 2;
+  FilterType filterType = 3;
+  string world = 5;
+}
+
+enum FilterType{
+  ALL_USERS = 0;
+  LIVE_STREAMING_USERS = 1;
+  LIVE_STREAMING_USERS_WITH_FEEDBACK = 2;
+}
+
+message LeaveSpaceMessage{
+  string spaceName = 1;
+}
+
+message SpaceUser{
+  string spaceUserId = 1; // used
+  string name = 2; // used
+  string playUri = 3;
+  string color = 4; // TO DELETE
+  repeated CharacterTextureMessage characterTextures = 5;
+  bool isLogged = 6;
+  int32 availabilityStatus = 7;
+  google.protobuf.StringValue roomName = 8;
+  google.protobuf.StringValue visitCardUrl = 9;
+  repeated string tags = 10;
+  bool cameraState = 11; // used
+  bool microphoneState = 12; // used
+  bool screenSharingState = 13; // used
+  bool megaphoneState = 14; // used
+  google.protobuf.StringValue jitsiParticipantId = 15; // used
+  string uuid = 16; // used
+  google.protobuf.StringValue chatID = 17; // used
+  bool showVoiceIndicator = 18;
+  bool attendeesState = 19;
+}
+
+/*message PartialSpaceUser{
+  int32 id = 1;
+  google.protobuf.StringValue name = 2;
+  google.protobuf.StringValue playUri = 3;
+  google.protobuf.StringValue color = 4;
+  repeated CharacterTextureMessage characterTextures = 5;
+  google.protobuf.BoolValue isLogged = 6;
+  google.protobuf.Int32Value availabilityStatus = 7;
+  google.protobuf.StringValue roomName = 8;
+  google.protobuf.StringValue visitCardUrl = 9;
+  repeated string tags = 10;
+  google.protobuf.BoolValue cameraState = 11;
+  google.protobuf.BoolValue microphoneState = 12;
+  google.protobuf.BoolValue screenSharingState = 13;
+  google.protobuf.BoolValue megaphoneState = 14;
+  google.protobuf.StringValue jitsiParticipantId = 15;
+  string uuid = 16;
+  google.protobuf.StringValue chatID = 17;
+}*/
+
+/**
+ * Message adding a user to a space (front to pusher, pusher to back-space, back-space to pusher)
+ */
+message AddSpaceUserMessage{
+  string spaceName = 1;
+  SpaceUser user = 2;
+}
+message InitSpaceUsersMessage{
+  string spaceName = 1;
+  repeated SpaceUser users = 2;
+  string metadata = 3;
+}
+
+/**
+ * Message updating a user in a space (front to pusher, pusher to back-space, back-space to pusher)
+ */
+message UpdateSpaceUserMessage{
+  string spaceName = 1;
+  SpaceUser user = 2;
+  google.protobuf.FieldMask updateMask = 4;
+}
+message UpdateSpaceUserPusherToFrontMessage{
+  string spaceName = 1;
+  SpaceUser user = 2;
+  google.protobuf.FieldMask updateMask = 4;
+}
+
+/**
+ * Message removing a user from a space (front to pusher, pusher to back-space, back-space to pusher)
+ */
+message RemoveSpaceUserMessage{
+  string spaceName = 1;
+  string spaceUserId = 2;
+}
+message RemoveSpaceUserPusherToFrontMessage{
+  string spaceName = 1;
+  string spaceUserId = 2;
+}
+message UpdateSpaceMetadataMessage{
+  string spaceName = 1;
+  string metadata = 2;
+}
+
+message UpdateSpaceMetadataPusherToBackMessage{
+  string spaceName = 1;
+  string metadata = 2;
+  string senderId = 3;
+}
+
+/**
+ * Message sent by the pusher to the back to sync the space users with the server after a reconnection
+ */
+message SyncSpaceUsersMessage{
+  string spaceName = 1;
+  repeated SpaceUser users = 2;
+}
+
+/**
+ * Message sent by the pusher to the back to add a user to the notify list
+ */
+message AddSpaceUserToNotifyMessage{
+  string spaceName = 1;
+  SpaceUser user = 2;
+}
+
+/**
+ * Message sent by the pusher to the back to delete a user from the notify list
+ */
+message DeleteSpaceUserToNotifyMessage{
+  string spaceName = 1;
+  SpaceUser user = 2;
+}
+
+/**
+ * The space we were listening to has been destroyed for some awful reason (connection to back was lost)
+ */
+message SpaceDestroyedMessage {
+  string spaceName = 1;
+}
+message KickOffMessage{
+  string spaceName = 1;
+  string userId = 2;
+}
+
+/** Filter **/
+message AddSpaceFilterMessage{
+  SpaceFilterMessage spaceFilterMessage = 1;
+}
+
+message RemoveSpaceFilterMessage{
+  SpaceFilterMessage spaceFilterMessage = 1;
+}
+message SpaceFilterMessage{
+  string spaceName = 1;
+}
+message SpaceFilterContainName{
+  string value = 1;
+}
+
+message SpaceFilterLiveStreaming{
+}
+
+message SpaceFilterEverybody{
+}
+
+/*
+message Filter {
+  enum Operator {
+    EQUAL = 0;
+    GREATER_THAN = 1;
+    LESS_THAN = 2;
+    CONTAINS = 3;
+  }
+
+  string fieldName = 1;
+  Operator operator = 2;
+  string value = 3;
+}
+ */
+/*********************************************************************************
+ * End Spaces messages
+ *********************************************************************************/
+
+
+/* Duplicated events from RoomAPI */
+
+message VariableRequest {
+  string room = 1;
+  string name = 2;
+}
+
+message SaveVariableRequest {
+  string room = 1;
+  string name = 2;
+  google.protobuf.Value value = 3;
+
+}
+
+message EventRequest {
+  string room = 1;
+  string name = 2;
+}
+
+message EventResponse {
+  google.protobuf.Value data = 1;
+  optional int32 senderId = 2;
+}
+
+message DispatchEventRequest {
+  string room = 1;
+  string name = 2;
+  google.protobuf.Value data = 3;
+  // If targetUserIds is empty, the event is broadcast to all users in the room. Otherwise, it targets the users with the given ids.
+  repeated int32 targetUserIds = 4;
+}
