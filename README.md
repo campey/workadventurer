@@ -143,6 +143,7 @@ reconnects (bounded retries) if the socket drops.
 | `src/wa-daemon.mjs` | long-running presence + localhost HTTP control API |
 | `src/wa-audio.mjs` | `WaAudio` — P2P WebRTC (werift) into proximity meetings; publishes Opus |
 | `src/ogg-opus.mjs` | dependency-free Ogg demuxer — Opus packets out of `.ogg`/`.opus` |
+| `src/transcode.mjs` | `wa sound` format bridge — non-Opus files → Ogg/Opus via `ffmpeg`, cached |
 | `sounds/` | bundled Ogg/Opus clips for `wa sound` (credits in `sounds/ATTRIBUTION.md`) |
 | `src/config.mjs` | config resolution (flags → env → `~/.config` → defaults) |
 | `src/find-player.mjs` | standalone one-shot: connect → locate → walk over → greet → follow |
@@ -334,9 +335,12 @@ special case. The path (`src/wa-audio.mjs`, `src/ogg-opus.mjs`):
    with [werift](https://github.com/shinyoshiaki/werift-webrtc), one peer
    connection per `connectionId`. A data channel is negotiated too — simple-peer
    only reports "connected" once it opens.
-5. `wa sound` streams a pre-encoded Ogg/Opus clip straight out as RTP (WebRTC
-   audio is Opus, so no transcoding). Bundled clips live in `sounds/`; a path
-   argument plays any local `.ogg`/`.opus`.
+   Each connection's initiator role is server-assigned per `webRtcStartMessage`
+   — we send the offer or wait for one accordingly.
+5. `wa sound` streams Opus packets straight out as RTP (WebRTC audio is Opus).
+   Opus-in-Ogg plays as-is; any other format (mp3/wav/…) is transcoded once via
+   `ffmpeg` and cached (`src/transcode.mjs`). Bundled clips live in `sounds/`; a
+   path argument plays any local file.
 
 LiveKit escalation is detected and logged but not yet implemented — audio stops
 publishing when a meeting switches away from WEBRTC.

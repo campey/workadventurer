@@ -8,6 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`wa sound` accepts any format** — non-Opus files (mp3/wav/m4a/…) are
+  transcoded once via `ffmpeg` and cached in the temp dir (`src/transcode.mjs`);
+  Opus-in-Ogg still plays with no transcode. Closes #9.
+
+### Fixed
+
+- **Audio: handle the offer-initiator role.** The server assigns each WebRTC
+  connection's initiator per `webRtcStartMessage`; we only knew how to answer,
+  so connections where the server made *us* the initiator hung at "connecting".
+  Now we send the offer when told to.
+- Audio: re-assert `microphoneState` while a clip plays, to shrink the window
+  where other clients show a phantom muted-mic icon (#10; not a full fix).
+
+### Added
+
 - **`wa sound <name|file>`** (`POST /sound`) — play an audio clip into the
   WorkAdventure **proximity voice chat**. The avatar joins the meeting as a real
   mic participant: answers the P2P WebRTC offer with

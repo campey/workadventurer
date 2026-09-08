@@ -346,8 +346,12 @@ const server = http.createServer(async (req, res) => {
             return send(404, { ok: false, error: `no clip at ${clip}` });
           if (!audio.connected)
             return send(409, { ok: false, error: "no one in the bubble to hear it" });
-          const r = await audio.play(clip);
-          return send(r.played ? 200 : 409, { ok: r.played, sound: body.name, ...r });
+          try {
+            const r = await audio.play(clip);
+            return send(r.played ? 200 : 409, { ok: r.played, sound: body.name, ...r });
+          } catch (e) {
+            return send(400, { ok: false, error: e.message });
+          }
         }
         case "/leave":
           send(200, { ok: true, leaving: true });
