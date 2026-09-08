@@ -10,6 +10,7 @@
     "bin/",
     "src/",
     "map/",
+    "sounds/",
     "proto/",
     "README.md",
     "CHANGELOG.md",
@@ -25,6 +26,7 @@
   },
   "dependencies": {
     "protobufjs": "^7.4.0",
+    "werift": "^0.24.4",
     "ws": "^8.18.0"
   },
   "license": "MIT",

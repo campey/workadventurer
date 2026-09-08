@@ -18,6 +18,7 @@
 //   POST /speech-bubble  {text}          -> speech bubble over the avatar
 //   POST /thought-bubble {text}          -> thinking cloud over the avatar
 //   POST /clear-bubble                   -> dismiss whatever bubble is showing
+//   POST /sound          {name}          -> play a clip into the proximity voice chat
 //   POST /leave                          -> disconnect and exit
 //
 // Advertises itself at $TMPDIR/wa-daemon.json and ~/.workadventurer/daemon.json.
@@ -26,7 +27,9 @@ import http from "node:http";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { WorkAdventureClient } from "./wa-client.mjs";
+import { WaAudio } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
 
 const cfg = resolveConfig();
@@ -41,10 +44,29 @@ const INFO_FILES = [
 const ts = () => new Date().toISOString().slice(11, 19);
 const log = (...a) => console.log(ts(), ...a);
 
+const SOUNDS_DIR = fileURLToPath(new URL("../sounds/", import.meta.url));
+
 let wa;
+let audio; // WaAudio, bound to the current client
 let follow = null; // { name, userId, controller, paused }
 let deliberateShutdown = false;
 let reconnecting = false;
+
+// Resolve a `wa sound` argument: a bare name -> sounds/<name>.ogg, otherwise a
+// path (absolute, or relative to the caller's cwd passed as `cwd`).
+function resolveClip(nameOrPath, cwd) {
+  if (/[/\\]|\.(ogg|opus)$/i.test(nameOrPath)) {
+    return path.resolve(cwd || process.cwd(), nameOrPath);
+  }
+  return path.join(SOUNDS_DIR, `${nameOrPath}.ogg`);
+}
+
+function attachAudio(client) {
+  audio = new WaAudio(client);
+  audio.on("log", (m) => log("audio ·", m));
+  audio.on("peerConnected", ({ remoteUserId }) => log("audio: peer connected", remoteUserId));
+  return audio;
+}
 
 const findByName = (needle) => wa.findPlayer(needle);
 const liveById = (id) => wa.players.get(id) || null;
@@ -194,6 +216,9 @@ function state() {
     pos: { x: Math.round(wa.pos.x), y: Math.round(wa.pos.y) },
     facing: ["up", "right", "down", "left"][wa.pos.direction] ?? null,
     area: wa.nav?.areaAt(wa.pos.x, wa.pos.y)?.name ?? null,
+    audio: audio
+      ? { peers: audio.peers.size, connected: audio.connected, inMeeting: wa.spaces.size > 0 }
+      : null,
     following: follow
       ? {
           name: follow.name,
@@ -224,11 +249,13 @@ async function attemptReconnect() {
       pusherUrl: cfg.pusherUrl,
       version: cfg.version,
       wokaId: cfg.wokaId,
+      micOn: true,
     });
     wireClient(client);
     try {
       await client.connect();
       wa = client;
+      attachAudio(wa);
       reconnecting = false;
       log(`reconnected as userId ${wa.myUserId}`);
       follow = null;
@@ -311,6 +338,17 @@ const server = http.createServer(async (req, res) => {
         case "/clear-bubble":
           wa.clearBubble();
           return send(200, { ok: true, bubble: null });
+        case "/sound": {
+          if (!body.name) return send(400, { ok: false, error: "need {name}" });
+          if (!audio) return send(503, { ok: false, error: "audio not ready" });
+          const clip = resolveClip(String(body.name), body.cwd);
+          if (!fs.existsSync(clip))
+            return send(404, { ok: false, error: `no clip at ${clip}` });
+          if (!audio.connected)
+            return send(409, { ok: false, error: "no one in the bubble to hear it" });
+          const r = await audio.play(clip);
+          return send(r.played ? 200 : 409, { ok: r.played, sound: body.name, ...r });
+        }
         case "/leave":
           send(200, { ok: true, leaving: true });
           return shutdown(0);
@@ -347,9 +385,11 @@ wa = new WorkAdventureClient({
   pusherUrl: cfg.pusherUrl,
   version: cfg.version,
   wokaId: cfg.wokaId,
+  micOn: true,
 });
 wireClient(wa);
 await wa.connect();
+attachAudio(wa);
 log(`joined as userId ${wa.myUserId}; spawn (${wa.pos.x | 0},${wa.pos.y | 0})`);
 
 if (process.env.WA_FOLLOW) {
