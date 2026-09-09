@@ -56,9 +56,15 @@ node bin/wa.mjs status
 echo
 grep -E "meeting area|joined space|webRtc|pc connected|area (enter|leave)" ~/.workadventurer/daemon.log || true
 
-step "playing chime";  node bin/wa.mjs sound chime || true
+play() {
+  local out rc
+  out=$(node bin/wa.mjs sound "$1" --json 2>&1); rc=$?
+  echo "$out" | node -pe 'try{const j=JSON.parse(require("fs").readFileSync(0));`  ${j.ok?"ok":"FAIL"} ${j.sound||j.error} — played=${j.played} pkts=${j.packetsSent??"?"} peers=${j.peers??0} states=${JSON.stringify(j.peerStates||[])} writeErrors=${j.writeErrors||0}`}catch(e){require("fs").readFileSync(0).toString().trim()}' 2>/dev/null || echo "$out"
+  [ "$rc" -eq 0 ] || echo "  !! wa sound exit $rc"
+}
+step "playing chime"; play chime
 sleep 4
-step "playing intro";  node bin/wa.mjs sound sounds/claude_intro.wav || true
+step "playing intro"; play sounds/claude_intro.wav
 
 step "done ($SECONDS s total). daemon left running."
 cat <<EOF
