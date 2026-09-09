@@ -18,6 +18,27 @@ import { MapNav } from "./map-nav.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Ports of WorkAdventure's helpers (libs/shared-utils) — used to derive the
+// space name of a map-area meeting the same way the front-end does.
+function shortHash(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h << 5) - h + s.charCodeAt(i);
+    h |= 0;
+  }
+  return Math.abs(h).toString(36);
+}
+function slugify(...args) {
+  return args
+    .join(" ")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9-_ ]/g, "")
+    .replace(/\s+/g, "-");
+}
+
 const DEFAULTS = {
   pusherUrl: "https://pusher.workadventu.re",
   roomUrl: "https://play.workadventu.re/@/afrolabs/afrolabs/open-space",
@@ -147,11 +168,13 @@ export class WorkAdventureClient extends EventEmitter {
       if (!mapInfo.wamUrl) return;
       const wam = await get(mapInfo.wamUrl);
       this.areas = (wam.areas ?? []).map((a) => ({
+        id: a.id,
         name: a.name || "(unnamed)",
         x: a.x, y: a.y, w: a.width, h: a.height,
         props: Object.fromEntries(
           (a.properties ?? []).map((p) => [p.type ?? p.name, p.value ?? p.name ?? true])
         ),
+        rawProps: a.properties ?? [],
       }));
       this.emit("log", `loaded ${this.areas.length} map areas`);
     } catch (e) {
@@ -173,13 +196,17 @@ export class WorkAdventureClient extends EventEmitter {
     try {
       const now = new Set();
       for (const a of this.areasAt()) {
-        now.add(a.name);
-        if (!this.currentAreas.has(a.name)) this.emit("areaEnter", a);
+        now.add(a.id ?? a.name);
+        if (!this.currentAreas.has(a.id ?? a.name)) {
+          this.emit("areaEnter", a);
+          this._handleAreaMeeting(a, true);
+        }
       }
-      for (const name of this.currentAreas) {
-        if (!now.has(name)) {
-          const a = this.areas.find((z) => z.name === name);
-          this.emit("areaLeave", a ?? { name });
+      for (const key of this.currentAreas) {
+        if (!now.has(key)) {
+          const a = this.areas.find((z) => (z.id ?? z.name) === key);
+          this.emit("areaLeave", a ?? { name: key });
+          if (a) this._handleAreaMeeting(a, false);
         }
       }
       this.currentAreas = now;
@@ -315,10 +342,37 @@ export class WorkAdventureClient extends EventEmitter {
     return spaceUserId;
   }
 
-  _leaveSpace(spaceName) {
+  async _leaveSpace(spaceName) {
     if (!this.spaces.delete(spaceName)) return;
+    this._send({ removeSpaceFilterMessage: { spaceFilterMessage: { spaceName } } });
+    this.query("leaveSpaceQuery", { spaceName }).catch(() => {});
     this.emit("log", `left space ${spaceName}`);
     this.emit("spaceLeft", { spaceName });
+  }
+
+  // The space name of a map-area meeting, derived the same way the WA front does
+  // (AreasPropertiesListener.handleLivekitRoomPropertyOnEnter).
+  _areaSpaceName(prop) {
+    const roomId = prop.roomName?.trim() ? prop.roomName : prop.id;
+    return slugify(shortHash(this.cfg.roomUrl) + "-" + roomId);
+  }
+
+  // On entering/leaving a `livekitRoomProperty` area, proactively join/leave its
+  // space — the server never invites a headless client to an area meeting the
+  // way it does for proximity bubbles.
+  _handleAreaMeeting(area, entering) {
+    const prop = (area.rawProps ?? []).find((p) => p.type === "livekitRoomProperty");
+    if (!prop) return;
+    const spaceName = this._areaSpaceName(prop);
+    if (entering) {
+      if (this.spaces.has(spaceName)) return;
+      this.emit("log", `meeting area "${area.name}" → joining space ${spaceName}`);
+      this._joinSpace(spaceName).catch((e) =>
+        this.emit("log", `area meeting join failed: ${e.message}`)
+      );
+    } else if (this.spaces.has(spaceName)) {
+      this._leaveSpace(spaceName);
+    }
   }
 
   /** Tell the other Space members whether our mic is live. */

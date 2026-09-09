@@ -8,12 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Join `livekitRoomProperty` map-area meetings.** On maps that disable
+  spontaneous proximity meetings (people talk only via map areas), the client
+  now derives the area meeting's space name the way the front-end does
+  (`slugify(shortHash(roomUrl) + "-" + areaId)`) and proactively joins/leaves it
+  on `areaEnter` / `areaLeave`. A 2-person such meeting runs on WEBRTC, so
+  `wa sound` works there today. Closes #13 for the common case; LiveKit
+  transport for larger area meetings is still #8. Verified live in a
+  `wam-preset-university` "coffee table" area.
 - **Map-area awareness.** On connect the client fetches the room's `.wam`; on
   every move it emits `areaEnter` / `areaLeave` with the area's properties
   (`silent`, `jitsiRoomProperty`, `livekitRoomProperty`, megaphone, …). `/state`
-  gains `areas`; `wa status` shows them. Groundwork for joining area-scoped
-  meetings (#13). `WA_DEBUG=1` now logs every inbound message kind, and the
-  daemon survives a stray throw in a timer / unawaited promise.
+  gains `areas`; `wa status` shows them. `WA_DEBUG=1` now logs every inbound
+  message kind, and the daemon survives a stray throw in a timer / unawaited
+  promise.
 - **`wa sound` accepts any format** — non-Opus files (mp3/wav/m4a/…) are
   transcoded once via `ffmpeg` and cached in the temp dir (`src/transcode.mjs`);
   Opus-in-Ogg still plays with no transcode. Closes #9.
