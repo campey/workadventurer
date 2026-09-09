@@ -56,14 +56,19 @@ node bin/wa.mjs status
 echo
 grep -E "meeting area|joined space|webRtc|pc connected|area (enter|leave)" ~/.workadventurer/daemon.log || true
 
-play() {
+play() {   # play a clip and wait for the daemon's result line in the log
   local out rc
-  out=$(node bin/wa.mjs sound "$1" --json 2>&1); rc=$?
-  echo "$out" | node -pe 'try{const j=JSON.parse(require("fs").readFileSync(0));`  ${j.ok?"ok":"FAIL"} ${j.sound||j.error} — played=${j.played} pkts=${j.packetsSent??"?"} peers=${j.peers??0} states=${JSON.stringify(j.peerStates||[])} writeErrors=${j.writeErrors||0}`}catch(e){require("fs").readFileSync(0).toString().trim()}' 2>/dev/null || echo "$out"
-  [ "$rc" -eq 0 ] || echo "  !! wa sound exit $rc"
+  out=$(node bin/wa.mjs sound "$1" 2>&1); rc=$?
+  [ "$rc" -eq 0 ] || { echo "  !! $out"; return; }
+  local marker; marker=$(basename "$1")
+  for _ in $(seq 1 30); do
+    line=$(grep "sound \"$1\":\|sound \"$1\" failed" ~/.workadventurer/daemon.log | tail -1)
+    [ -n "$line" ] && { echo "  ${line#* }"; return; }
+    sleep 1
+  done
+  echo "  (no result line yet)"
 }
 step "playing chime"; play chime
-sleep 4
 step "playing intro"; play sounds/claude_intro.wav
 
 step "done ($SECONDS s total). daemon left running."
