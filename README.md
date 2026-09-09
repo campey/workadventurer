@@ -349,14 +349,20 @@ publishing when a meeting switches away from WEBRTC.
 
 On connect the client fetches `{pusherUrl}/map?playUri={roomUrl}` → the room's
 `.wam` → its `areas` (name, bounds, properties). Each move recomputes which area
-rectangles the avatar is inside and emits `areaEnter` / `areaLeave` with the
-property list; `/state` reports `areas`. This is how the avatar can tell it has
-walked into a `silent` zone, a `jitsiRoomProperty` / `livekitRoomProperty`
-meeting room, or a megaphone area. Maps that define areas only in the `.tmj`
-object layers (older style) aren't read — `areas` is just empty there.
+rectangles the avatar is inside and emits `areaEnter` / `areaLeave`; `/state`
+reports `areas`.
 
-Joining an area meeting is not implemented yet (needs the proactive
-`joinSpaceQuery` for the area's space — see issue #13).
+Some maps disable spontaneous proximity meetings — talk happens only through
+map areas. On entering a **`livekitRoomProperty`** area the client derives that
+meeting's space name the same way the front-end does —
+`slugify(shortHash(roomUrl) + "-" + (prop.roomName || prop.id))` — and
+**proactively joins the space** (the server never invites a headless client to
+an area meeting). It then leaves on `areaLeave`. A 2-person `livekitRoomProperty`
+meeting runs on WEBRTC, so `wa sound` works there today; a larger one would need
+LiveKit transport (issue #8).
+
+Maps that define areas only in the `.tmj` object layers (older style) aren't
+read. `jitsiRoomProperty` areas are detected but not joined (no Jitsi client).
 
 ---
 

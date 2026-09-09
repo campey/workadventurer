@@ -218,9 +218,9 @@ function state() {
     pos: { x: Math.round(wa.pos.x), y: Math.round(wa.pos.y) },
     facing: ["up", "right", "down", "left"][wa.pos.direction] ?? null,
     area: wa.nav?.areaAt(wa.pos.x, wa.pos.y)?.name ?? null,
-    areas: [...(wa.currentAreas ?? [])].map((name) => {
-      const a = (wa.areas ?? []).find((z) => z.name === name);
-      return { name, props: a ? Object.keys(a.props) : [] };
+    areas: [...(wa.currentAreas ?? [])].map((key) => {
+      const a = (wa.areas ?? []).find((z) => (z.id ?? z.name) === key);
+      return { name: a?.name ?? key, props: a ? Object.keys(a.props) : [] };
     }),
     audio: audio
       ? { peers: audio.peers.size, connected: audio.connected, inMeeting: wa.spaces.size > 0 }
