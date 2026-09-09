@@ -354,6 +354,11 @@ const server = http.createServer(async (req, res) => {
             return send(409, { ok: false, error: "no one in the bubble to hear it" });
           try {
             const r = await audio.play(clip);
+            log(
+              `sound "${body.name}": ${r.packetsSent} pkts to ${r.peers} peer(s)` +
+                ` [${(r.peerStates || []).join(",")}]` +
+                (r.writeErrors ? `, ${r.writeErrors} write errors` : "")
+            );
             return send(r.played ? 200 : 409, { ok: r.played, sound: body.name, ...r });
           } catch (e) {
             return send(400, { ok: false, error: e.message });

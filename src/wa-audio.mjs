@@ -147,7 +147,16 @@ export class WaAudio extends EventEmitter {
       this.emit("log", `[${connectionId}] ice ${s}`)
     );
 
-    p = { pc, track, spaceName, remoteUserId, connectionId };
+    // One stable RTP identity per peer for the whole connection — like a real
+    // mic. Switching ssrc/seq between clips makes the receiver drop the later
+    // ones (it has already latched onto the first source).
+    p = {
+      pc, track, spaceName, remoteUserId, connectionId,
+      ssrc: rnd32(),
+      seq: Math.floor(Math.random() * 0xffff),
+      ts: rnd32() >>> 1,
+      lastPlayEnd: performance.now(),
+    };
     this.peers.set(connectionId, p);
     return p;
   }
@@ -251,13 +260,19 @@ export class WaAudio extends EventEmitter {
       return { played: false, reason: "no connected peers" };
     }
 
+    // Advance each peer's timestamp over the silent gap since its last clip so
+    // the RTP clock stays wall-clock-continuous, and mark the first packet as a
+    // new talkspurt (RFC 3551) so the receiver resyncs its jitter buffer.
+    const now0 = performance.now();
     for (const p of targets) {
-      p._seq = Math.floor(Math.random() * 0xffff);
-      p._ts = rnd32() >>> 1;
-      p._ssrc = rnd32();
+      const gapSamples = Math.round(((now0 - p.lastPlayEnd) / 1000) * 48000);
+      p.ts = (p.ts + Math.max(0, gapSamples)) >>> 0;
     }
     this._setSpeaking(true);
 
+    let sent = 0;
+    let errs = 0;
+    let firstOfTalkspurt = true;
     const startedAt = performance.now();
     let elapsedMs = 0;
     for (const { data, samples } of packets) {
@@ -265,24 +280,39 @@ export class WaAudio extends EventEmitter {
       for (const p of targets) {
         const header = new RtpHeader({
           payloadType: OPUS.payloadType,
-          sequenceNumber: p._seq++ & 0xffff,
-          timestamp: p._ts >>> 0,
-          ssrc: p._ssrc,
-          marker: false,
+          sequenceNumber: p.seq++ & 0xffff,
+          timestamp: p.ts >>> 0,
+          ssrc: p.ssrc,
+          marker: firstOfTalkspurt,
         });
         try {
           p.track.writeRtp(new RtpPacket(header, data));
-        } catch {}
-        p._ts = (p._ts + samples) >>> 0;
+          sent++;
+        } catch (e) {
+          errs++;
+          if (errs === 1) this.emit("log", `writeRtp error: ${e.message}`);
+        }
+        p.ts = (p.ts + samples) >>> 0;
       }
+      firstOfTalkspurt = false;
       elapsedMs += (samples / 48000) * 1000;
       const drift = startedAt + elapsedMs - performance.now();
       if (drift > 1) await sleep(drift);
     }
 
+    const endAt = performance.now();
+    for (const p of targets) p.lastPlayEnd = endAt;
     this._setSpeaking(false);
     this._play = null;
-    return { played: !stopped, seconds: +(totalSamples / 48000).toFixed(2) };
+    const states = targets.map((p) => p.pc.connectionState);
+    return {
+      played: !stopped,
+      seconds: +(totalSamples / 48000).toFixed(2),
+      peers: targets.length,
+      packetsSent: sent,
+      writeErrors: errs,
+      peerStates: states,
+    };
   }
 
   _setSpeaking(on) {
