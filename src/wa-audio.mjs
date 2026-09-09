@@ -136,7 +136,12 @@ export class WaAudio extends EventEmitter {
     pc.connectionStateChange.subscribe((s) => {
       this.emit("log", `[${connectionId}] pc ${s}`);
       if (s === "failed" || s === "closed") this._closePeer(connectionId, s);
-      if (s === "connected") this.emit("peerConnected", { connectionId, remoteUserId });
+      if (s === "connected") {
+        // Re-assert mic-on now that this peer is up, so it doesn't have us
+        // cached as muted and drop our audio track (#10).
+        this.client.setSpaceMicState(spaceName, true);
+        this.emit("peerConnected", { connectionId, remoteUserId });
+      }
     });
     pc.iceConnectionStateChange.subscribe((s) =>
       this.emit("log", `[${connectionId}] ice ${s}`)
