@@ -50,7 +50,6 @@ for _ in $(seq 1 40); do
   sleep 1
 done
 [ -n "$ok" ] || echo "  !! no 'pc connected' after $((SECONDS - t0))s — meeting didn't connect (issue #17?)"
-sleep 2   # let the audio track / mic-state settle
 
 step "status"
 node bin/wa.mjs status
