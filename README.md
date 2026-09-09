@@ -56,6 +56,7 @@ wa leave                          # disconnect and stop the daemon
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text bubble |
 | `wa clear-bubble` | dismiss whatever bubble is showing |
 | `wa sound <name\|file>` | play a clip into the proximity voice chat (see [Voice](#9-voice)) |
+| `wa wait-emote [player]` | block until a player emotes (`--emote <match>`, `--timeout <ms>`) |
 | `wa goto <x> <y>` | walk to raw coordinates |
 
 `--if-running` makes any command a silent no-op when no daemon is up (used by
@@ -128,6 +129,7 @@ The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
 | `POST /speech-bubble` `{text}` / `POST /thought-bubble` `{text}` | text bubble |
 | `POST /clear-bubble` | dismiss whatever bubble is showing |
 | `POST /sound` `{name}` | play a clip into the proximity voice chat |
+| `POST /wait-emote` `{player?,emote?,timeoutMs?}` | long-poll: resolves when a matching emote arrives |
 | `POST /leave` | disconnect and exit |
 
 The daemon answers WebSocket pings, keeps the follow loop running, and

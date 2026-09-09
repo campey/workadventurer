@@ -563,7 +563,16 @@ export class WorkAdventureClient extends EventEmitter {
       }
       return;
     }
-    // emoteEventMessage, variableMessage, publicEvent, other space* — ignored.
+    if (sub.emoteEventMessage) {
+      const { actorUserId, emote } = sub.emoteEventMessage;
+      this.emit("emote", {
+        userId: actorUserId,
+        name: this.players.get(actorUserId)?.name ?? "",
+        emote,
+      });
+      return;
+    }
+    // variableMessage, publicEvent, other space* — ignored.
     if (process.env.WA_DEBUG) {
       const k = Object.keys(sub)[0];
       if (k && k !== "userMovedMessage") this.emit("log", `SUB ${k}: ${JSON.stringify(sub[k]).slice(0, 300)}`);

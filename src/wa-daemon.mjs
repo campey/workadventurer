@@ -72,11 +72,26 @@ const findByName = (needle) => wa.findPlayer(needle);
 const liveById = (id) => wa.players.get(id) || null;
 const liveFollowTarget = () => (follow ? liveById(follow.userId) : null);
 
+let lastEmote = null; // { userId, name, emote, at }
+const emoteWaiters = new Set(); // { player, emote, resolve, timer }
+
 function wireClient(client) {
   client.on("log", (m) => log("·", m));
   client.on("error", (e) => log("!!", e.message));
   client.on("areaEnter", (a) => log(`area enter: "${a.name}" [${Object.keys(a.props || {}).join(", ")}]`));
   client.on("areaLeave", (a) => log(`area leave: "${a.name}"`));
+  client.on("emote", (e) => {
+    lastEmote = { ...e, at: Date.now() };
+    log(`emote: ${e.name || e.userId} → ${JSON.stringify(e.emote)}`);
+    for (const w of emoteWaiters) {
+      if (w.player && !String(e.name).toLowerCase().includes(w.player.toLowerCase())) continue;
+      // `emote` may be a comma-separated list of alternatives; match any.
+      if (w.emote && !w.emote.split(",").some((x) => String(e.emote).includes(x.trim()))) continue;
+      clearTimeout(w.timer);
+      emoteWaiters.delete(w);
+      w.resolve({ emote: e.emote, name: e.name, userId: e.userId });
+    }
+  });
   client.on("close", (c) => {
     log("socket closed", c.code, c.reason || "");
     if (deliberateShutdown) return shutdown(0);
@@ -186,13 +201,28 @@ const STAND_GAP = 40;
 // Walk over next to a player: aim at a spot STAND_GAP px short of them
 // (re-derived each tick from their live position, so it tracks if they drift),
 // stop close to that spot, and finish facing them.
+// If the player is standing inside a map area (a meeting table, a silent zone),
+// the stand point must be *inside that area too* — otherwise we'd loiter on the
+// perimeter and never join the area's meeting. Clamp the follow point into the
+// player's area rectangle.
+function standPoint(lp) {
+  const goal = wa.followPoint(lp, STAND_GAP);
+  const area = wa.areasAt(lp.x, lp.y)[0];
+  if (!area) return goal;
+  const m = 8;
+  return {
+    x: Math.min(Math.max(goal.x, area.x + m), area.x + area.w - m),
+    y: Math.min(Math.max(goal.y, area.y + m), area.y + area.h - m),
+  };
+}
+
 async function walkToPlayer(p, timeoutMs = 60_000) {
   const live = () => liveById(p.userId);
   return wa.navTo(p.x, p.y, {
     stopWithin: 16,
     getTarget: () => {
       const lp = live();
-      return lp ? wa.followPoint(lp, STAND_GAP) : { x: p.x, y: p.y };
+      return lp ? standPoint(lp) : { x: p.x, y: p.y };
     },
     face: () => live() ?? p,
     timeoutMs,
@@ -225,6 +255,7 @@ function state() {
     audio: audio
       ? { peers: audio.peers.size, connected: audio.connected, inMeeting: wa.spaces.size > 0 }
       : null,
+    lastEmote,
     following: follow
       ? {
           name: follow.name,
@@ -366,6 +397,21 @@ const server = http.createServer(async (req, res) => {
             )
             .catch((e) => log(`sound "${body.name}" failed: ${e.message}`));
           return send(202, { ok: true, sound: body.name, playing: true });
+        }
+        case "/wait-emote": {
+          // Long-poll: resolve when a matching emote arrives, or time out.
+          const timeoutMs = Number(body.timeoutMs) || 300_000;
+          const w = {
+            player: body.player ? String(body.player) : null,
+            emote: body.emote ? String(body.emote) : null,
+            resolve: (r) => send(200, { ok: true, ...r }),
+          };
+          w.timer = setTimeout(() => {
+            emoteWaiters.delete(w);
+            send(200, { ok: true, timedOut: true });
+          }, timeoutMs);
+          emoteWaiters.add(w);
+          return; // response sent later
         }
         case "/leave":
           send(200, { ok: true, leaving: true });
