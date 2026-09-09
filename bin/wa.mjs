@@ -34,6 +34,7 @@ const USAGE = `wa — WorkAdventure presence control
   wa thought-bubble <text…>
   wa clear-bubble             dismiss whatever bubble is showing
   wa sound <name|file>        play a clip into the proximity voice chat
+  wa wait-emote [player]      block until a player emotes  [--emote <match>] [--timeout <ms>]
 
   global: --json  --if-running (no-op if the daemon isn't up)  --port <P>
 `;
@@ -48,6 +49,8 @@ const { values: flags, positionals } = parseArgs({
     port: { type: "string" },
     room: { type: "string" },
     name: { type: "string" },
+    emote: { type: "string" },
+    timeout: { type: "string" },
     help: { type: "boolean", default: false },
   },
 });
@@ -269,6 +272,20 @@ switch (cmd) {
     const r = await api("POST", "/sound", { name: args.join(" "), cwd: process.cwd() });
     if (!r.ok) die(r.json.error || `sound failed (${r.status})`);
     report(r.json);
+    break;
+  }
+  case "wait-emote": {
+    await needDaemon();
+    const timeoutMs = Number(flags.timeout) || 300_000;
+    const r = await api(
+      "POST",
+      "/wait-emote",
+      { player: args.join(" ") || undefined, emote: flags.emote, timeoutMs },
+      { timeoutMs: timeoutMs + 5000 }
+    );
+    if (r.json.timedOut) die("timeout", 1);
+    if (flags.json) { process.stdout.write(JSON.stringify(r.json, null, 2) + "\n"); break; }
+    process.stdout.write(`${r.json.name || r.json.userId} emoted ${JSON.stringify(r.json.emote)}\n`);
     break;
   }
   default:

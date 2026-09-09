@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`wa wait-emote [player]`** (`POST /wait-emote`) — long-poll that blocks
+  until a player emotes; `--emote 👍,👏` matches any of a list. The client now
+  surfaces `emoteEventMessage` as an `emote` event. Plus `scripts/intro-sequence.sh`
+  + `scripts/typewriter.mjs`: an emote-gated scripted intro that plays a sequence
+  of voice clips, streaming each transcript to the terminal, advancing on 👍
+  (👏 skips to the end, ❤️ jumps to a marked clip). `wa to <player>` now walks
+  *into* the player's map area if they're in one, so the meeting actually forms.
 - **Join `livekitRoomProperty` map-area meetings.** On maps that disable
   spontaneous proximity meetings (people talk only via map areas), the client
   now derives the area meeting's space name the way the front-end does
