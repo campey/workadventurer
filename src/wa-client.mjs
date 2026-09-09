@@ -90,10 +90,11 @@ export class WorkAdventureClient extends EventEmitter {
       this.nav = opts.nav;
     } else {
       try {
-        this.nav = MapNav.load();
+        this.nav = MapNav.loadForRoom(this.cfg.roomUrl);
       } catch (e) {
+        // No baked map for this room -> straight-line movement, no pathfinding.
         this.nav = null;
-        this.emit("log", `map nav disabled: ${e.message}`);
+        this.emit("log", `no baked map for this room (${e.code === "ENOENT" ? "run scripts/build-collision.mjs" : e.message}) — straight-line movement`);
       }
     }
 

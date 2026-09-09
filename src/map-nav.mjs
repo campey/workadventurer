@@ -1,4 +1,7 @@
-// Grid pathfinding over the baked collision map (map/collision.json).
+// Grid pathfinding over a baked collision map. One file per room, laid out to
+// mirror the WorkAdventure room path:  map/<org>/<world>/<room>/collision.json
+// (regenerate with `node scripts/build-collision.mjs <roomUrl>`).
+//
 // A* on an 8-connected tile grid, then line-of-sight smoothing so the avatar
 // walks natural diagonals instead of tile-center staircases.
 
@@ -7,6 +10,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * The `<org>/<world>/<room>` path segment of a WorkAdventure room URL — what we
+ * key the per-room baked maps on. Falls back to a sanitized pathname for URLs
+ * that don't use the `/@/` form.
+ */
+export function roomSlug(roomUrl) {
+  try {
+    const u = new URL(roomUrl);
+    const at = u.pathname.indexOf("/@/");
+    const rest = at >= 0 ? u.pathname.slice(at + 3) : u.pathname;
+    return rest.replace(/^\/+|\/+$/g, "").replace(/[^A-Za-z0-9/_-]/g, "_") || "default";
+  } catch {
+    return "default";
+  }
+}
+
+/** Absolute path of a room's baked collision file. */
+export function collisionPath(roomUrl) {
+  return path.join(__dirname, "..", "map", roomSlug(roomUrl), "collision.json");
+}
 
 /** Areas whose name marks an enclosed room you shouldn't barge into. */
 const DEFAULT_ROOM_RE = /board\s*room/i;
@@ -110,8 +134,14 @@ export class MapNav {
     return candidates.length ? [candidates[0][0], candidates[0][1]] : null;
   }
 
-  static load(file = path.join(__dirname, "..", "map", "collision.json")) {
+  /** Load a baked collision file by path. */
+  static load(file) {
     return new MapNav(JSON.parse(fs.readFileSync(file, "utf8")));
+  }
+
+  /** Load the baked collision file for a room, or throw if there isn't one. */
+  static loadForRoom(roomUrl) {
+    return MapNav.load(collisionPath(roomUrl));
   }
 
   _idx(tx, ty) {
