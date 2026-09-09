@@ -1,14 +1,18 @@
-// Build a compact map-data file for the afrolabs open-space map.
+// Bake a compact collision map for a WorkAdventure room.
 //
 // WorkAdventure's own pathfinding reads the Tiled map; we do the same, offline,
-// and bake the result to map/collision.json so the client doesn't parse a 1.3 MB
-// .tmj at runtime. The file also carries the spawn tiles and the named areas.
+// and bake the result so the client doesn't parse a 1.3 MB .tmj at runtime. The
+// file also carries the spawn tiles and the named areas.
 //
-//   node scripts/build-collision.mjs
+//   node scripts/build-collision.mjs [roomUrl]
+//
+// Default roomUrl is the afrolabs open-space. Output goes to
+//   map/<org>/<world>/<room>/collision.json
+// (mirroring the room's `/@/org/world/room` path) so every room gets its own.
 //
 // Sources of "blocked":
 //   1. the dedicated `collisions` tile layer (any non-zero cell)
-//   2. tiles whose tileset entry has `collides: true` (only a couple on this map)
+//   2. tiles whose tileset entry has `collides: true`
 //   3. furniture entities placed in the .wam (chairs, stools, tables)
 //
 // Plus:
@@ -18,10 +22,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { roomSlug } from "../src/map-nav.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const WAM_URL = "https://afrolabs-16156.map-storage.workadventu.re/open-space.wam";
+const ROOM_URL =
+  process.argv[2] || "https://play.workadventu.re/@/afrolabs/afrolabs/open-space";
+const PUSHER_URL = process.env.WA_PUSHER_URL || "https://pusher.workadventu.re";
 
 const flattenLayers = function* (layers) {
   for (const l of layers) {
@@ -31,7 +38,12 @@ const flattenLayers = function* (layers) {
 };
 
 async function main() {
-  const wam = await (await fetch(WAM_URL)).json();
+  // Resolve the room -> its .wam (same lookup the client does at connect).
+  const mapInfo = await (
+    await fetch(`${PUSHER_URL}/map?playUri=${encodeURIComponent(ROOM_URL)}`)
+  ).json();
+  if (!mapInfo.wamUrl) throw new Error(`no wamUrl for ${ROOM_URL}`);
+  const wam = await (await fetch(mapInfo.wamUrl)).json();
   const tmj = await (await fetch(wam.mapUrl)).json();
 
   const W = tmj.width;
@@ -110,7 +122,7 @@ async function main() {
     }));
 
   const out = {
-    source: { wam: WAM_URL, map: wam.mapUrl },
+    source: { room: ROOM_URL, wam: mapInfo.wamUrl, map: wam.mapUrl },
     width: W,
     height: H,
     tile: TILE,
@@ -118,7 +130,7 @@ async function main() {
     start,
     areas,
   };
-  const dest = path.join(__dirname, "..", "map", "collision.json");
+  const dest = path.join(__dirname, "..", "map", roomSlug(ROOM_URL), "collision.json");
   await fs.mkdir(path.dirname(dest), { recursive: true });
   await fs.writeFile(dest, JSON.stringify(out));
   console.log(
