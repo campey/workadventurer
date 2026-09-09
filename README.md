@@ -119,7 +119,7 @@ The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
 
 | Call | Effect |
 |---|---|
-| `GET /state` | `{ name, pos, facing, area, audio:{peers,connected,inMeeting}|null, following:…, players:[…] }` |
+| `GET /state` | `{ name, pos, facing, area, areas:[{name,props}], audio:{…}|null, following:…, players:[…] }` |
 | `POST /goto` `{x,y}` or `{player}` | walk there (cancels any follow) |
 | `POST /follow` `{player}` | approach + follow (searches the map if not in view) |
 | `POST /unfollow` | stop and forget |
@@ -344,6 +344,19 @@ special case. The path (`src/wa-audio.mjs`, `src/ogg-opus.mjs`):
 
 LiveKit escalation is detected and logged but not yet implemented — audio stops
 publishing when a meeting switches away from WEBRTC.
+
+### 10. Map areas
+
+On connect the client fetches `{pusherUrl}/map?playUri={roomUrl}` → the room's
+`.wam` → its `areas` (name, bounds, properties). Each move recomputes which area
+rectangles the avatar is inside and emits `areaEnter` / `areaLeave` with the
+property list; `/state` reports `areas`. This is how the avatar can tell it has
+walked into a `silent` zone, a `jitsiRoomProperty` / `livekitRoomProperty`
+meeting room, or a megaphone area. Maps that define areas only in the `.tmj`
+object layers (older style) aren't read — `areas` is just empty there.
+
+Joining an area meeting is not implemented yet (needs the proactive
+`joinSpaceQuery` for the area's space — see issue #13).
 
 ---
 
