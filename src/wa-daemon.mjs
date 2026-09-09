@@ -352,17 +352,20 @@ const server = http.createServer(async (req, res) => {
             return send(404, { ok: false, error: `no clip at ${clip}` });
           if (!audio.connected)
             return send(409, { ok: false, error: "no one in the bubble to hear it" });
-          try {
-            const r = await audio.play(clip);
-            log(
-              `sound "${body.name}": ${r.packetsSent} pkts to ${r.peers} peer(s)` +
-                ` [${(r.peerStates || []).join(",")}]` +
-                (r.writeErrors ? `, ${r.writeErrors} write errors` : "")
-            );
-            return send(r.played ? 200 : 409, { ok: r.played, sound: body.name, ...r });
-          } catch (e) {
-            return send(400, { ok: false, error: e.message });
-          }
+          // Fire and forget — play() streams the clip in real time, which can
+          // be many seconds; don't hold the HTTP response open for it.
+          audio
+            .play(clip)
+            .then((r) =>
+              log(
+                `sound "${body.name}": ${r.packetsSent ?? "?"} pkts to ${r.peers ?? 0} peer(s)` +
+                  ` [${(r.peerStates || []).join(",")}]` +
+                  (r.writeErrors ? `, ${r.writeErrors} write errors` : "") +
+                  (r.played ? "" : ` — NOT played (${r.reason ?? "?"})`)
+              )
+            )
+            .catch((e) => log(`sound "${body.name}" failed: ${e.message}`));
+          return send(202, { ok: true, sound: body.name, playing: true });
         }
         case "/leave":
           send(200, { ok: true, leaving: true });

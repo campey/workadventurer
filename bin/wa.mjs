@@ -89,6 +89,9 @@ async function api(method, route, body, { timeoutMs = 8000 } = {}) {
     let json;
     try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
     return { ok: res.ok, status: res.status, json };
+  } catch (e) {
+    if (e.name === "AbortError") die(`daemon didn't respond within ${timeoutMs}ms (${route})`);
+    throw e;
   } finally {
     clearTimeout(timer);
   }
