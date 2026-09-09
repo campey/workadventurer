@@ -339,7 +339,16 @@ export class WorkAdventureClient extends EventEmitter {
     // actually connect.
     this._send({ addSpaceFilterMessage: { spaceFilterMessage: { spaceName } } });
     this.emit("spaceJoined", { spaceName, spaceUserId });
-    if (this.micOn) this.setSpaceMicState(spaceName, true);
+    // Announce mic-on more than once. A single announce right after joining
+    // races the back registering our SpaceUser / the peers starting to watch
+    // us; if it's missed the other clients treat us as muted and never play
+    // our audio track (issue #10). Re-assert on a short delay, and again when
+    // the space's user list arrives (proof the back has us).
+    if (this.micOn) {
+      this.setSpaceMicState(spaceName, true);
+      setTimeout(() => this.setSpaceMicState(spaceName, true), 1000);
+      setTimeout(() => this.setSpaceMicState(spaceName, true), 3000);
+    }
     return spaceUserId;
   }
 
@@ -526,6 +535,17 @@ export class WorkAdventureClient extends EventEmitter {
         this.groupId = null;
         this.emit("bubbleLeft", {});
       }
+      return;
+    }
+    if (sub.initSpaceUsersMessage) {
+      // The back has registered us and told us who's in the space — a safe
+      // moment to (re-)announce mic-on so no one has us cached as muted (#10).
+      const sn = sub.initSpaceUsersMessage.spaceName;
+      if (this.micOn && this.spaces.has(sn)) this.setSpaceMicState(sn, true);
+      this.emit("spaceUsers", {
+        spaceName: sn,
+        users: sub.initSpaceUsersMessage.users ?? [],
+      });
       return;
     }
     if (sub.privateEvent) {
