@@ -75,6 +75,8 @@ const liveFollowTarget = () => (follow ? liveById(follow.userId) : null);
 function wireClient(client) {
   client.on("log", (m) => log("·", m));
   client.on("error", (e) => log("!!", e.message));
+  client.on("areaEnter", (a) => log(`area enter: "${a.name}" [${Object.keys(a.props || {}).join(", ")}]`));
+  client.on("areaLeave", (a) => log(`area leave: "${a.name}"`));
   client.on("close", (c) => {
     log("socket closed", c.code, c.reason || "");
     if (deliberateShutdown) return shutdown(0);
@@ -216,6 +218,10 @@ function state() {
     pos: { x: Math.round(wa.pos.x), y: Math.round(wa.pos.y) },
     facing: ["up", "right", "down", "left"][wa.pos.direction] ?? null,
     area: wa.nav?.areaAt(wa.pos.x, wa.pos.y)?.name ?? null,
+    areas: [...(wa.currentAreas ?? [])].map((name) => {
+      const a = (wa.areas ?? []).find((z) => z.name === name);
+      return { name, props: a ? Object.keys(a.props) : [] };
+    }),
     audio: audio
       ? { peers: audio.peers.size, connected: audio.connected, inMeeting: wa.spaces.size > 0 }
       : null,
@@ -373,6 +379,9 @@ function shutdown(code) {
 }
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
+// Don't let a stray throw in a timer / unawaited promise take the daemon down.
+process.on("uncaughtException", (e) => log("uncaughtException:", e.stack || e.message));
+process.on("unhandledRejection", (e) => log("unhandledRejection:", e?.stack || String(e)));
 
 server.on("error", (e) => {
   if (e.code === "EADDRINUSE") {

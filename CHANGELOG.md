@@ -8,6 +8,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Map-area awareness.** On connect the client fetches the room's `.wam`; on
+  every move it emits `areaEnter` / `areaLeave` with the area's properties
+  (`silent`, `jitsiRoomProperty`, `livekitRoomProperty`, megaphone, …). `/state`
+  gains `areas`; `wa status` shows them. Groundwork for joining area-scoped
+  meetings (#13). `WA_DEBUG=1` now logs every inbound message kind, and the
+  daemon survives a stray throw in a timer / unawaited promise.
 - **`wa sound` accepts any format** — non-Opus files (mp3/wav/m4a/…) are
   transcoded once via `ffmpeg` and cached in the temp dir (`src/transcode.mjs`);
   Opus-in-Ogg still plays with no transcode. Closes #9.

@@ -130,6 +130,9 @@ async function waitForDaemon(ms = 15000) {
 function prettyStatus(s) {
   const L = [];
   L.push(`${s.name}  @ (${s.pos.x},${s.pos.y})${s.facing ? ` facing ${s.facing}` : ""}${s.area ? `  in ${s.area}` : ""}${s.connected ? "" : s.reconnecting ? "  [reconnecting]" : "  [disconnected]"}`);
+  if (s.areas && s.areas.length) {
+    L.push("in areas: " + s.areas.map((a) => `${a.name}${a.props.length ? ` [${a.props.join(", ")}]` : ""}`).join("; "));
+  }
   if (s.following) {
     L.push(`following ${s.following.name}${s.following.paused ? " (paused — quiet)" : ""}` +
       (s.following.pos ? `  they're at (${s.following.pos.x},${s.following.pos.y})${s.following.area ? ` in ${s.following.area}` : ""}` : "  (not visible)"));

@@ -60,6 +60,11 @@ export class WorkAdventureClient extends EventEmitter {
     this.spaces = new Map(); // spaceName -> our membership
     this.groupId = null; // current proximity group, or null
 
+    // Map areas (from the room's .wam) and which ones the avatar is inside.
+    /** @type {{name:string,x:number,y:number,w:number,h:number,props:Record<string,unknown>}[]} */
+    this.areas = [];
+    this.currentAreas = new Set(); // area names the avatar is currently within
+
     if (opts.nav !== undefined) {
       this.nav = opts.nav;
     } else {
@@ -130,9 +135,63 @@ export class WorkAdventureClient extends EventEmitter {
     };
   }
 
+  // Fetch the room's map areas (name, bounds, properties) so we can tell when
+  // the avatar walks into a meeting / silent / megaphone zone. Best-effort:
+  // a failure just leaves `this.areas` empty.
+  async _loadAreas() {
+    const get = (u) => fetch(u, { signal: AbortSignal.timeout(8000) }).then((r) => r.json());
+    try {
+      const mapInfo = await get(
+        `${this.cfg.pusherUrl}/map?playUri=${encodeURIComponent(this.cfg.roomUrl)}`
+      );
+      if (!mapInfo.wamUrl) return;
+      const wam = await get(mapInfo.wamUrl);
+      this.areas = (wam.areas ?? []).map((a) => ({
+        name: a.name || "(unnamed)",
+        x: a.x, y: a.y, w: a.width, h: a.height,
+        props: Object.fromEntries(
+          (a.properties ?? []).map((p) => [p.type ?? p.name, p.value ?? p.name ?? true])
+        ),
+      }));
+      this.emit("log", `loaded ${this.areas.length} map areas`);
+    } catch (e) {
+      this.emit("log", `map areas unavailable: ${e.message}`);
+    }
+  }
+
+  /** Which areas contain a point. */
+  areasAt(x = this.pos.x, y = this.pos.y) {
+    return this.areas.filter(
+      (a) => x >= a.x && x <= a.x + a.w && y >= a.y && y <= a.y + a.h
+    );
+  }
+
+  // Recompute area membership and emit areaEnter / areaLeave. Cheap; called on
+  // every move. Never throws — a bad area definition must not break movement.
+  _updateAreas() {
+    if (!this.areas.length) return;
+    try {
+      const now = new Set();
+      for (const a of this.areasAt()) {
+        now.add(a.name);
+        if (!this.currentAreas.has(a.name)) this.emit("areaEnter", a);
+      }
+      for (const name of this.currentAreas) {
+        if (!now.has(name)) {
+          const a = this.areas.find((z) => z.name === name);
+          this.emit("areaLeave", a ?? { name });
+        }
+      }
+      this.currentAreas = now;
+    } catch (e) {
+      this.emit("log", `area update error: ${e.message}`);
+    }
+  }
+
   async connect() {
     await this._loadProto();
     if (!this.token) await this._anonymLogin();
+    await this._loadAreas();
 
     const url = this._wsUrl();
     this.emit("log", `connecting ${url}`);
@@ -357,6 +416,10 @@ export class WorkAdventureClient extends EventEmitter {
       return;
     }
     // roomConnectedMessage, worldConnectionMessage, refreshRoomMessage, etc. — ignored.
+    if (process.env.WA_DEBUG) {
+      const k = Object.keys(obj)[0];
+      if (k && k !== "batchMessage") this.emit("log", `S2C ${k}: ${JSON.stringify(obj[k]).slice(0, 400)}`);
+    }
   }
 
   _handleSub(sub) {
@@ -426,6 +489,10 @@ export class WorkAdventureClient extends EventEmitter {
       return;
     }
     // emoteEventMessage, variableMessage, publicEvent, other space* — ignored.
+    if (process.env.WA_DEBUG) {
+      const k = Object.keys(sub)[0];
+      if (k && k !== "userMovedMessage") this.emit("log", `SUB ${k}: ${JSON.stringify(sub[k]).slice(0, 300)}`);
+    }
   }
 
   _startKeepAlive() {
@@ -448,6 +515,7 @@ export class WorkAdventureClient extends EventEmitter {
         viewport: this._viewport(),
       },
     });
+    this._updateAreas();
   }
 
   listPlayers() {
