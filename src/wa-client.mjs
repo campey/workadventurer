@@ -15,36 +15,18 @@ import path from "node:path";
 import WebSocket from "ws";
 import protobuf from "protobufjs";
 import { MapNav } from "./map-nav.mjs";
+import { resolveAdapter } from "./adapters/index.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Ports of WorkAdventure's helpers (libs/shared-utils) — used to derive the
-// space name of a map-area meeting the same way the front-end does.
-function shortHash(s) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) {
-    h = (h << 5) - h + s.charCodeAt(i);
-    h |= 0;
-  }
-  return Math.abs(h).toString(36);
-}
-function slugify(...args) {
-  return args
-    .join(" ")
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9-_ ]/g, "")
-    .replace(/\s+/g, "-");
-}
 
 const DEFAULTS = {
   pusherUrl: "https://pusher.workadventu.re",
   roomUrl: "https://play.workadventu.re/@/afrolabs/afrolabs/open-space",
-  // apiVersionHash for the deployed build (v1.33.5). Must match the server or
-  // the socket is closed straight after upgrade with a "new version" screen.
-  version: "bfd20fc4",
+  // apiVersionHash override. Normally null — the resolved adapter supplies it.
+  // Set (via WA_VERSION) only to probe a build that has no adapter yet.
+  version: null,
+  // Version target: "auto" (probe the server) or an adapter id ("wa-1.33").
+  target: "auto",
   // A texture id from GET /woka/list for this room ("Bob" in the default set).
   wokaId: "506a3a64-47a9-4587-b19b-2d1eb13f9790",
   name: "claude",
@@ -60,6 +42,8 @@ export class WorkAdventureClient extends EventEmitter {
   constructor(opts = {}) {
     super();
     this.cfg = { ...DEFAULTS, ...opts };
+    this.adapter = opts.adapter ?? null;
+    this._target = this.cfg.target ?? "auto";
     this.token = null;
     this.ws = null;
     this.myUserId = null;
@@ -109,13 +93,13 @@ export class WorkAdventureClient extends EventEmitter {
 
   async _loadProto() {
     if (this._root) return;
-    this._root = await protobuf.load(path.join(__dirname, "..", "proto", "messages.proto"));
+    this._root = await protobuf.load(path.join(__dirname, "..", this.adapter.protoPath));
     this._C2S = this._root.lookupType("ClientToServerMessage");
     this._S2C = this._root.lookupType("ServerToClientMessage");
   }
 
   async _anonymLogin() {
-    const res = await fetch(`${this.cfg.pusherUrl}/anonymLogin`, {
+    const res = await fetch(`${this.cfg.pusherUrl}${this.adapter.endpoints.anonymLogin}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
@@ -132,7 +116,7 @@ export class WorkAdventureClient extends EventEmitter {
     u.protocol = u.protocol.replace("http", "ws");
     u.searchParams.set("roomId", this.cfg.roomUrl);
     u.searchParams.append("characterTextureIds", this.cfg.wokaId);
-    u.searchParams.set("version", this.cfg.version);
+    u.searchParams.set("version", this.cfg.version || this.adapter.apiVersionHashes[0]);
     u.searchParams.set("roomName", "");
     u.searchParams.set("cameraState", "false");
     u.searchParams.set("microphoneState", this.micOn ? "true" : "false");
@@ -164,7 +148,7 @@ export class WorkAdventureClient extends EventEmitter {
     const get = (u) => fetch(u, { signal: AbortSignal.timeout(8000) }).then((r) => r.json());
     try {
       const mapInfo = await get(
-        `${this.cfg.pusherUrl}/map?playUri=${encodeURIComponent(this.cfg.roomUrl)}`
+        `${this.cfg.pusherUrl}${this.adapter.endpoints.map}?playUri=${encodeURIComponent(this.cfg.roomUrl)}`
       );
       if (!mapInfo.wamUrl) return;
       const wam = await get(mapInfo.wamUrl);
@@ -217,6 +201,19 @@ export class WorkAdventureClient extends EventEmitter {
   }
 
   async connect() {
+    if (!this.adapter) {
+      const { adapter, why, warn } = await resolveAdapter({
+        roomUrl: this.cfg.roomUrl,
+        override: this._target,
+      });
+      this.adapter = adapter;
+      this.emit("log", `${warn ? "⚠ " : ""}adapter ${adapter.id} (${why})`);
+    }
+    if (this.adapter.envelope !== "seq-len-v1") {
+      throw new Error(
+        `adapter ${this.adapter.id} needs envelope ${this.adapter.envelope}; client only implements seq-len-v1`
+      );
+    }
     await this._loadProto();
     if (!this.token) await this._anonymLogin();
     await this._loadAreas();
@@ -322,12 +319,11 @@ export class WorkAdventureClient extends EventEmitter {
    * `spaceUserId`. Also announces our current mic state to the other members.
    */
   async _joinSpace(spaceName, propertiesToSync) {
-    const props = propertiesToSync?.length
-      ? propertiesToSync
-      : ["cameraState", "microphoneState", "screenSharingState"];
+    const sj = this.adapter.spaceJoin;
+    const props = propertiesToSync?.length ? propertiesToSync : sj.defaultPropsToSync;
     const answer = await this.query("joinSpaceQuery", {
       spaceName,
-      filterType: 0, // ALL_USERS
+      filterType: sj.filterType, // ALL_USERS
       propertiesToSync: props,
     });
     const spaceUserId = answer.joinSpaceAnswer?.spaceUserId ?? "";
@@ -337,7 +333,9 @@ export class WorkAdventureClient extends EventEmitter {
     // `usersToNotify`, and never sets up peer connections (WebRTCCommunication
     // Strategy.addUser bails for non-watchers). This is what makes the meeting
     // actually connect.
-    this._send({ addSpaceFilterMessage: { spaceFilterMessage: { spaceName } } });
+    if (sj.watchViaAddSpaceFilter) {
+      this._send({ addSpaceFilterMessage: { spaceFilterMessage: { spaceName } } });
+    }
     this.emit("spaceJoined", { spaceName, spaceUserId });
     // Announce mic-on more than once. A single announce right after joining
     // races the back registering our SpaceUser / the peers starting to watch
@@ -345,9 +343,10 @@ export class WorkAdventureClient extends EventEmitter {
     // our audio track (issue #10). Re-assert on a short delay, and again when
     // the space's user list arrives (proof the back has us).
     if (this.micOn) {
-      this.setSpaceMicState(spaceName, true);
-      setTimeout(() => this.setSpaceMicState(spaceName, true), 1000);
-      setTimeout(() => this.setSpaceMicState(spaceName, true), 3000);
+      for (const ms of sj.micReannounceMs) {
+        if (ms === 0) this.setSpaceMicState(spaceName, true);
+        else setTimeout(() => this.setSpaceMicState(spaceName, true), ms);
+      }
     }
     return spaceUserId;
   }
@@ -363,8 +362,7 @@ export class WorkAdventureClient extends EventEmitter {
   // The space name of a map-area meeting, derived the same way the WA front does
   // (AreasPropertiesListener.handleLivekitRoomPropertyOnEnter).
   _areaSpaceName(prop) {
-    const roomId = prop.roomName?.trim() ? prop.roomName : prop.id;
-    return slugify(shortHash(this.cfg.roomUrl) + "-" + roomId);
+    return this.adapter.areaMeetingSpaceName(this.cfg.roomUrl, prop);
   }
 
   // On entering/leaving a `livekitRoomProperty` area, proactively join/leave its
@@ -393,7 +391,7 @@ export class WorkAdventureClient extends EventEmitter {
       updateSpaceUserMessage: {
         spaceName,
         user: { spaceUserId: mine.spaceUserId, microphoneState: !!on },
-        updateMask: { paths: ["microphoneState"] },
+        updateMask: { paths: this.adapter.micState.updateMaskPaths },
       },
     });
   }
