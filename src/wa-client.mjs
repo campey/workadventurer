@@ -82,13 +82,38 @@ export class WorkAdventureClient extends EventEmitter {
       }
     }
 
-    // Spawn: explicit `spawn` opt wins; otherwise a random tile from the map's
-    // `start` layer (what WorkAdventure itself uses); otherwise the fallback.
+    // Spawn: explicit `spawn` opt wins; otherwise a random tile from the baked
+    // `start` tile layer; otherwise the fallback. connect() upgrades this to the
+    // `.wam` "start" area once the map areas load (that's what browser clients
+    // actually use — the .tmj tile layer is often a stale template default).
+    this._explicitSpawn = opts.spawn !== undefined;
     const navSpawn = this.nav?.randomSpawnPx();
     const spawn =
       opts.spawn ??
       (navSpawn ? { x: navSpawn[0], y: navSpawn[1] } : this.cfg.spawn);
     this.pos = { x: spawn.x, y: spawn.y, direction: DIRECTION.DOWN, moving: false };
+  }
+
+  // The real spawn: a `.wam` area carrying a `start` property (WorkAdventure's
+  // map-editor "Start area"). Prefers one marked `isDefault`. Returns a random
+  // point inside it, nudged off a blocked tile. null if the map has none.
+  _wamSpawnPoint() {
+    const starts = (this.areas ?? []).filter((a) =>
+      (a.rawProps ?? []).some((p) => p.type === "start")
+    );
+    if (!starts.length) return null;
+    const a =
+      starts.find((s) => (s.rawProps ?? []).some((p) => p.type === "start" && p.isDefault)) ??
+      starts[0];
+    const m = 12;
+    let x = a.x + m + Math.random() * Math.max(1, a.w - 2 * m);
+    let y = a.y + m + Math.random() * Math.max(1, a.h - 2 * m);
+    if (this.nav?.isPxBlocked(x, y)) {
+      const [tx, ty] = this.nav.pxToTile(x, y);
+      const free = this.nav.nearestFree(tx, ty);
+      if (free) [x, y] = this.nav.tileCenterPx(free[0], free[1]);
+    }
+    return { x, y, area: a.name };
   }
 
   async _loadProto() {
@@ -217,6 +242,17 @@ export class WorkAdventureClient extends EventEmitter {
     await this._loadProto();
     if (!this.token) await this._anonymLogin();
     await this._loadAreas();
+
+    // Upgrade the constructor's guess to the map's real `.wam` start area,
+    // before the join message carries our position to the server.
+    if (!this._explicitSpawn) {
+      const ws = this._wamSpawnPoint();
+      if (ws) {
+        this.pos.x = ws.x;
+        this.pos.y = ws.y;
+        this.emit("log", `spawn: "${ws.area}" .wam start area (${ws.x | 0},${ws.y | 0})`);
+      }
+    }
 
     const url = this._wsUrl();
     this.emit("log", `connecting ${url}`);
