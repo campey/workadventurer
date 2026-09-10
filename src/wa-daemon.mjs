@@ -285,6 +285,7 @@ function state() {
       name: p.name,
       userId: p.userId,
       pos: { x: p.x | 0, y: p.y | 0 },
+      facing: ["up", "right", "down", "left"][p.direction] ?? null,
       area: wa.nav?.areaAt(p.x, p.y)?.name ?? null,
     })),
   };
