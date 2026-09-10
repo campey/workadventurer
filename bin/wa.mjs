@@ -35,6 +35,7 @@ const USAGE = `wa — WorkAdventure presence control
   wa clear-bubble             dismiss whatever bubble is showing
   wa sound <name|file>        play a clip into the proximity voice chat
   wa wait-emote [player]      block until a player emotes  [--emote <match>] [--timeout <ms>]
+  wa selfcheck                smoke-test a version target  [--target <id>] [--room <url>]
 
   global: --json  --if-running (no-op if the daemon isn't up)  --port <P>
 `;
@@ -49,6 +50,7 @@ const { values: flags, positionals } = parseArgs({
     port: { type: "string" },
     room: { type: "string" },
     name: { type: "string" },
+    target: { type: "string" },
     emote: { type: "string" },
     timeout: { type: "string" },
     help: { type: "boolean", default: false },
@@ -287,6 +289,18 @@ switch (cmd) {
     if (flags.json) { process.stdout.write(JSON.stringify(r.json, null, 2) + "\n"); break; }
     process.stdout.write(`${r.json.name || r.json.userId} emoted ${JSON.stringify(r.json.emote)}\n`);
     break;
+  }
+  case "selfcheck": {
+    const { spawnSync } = await import("node:child_process");
+    const scArgs = [];
+    if (flags.target) scArgs.push("--target", flags.target);
+    if (flags.room) scArgs.push("--room", flags.room);
+    const r = spawnSync(
+      process.execPath,
+      [new URL("../scripts/selfcheck.mjs", import.meta.url).pathname, ...scArgs],
+      { stdio: "inherit" }
+    );
+    process.exit(r.status ?? 1);
   }
   default:
     die(`unknown command "${cmd}"\n\n${USAGE}`, 2);
