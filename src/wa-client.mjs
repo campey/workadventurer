@@ -497,6 +497,7 @@ export class WorkAdventureClient extends EventEmitter {
         uuid: u.userUuid ?? "",
         x: u.position?.x ?? 0,
         y: u.position?.y ?? 0,
+        direction: u.position?.direction ?? DIRECTION.DOWN,
       });
       this.emit("playerJoined", this.players.get(u.userId));
       return;
@@ -504,7 +505,11 @@ export class WorkAdventureClient extends EventEmitter {
     if (sub.userMovedMessage) {
       const m = sub.userMovedMessage;
       const p = this.players.get(m.userId);
-      if (p && m.position) { p.x = m.position.x; p.y = m.position.y; }
+      if (p && m.position) {
+        p.x = m.position.x;
+        p.y = m.position.y;
+        p.direction = m.position.direction ?? p.direction;
+      }
       this.emit("playerMoved", p);
       return;
     }
@@ -712,6 +717,32 @@ export class WorkAdventureClient extends EventEmitter {
       this.pos.moving = false;
       this._emitMove(false);
     }
+  }
+
+  /**
+   * Where to stand to face `target` from the front: `spacing` px away in the
+   * direction they're facing (so we end up in their eyeline, not behind them).
+   * Falls back to `followPoint` when the target's facing is unknown or the spot
+   * in front of them is blocked with no free tile nearby.
+   */
+  frontOf(target, spacing = 64) {
+    const V = {
+      [DIRECTION.UP]: [0, -1],
+      [DIRECTION.RIGHT]: [1, 0],
+      [DIRECTION.DOWN]: [0, 1],
+      [DIRECTION.LEFT]: [-1, 0],
+    };
+    const v = V[target.direction];
+    if (!v) return this.followPoint(target, spacing);
+    let gx = target.x + v[0] * spacing;
+    let gy = target.y + v[1] * spacing;
+    if (this.nav?.isPxBlocked(gx, gy)) {
+      const [tX, tY] = this.nav.pxToTile(gx, gy);
+      const free = this.nav.nearestFree(tX, tY);
+      if (!free) return this.followPoint(target, spacing);
+      [gx, gy] = this.nav.tileCenterPx(free[0], free[1]);
+    }
+    return { x: gx, y: gy };
   }
 
   /**
