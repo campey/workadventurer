@@ -82,13 +82,38 @@ export class WorkAdventureClient extends EventEmitter {
       }
     }
 
-    // Spawn: explicit `spawn` opt wins; otherwise a random tile from the map's
-    // `start` layer (what WorkAdventure itself uses); otherwise the fallback.
+    // Spawn: explicit `spawn` opt wins; otherwise a random tile from the baked
+    // `start` tile layer; otherwise the fallback. connect() upgrades this to the
+    // `.wam` "start" area once the map areas load (that's what browser clients
+    // actually use — the .tmj tile layer is often a stale template default).
+    this._explicitSpawn = opts.spawn !== undefined;
     const navSpawn = this.nav?.randomSpawnPx();
     const spawn =
       opts.spawn ??
       (navSpawn ? { x: navSpawn[0], y: navSpawn[1] } : this.cfg.spawn);
     this.pos = { x: spawn.x, y: spawn.y, direction: DIRECTION.DOWN, moving: false };
+  }
+
+  // The real spawn: a `.wam` area carrying a `start` property (WorkAdventure's
+  // map-editor "Start area"). Prefers one marked `isDefault`. Returns a random
+  // point inside it, nudged off a blocked tile. null if the map has none.
+  _wamSpawnPoint() {
+    const starts = (this.areas ?? []).filter((a) =>
+      (a.rawProps ?? []).some((p) => p.type === "start")
+    );
+    if (!starts.length) return null;
+    const a =
+      starts.find((s) => (s.rawProps ?? []).some((p) => p.type === "start" && p.isDefault)) ??
+      starts[0];
+    const m = 12;
+    let x = a.x + m + Math.random() * Math.max(1, a.w - 2 * m);
+    let y = a.y + m + Math.random() * Math.max(1, a.h - 2 * m);
+    if (this.nav?.isPxBlocked(x, y)) {
+      const [tx, ty] = this.nav.pxToTile(x, y);
+      const free = this.nav.nearestFree(tx, ty);
+      if (free) [x, y] = this.nav.tileCenterPx(free[0], free[1]);
+    }
+    return { x, y, area: a.name };
   }
 
   async _loadProto() {
@@ -217,6 +242,17 @@ export class WorkAdventureClient extends EventEmitter {
     await this._loadProto();
     if (!this.token) await this._anonymLogin();
     await this._loadAreas();
+
+    // Upgrade the constructor's guess to the map's real `.wam` start area,
+    // before the join message carries our position to the server.
+    if (!this._explicitSpawn) {
+      const ws = this._wamSpawnPoint();
+      if (ws) {
+        this.pos.x = ws.x;
+        this.pos.y = ws.y;
+        this.emit("log", `spawn: "${ws.area}" .wam start area (${ws.x | 0},${ws.y | 0})`);
+      }
+    }
 
     const url = this._wsUrl();
     this.emit("log", `connecting ${url}`);
@@ -497,6 +533,7 @@ export class WorkAdventureClient extends EventEmitter {
         uuid: u.userUuid ?? "",
         x: u.position?.x ?? 0,
         y: u.position?.y ?? 0,
+        direction: u.position?.direction ?? DIRECTION.DOWN,
       });
       this.emit("playerJoined", this.players.get(u.userId));
       return;
@@ -504,7 +541,11 @@ export class WorkAdventureClient extends EventEmitter {
     if (sub.userMovedMessage) {
       const m = sub.userMovedMessage;
       const p = this.players.get(m.userId);
-      if (p && m.position) { p.x = m.position.x; p.y = m.position.y; }
+      if (p && m.position) {
+        p.x = m.position.x;
+        p.y = m.position.y;
+        p.direction = m.position.direction ?? p.direction;
+      }
       this.emit("playerMoved", p);
       return;
     }
@@ -712,6 +753,32 @@ export class WorkAdventureClient extends EventEmitter {
       this.pos.moving = false;
       this._emitMove(false);
     }
+  }
+
+  /**
+   * Where to stand to face `target` from the front: `spacing` px away in the
+   * direction they're facing (so we end up in their eyeline, not behind them).
+   * Falls back to `followPoint` when the target's facing is unknown or the spot
+   * in front of them is blocked with no free tile nearby.
+   */
+  frontOf(target, spacing = 64) {
+    const V = {
+      [DIRECTION.UP]: [0, -1],
+      [DIRECTION.RIGHT]: [1, 0],
+      [DIRECTION.DOWN]: [0, 1],
+      [DIRECTION.LEFT]: [-1, 0],
+    };
+    const v = V[target.direction];
+    if (!v) return this.followPoint(target, spacing);
+    let gx = target.x + v[0] * spacing;
+    let gy = target.y + v[1] * spacing;
+    if (this.nav?.isPxBlocked(gx, gy)) {
+      const [tX, tY] = this.nav.pxToTile(gx, gy);
+      const free = this.nav.nearestFree(tX, tY);
+      if (!free) return this.followPoint(target, spacing);
+      [gx, gy] = this.nav.tileCenterPx(free[0], free[1]);
+    }
+    return { x: gx, y: gy };
   }
 
   /**

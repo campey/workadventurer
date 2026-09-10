@@ -194,26 +194,35 @@ function resume() {
 }
 
 // How far to stand from a player when we deliberately walk over to them
-// (`wa to`, `greet`) — plus navTo's ~16px stop tolerance, so ~40-56px in
-// practice. Close enough to read as "next to them", not crowding.
-const STAND_GAP = 40;
+// (`wa to`, `greet`) — plus navTo's ~16px stop tolerance, so ~14-46px in
+// practice. Right next to them, in their eyeline (see standPoint / frontOf).
+const STAND_GAP = 30;
 
-// Walk over next to a player: aim at a spot STAND_GAP px short of them
-// (re-derived each tick from their live position, so it tracks if they drift),
-// stop close to that spot, and finish facing them.
+// Walk over to a player and stand in their eyeline: aim STAND_GAP px in front
+// of them (the direction they're facing), re-derived each tick from their live
+// position + facing so it tracks if they turn or drift; stop close to that
+// spot, finish facing them.
 // If the player is standing inside a map area (a meeting table, a silent zone),
 // the stand point must be *inside that area too* — otherwise we'd loiter on the
-// perimeter and never join the area's meeting. Clamp the follow point into the
-// player's area rectangle.
+// perimeter and never join the area's meeting. Clamp into the player's area
+// rectangle; if that clamp pulls us closer than MIN_STAND px to the player,
+// push back out along the same axis so we don't end up standing on them.
+const MIN_STAND = 24;
 function standPoint(lp) {
-  const goal = wa.followPoint(lp, STAND_GAP);
+  const goal = wa.frontOf(lp, STAND_GAP);
   const area = wa.areasAt(lp.x, lp.y)[0];
   if (!area) return goal;
   const m = 8;
-  return {
-    x: Math.min(Math.max(goal.x, area.x + m), area.x + area.w - m),
-    y: Math.min(Math.max(goal.y, area.y + m), area.y + area.h - m),
-  };
+  let x = Math.min(Math.max(goal.x, area.x + m), area.x + area.w - m);
+  let y = Math.min(Math.max(goal.y, area.y + m), area.y + area.h - m);
+  const dx = x - lp.x;
+  const dy = y - lp.y;
+  const d = Math.hypot(dx, dy);
+  if (d > 0 && d < MIN_STAND) {
+    x = lp.x + (dx / d) * MIN_STAND;
+    y = lp.y + (dy / d) * MIN_STAND;
+  }
+  return { x, y };
 }
 
 async function walkToPlayer(p, timeoutMs = 60_000) {
@@ -276,6 +285,7 @@ function state() {
       name: p.name,
       userId: p.userId,
       pos: { x: p.x | 0, y: p.y | 0 },
+      facing: ["up", "right", "down", "left"][p.direction] ?? null,
       area: wa.nav?.areaAt(p.x, p.y)?.name ?? null,
     })),
   };
