@@ -23,7 +23,7 @@ import {
   RtpHeader,
 } from "werift";
 import { readOggOpus } from "./ogg-opus.mjs";
-import { ensureOpus } from "./transcode.mjs";
+import { ensureOpus, silenceOpusFile } from "./transcode.mjs";
 
 const OPUS = new RTCRtpCodecParameters({
   mimeType: "audio/opus",
@@ -43,6 +43,7 @@ export class WaAudio extends EventEmitter {
     /** @type {Map<string,{pc:RTCPeerConnection,track:MediaStreamTrack,spaceName:string,remoteUserId:string}>} */
     this.peers = new Map();
     this._play = null; // { stop(): void } while a clip is playing
+    this._silencePath = null; // cached short silence clip for the connect-time prime
 
     client.on("spaceJoined", () => this._loadIce());
     client.on("spaceEvent", (e) => this._onSpaceEvent(e));
@@ -140,6 +141,9 @@ export class WaAudio extends EventEmitter {
         // Re-assert mic-on now that this peer is up, so it doesn't have us
         // cached as muted and drop our audio track (#10).
         this.client.setSpaceMicState(spaceName, true);
+        // …and send a brief silence blip so the peer sees a live stream and
+        // clears the "mic on, receiving nothing" red indicator (#10).
+        this._primeMic();
         this.emit("peerConnected", { connectionId, remoteUserId });
       }
     });
@@ -243,7 +247,7 @@ export class WaAudio extends EventEmitter {
    * accepted (transcoded to Opus on first use); Opus-in-Ogg plays as-is.
    * Resolves when the clip finishes or is superseded by another play()/hangup().
    */
-  async play(file) {
+  async play(file, { indicator = true } = {}) {
     const opus = await ensureOpus(file);
     const { packets, totalSamples } = await readOggOpus(opus);
     if (!packets.length) return { played: false, reason: "empty clip" };
@@ -268,7 +272,7 @@ export class WaAudio extends EventEmitter {
       const gapSamples = Math.round(((now0 - p.lastPlayEnd) / 1000) * 48000);
       p.ts = (p.ts + Math.max(0, gapSamples)) >>> 0;
     }
-    this._setSpeaking(true);
+    this._setSpeaking(true, indicator);
 
     let sent = 0;
     let errs = 0;
@@ -302,7 +306,7 @@ export class WaAudio extends EventEmitter {
 
     const endAt = performance.now();
     for (const p of targets) p.lastPlayEnd = endAt;
-    this._setSpeaking(false);
+    this._setSpeaking(false, indicator);
     this._play = null;
     const states = targets.map((p) => p.pc.connectionState);
     return {
@@ -315,10 +319,11 @@ export class WaAudio extends EventEmitter {
     };
   }
 
-  _setSpeaking(on) {
+  _setSpeaking(on, indicator = true) {
     // Show the "speaking" indicator, and (re)assert mic-on while we do — the
     // one-shot mic-state announce at join sometimes doesn't stick on the other
-    // clients' UI, leaving a phantom muted icon. See #10.
+    // clients' UI, leaving a phantom muted icon. See #10. `indicator: false`
+    // (the connect-time prime) re-asserts mic-on without lighting the ring.
     for (const spaceName of this.client.spaces.keys()) {
       const mine = this.client.spaces.get(spaceName);
       if (!mine) continue;
@@ -328,13 +333,33 @@ export class WaAudio extends EventEmitter {
             spaceName,
             user: {
               spaceUserId: mine.spaceUserId,
-              showVoiceIndicator: !!on,
+              showVoiceIndicator: indicator ? !!on : false,
               microphoneState: true,
             },
             updateMask: { paths: this.client.adapter.micState.speakingMaskPaths },
           },
         });
       } catch {}
+    }
+  }
+
+  // One short silence clip right after a peer connects. Some clients render our
+  // mic red ("on, receiving nothing") until the first RTP lands; a ~0.4 s blip
+  // primes the path and it stays fine until the next real clip. Bounded — no
+  // continuous stream, so nothing to leak.
+  async _primeMic() {
+    if (this._play) return; // a real clip is already going — no need
+    try {
+      this._silencePath ??= await silenceOpusFile();
+      if (this._play) return;
+      const r = await this.play(this._silencePath, { indicator: false });
+      this.emit(
+        "log",
+        `mic primed: ${r.packetsSent ?? 0} silence pkts to ${r.peers ?? 0} peer(s)` +
+          (r.played ? "" : ` — ${r.reason ?? "?"}`)
+      );
+    } catch (e) {
+      this.emit("log", `mic prime skipped: ${e.message}`);
     }
   }
 }
