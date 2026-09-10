@@ -21,6 +21,7 @@
   },
   "scripts": {
     "wa": "node bin/wa.mjs",
+    "test": "node --test",
     "find-player": "node src/find-player.mjs",
     "build:collision": "node scripts/build-collision.mjs"
   },
