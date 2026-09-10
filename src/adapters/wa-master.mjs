@@ -16,9 +16,9 @@ export default {
     ok: ["join", "move", "bubble", "emote"],
     broken: ["proximity audio — red mic / #10 mic-state race"],
   },
-  // Recomputed at trackedSha (see README § apiVersionHash). Stale once the
-  // staging sha moves — resolveAdapter warns when it detects drift.
-  apiVersionHashes: ["907396a8"],
+  // Computed by scripts/vendor-proto.mjs at trackedSha. Stale once the staging
+  // master sha moves — resolveAdapter warns when it detects drift.
+  apiVersionHashes: ["3fb30729"],
   protoPath: "proto/wa-master/messages.proto",
   // Behavioural overrides go here as they are discovered — none needed yet.
 };
