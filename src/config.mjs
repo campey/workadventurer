@@ -21,7 +21,8 @@ const BASE = {
   roomUrl: CLIENT_DEFAULTS.roomUrl,
   name: CLIENT_DEFAULTS.name,
   pusherUrl: CLIENT_DEFAULTS.pusherUrl,
-  version: CLIENT_DEFAULTS.version,
+  version: CLIENT_DEFAULTS.version, // null unless WA_VERSION / flag set
+  target: CLIENT_DEFAULTS.target, // "auto"
   wokaId: CLIENT_DEFAULTS.wokaId,
   port: 8787,
 };
@@ -31,6 +32,7 @@ const ENV_MAP = {
   WA_NAME: "name",
   WA_PUSHER_URL: "pusherUrl",
   WA_VERSION: "version",
+  WA_TARGET: "target",
   WA_WOKA_ID: "wokaId",
   WA_DAEMON_PORT: "port",
 };
@@ -71,8 +73,9 @@ export function configToEnv(cfg) {
     WA_ROOM: cfg.roomUrl,
     WA_NAME: cfg.name,
     WA_PUSHER_URL: cfg.pusherUrl,
-    WA_VERSION: cfg.version,
+    WA_TARGET: cfg.target,
     WA_WOKA_ID: cfg.wokaId,
     WA_DAEMON_PORT: String(cfg.port),
+    ...(cfg.version ? { WA_VERSION: cfg.version } : {}),
   };
 }

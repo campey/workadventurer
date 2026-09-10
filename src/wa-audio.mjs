@@ -95,7 +95,7 @@ export class WaAudio extends EventEmitter {
         break;
       case "switchMessage":
       case "finalizeSwitchMessage":
-        if (payload.strategy && payload.strategy.toUpperCase() !== "WEBRTC") {
+        if (payload.strategy && payload.strategy.toUpperCase() !== this.client.adapter.meeting.webrtcStrategyName) {
           this.emit("log", `meeting strategy → ${payload.strategy}; P2P audio idle`);
           this.hangup(`switched to ${payload.strategy}`);
         }
@@ -331,7 +331,7 @@ export class WaAudio extends EventEmitter {
               showVoiceIndicator: !!on,
               microphoneState: true,
             },
-            updateMask: { paths: ["showVoiceIndicator", "microphoneState"] },
+            updateMask: { paths: this.client.adapter.micState.speakingMaskPaths },
           },
         });
       } catch {}

@@ -8,7 +8,7 @@
 //   WA_DAEMON_PORT=8787 WA_NAME=claude node src/wa-daemon.mjs
 //
 // Control API (http://127.0.0.1:<port>, JSON bodies):
-//   GET  /state                    -> { name, pos, facing, area, following:{name,paused}|null, players }
+//   GET  /state                    -> { name, target, pos, facing, area, following:{name,paused}|null, players }
 //   POST /goto           {x,y}|{player}  -> walk there (cancels any follow)
 //   POST /follow         {player}        -> approach + follow continuously
 //   POST /unfollow                       -> stop and forget the follow subject
@@ -242,6 +242,14 @@ function state() {
   return {
     name: cfg.name,
     room: wa.cfg.roomUrl,
+    target: wa.adapter
+      ? {
+          id: wa.adapter.id,
+          waVersion: wa.adapter.waVersion,
+          stability: wa.adapter.stability,
+          verified: wa.adapter.verified ?? null,
+        }
+      : null,
     connected: wa.ws?.readyState === 1,
     reconnecting,
     myUserId: wa.myUserId,
@@ -284,6 +292,7 @@ async function attemptReconnect() {
       name: cfg.name,
       roomUrl: cfg.roomUrl,
       pusherUrl: cfg.pusherUrl,
+      target: cfg.target,
       version: cfg.version,
       wokaId: cfg.wokaId,
       micOn: true,
@@ -450,6 +459,7 @@ wa = new WorkAdventureClient({
   name: cfg.name,
   roomUrl: cfg.roomUrl,
   pusherUrl: cfg.pusherUrl,
+  target: cfg.target,
   version: cfg.version,
   wokaId: cfg.wokaId,
   micOn: true,
