@@ -513,6 +513,20 @@ export class WorkAdventureClient extends EventEmitter {
       this._leaveSpace(obj.leaveSpaceRequestMessage.spaceName);
       return;
     }
+    if (obj.meetingInvitationRequestReceivedMessage) {
+      // Another player invited us over ("invite to discussion" on our woka).
+      const m = obj.meetingInvitationRequestReceivedMessage;
+      this.emit("inviteReceived", {
+        uuid: m.senderUserUuid,
+        name: m.senderName ?? "",
+        userId: m.senderUserId ?? null,
+        playUri: m.senderPlayUri ?? "",
+      });
+      return;
+    }
+    if (obj.meetingInvitationResponseReceivedMessage || obj.meetingInvitationRequestClosedMessage) {
+      return; // outcomes of invites we sent — nothing to do
+    }
     // roomConnectedMessage, worldConnectionMessage, refreshRoomMessage, etc. — ignored.
     if (process.env.WA_DEBUG) {
       const k = Object.keys(obj)[0];
@@ -649,6 +663,17 @@ export class WorkAdventureClient extends EventEmitter {
     const n = nameNeedle.trim().toLowerCase();
     return this.listPlayers().find((p) => p.name.trim().toLowerCase() === n)
       ?? this.listPlayers().find((p) => p.name.trim().toLowerCase().includes(n));
+  }
+
+  playerByUuid(uuid) {
+    return this.listPlayers().find((p) => p.uuid === uuid) ?? null;
+  }
+
+  /** Accept a meeting invitation ("come over") from the player with this uuid. */
+  acceptMeetingInvitation(senderUuid) {
+    this._send({
+      meetingInvitationResponseMessage: { accept: true, requestSenderUserUuid: senderUuid },
+    });
   }
 
   /**

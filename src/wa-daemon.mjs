@@ -21,6 +21,9 @@
 //   POST /sound          {name}          -> play a clip into the proximity voice chat
 //   POST /leave                          -> disconnect and exit
 //
+// Also: when another player invites the avatar over (WorkAdventure's "invite
+// to discussion" on the woka), it auto-accepts and walks to them — no request.
+//
 // Advertises itself at $TMPDIR/wa-daemon.json and ~/.workadventurer/daemon.json.
 
 import http from "node:http";
@@ -73,6 +76,7 @@ const liveById = (id) => wa.players.get(id) || null;
 const liveFollowTarget = () => (follow ? liveById(follow.userId) : null);
 
 let lastEmote = null; // { userId, name, emote, at }
+let lastInvite = null; // { name, uuid, at, walking }
 const emoteWaiters = new Set(); // { player, emote, resolve, timer }
 
 function wireClient(client) {
@@ -91,6 +95,20 @@ function wireClient(client) {
       emoteWaiters.delete(w);
       w.resolve({ emote: e.emote, name: e.name, userId: e.userId });
     }
+  });
+  client.on("inviteReceived", ({ uuid, name, userId }) => {
+    // A player invited us over. Accept, then walk to them — one-shot, like `wa to`.
+    client.acceptMeetingInvitation(uuid);
+    const sender =
+      (userId != null && liveById(userId)) || wa.playerByUuid(uuid) || null;
+    lastInvite = { name: name || sender?.name || "(unknown)", uuid, at: Date.now(), walking: !!sender };
+    if (!sender) {
+      log(`invite from ${name || uuid} — accepted, but can't see them to walk over`);
+      return;
+    }
+    log(`invite from ${sender.name} → walking over`);
+    stopFollow();
+    walkToPlayer(sender, 90_000).then((r) => log("invite walk:", JSON.stringify(r)));
   });
   client.on("close", (c) => {
     log("socket closed", c.code, c.reason || "");
@@ -273,6 +291,7 @@ function state() {
       ? { peers: audio.peers.size, connected: audio.connected, inMeeting: wa.spaces.size > 0 }
       : null,
     lastEmote,
+    lastInvite,
     following: follow
       ? {
           name: follow.name,
