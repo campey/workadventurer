@@ -138,6 +138,9 @@ async function waitForDaemon(ms = 15000) {
 function prettyStatus(s) {
   const L = [];
   L.push(`${s.name}  @ (${s.pos.x},${s.pos.y})${s.facing ? ` facing ${s.facing}` : ""}${s.area ? `  in ${s.area}` : ""}${s.connected ? "" : s.reconnecting ? "  [reconnecting]" : "  [disconnected]"}`);
+  if (s.target) {
+    L.push(`target ${s.target.id} (WA ${s.target.waVersion}, ${s.target.stability})`);
+  }
   if (s.areas && s.areas.length) {
     L.push("in areas: " + s.areas.map((a) => `${a.name}${a.props.length ? ` [${a.props.join(", ")}]` : ""}`).join("; "));
   }

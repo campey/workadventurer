@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Version-target adapters.** `src/adapters/` — one adapter per WorkAdventure
+  `major.minor` (`wa-1.33` for prod, `wa-master` for staging) carrying its
+  `apiVersionHash` set, proto path, endpoints and behavioural quirks. The client
+  auto-detects the target from the server's landing page (override with
+  `--target` / `WA_TARGET`), falling back to a host allowlist then a warned
+  default. `wa status` and `GET /state` report the resolved target.
+  `wa selfcheck [--target <id>]` smoke-tests a target; the prod run is the merge
+  gate. `proto/messages.proto` moved to `proto/wa-1.33/messages.proto`.
+
 - **`wa wait-emote [player]`** (`POST /wait-emote`) — long-poll that blocks
   until a player emotes; `--emote 👍,👏` matches any of a list. The client now
   surfaces `emoteEventMessage` as an `emote` event. Plus `scripts/intro-sequence.sh`

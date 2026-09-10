@@ -153,18 +153,21 @@ reconnects (bounded retries) if the socket drops.
 | `.claude-plugin/marketplace.json` | single-plugin marketplace for `claude plugin install` |
 | `scripts/build-collision.mjs` | regenerates `map/collision.json` from the live `.wam` / `.tmj` |
 | `map/collision.json` | baked collision grid + spawn tiles + named areas |
-| `proto/messages.proto` | vendored from `workadventure` tag `v1.33.5` |
+| `src/adapters/` | one adapter per WA `major.minor` (`wa-1.33`, `wa-master`) + `resolveAdapter` — see [§ Version targets](#version-targets) |
+| `proto/wa-1.33/messages.proto` | vendored from `workadventure` tag `v1.33.5` |
 
 ## Regenerating the pinned artifacts
 
 Three things are pinned to the current server build / map and will need a refresh
 when WorkAdventure updates:
 
-- **`proto/messages.proto`** — copy from the [`workadventure`
+- **`proto/wa-1.33/messages.proto`** — copy from the [`workadventure`
   repo](https://github.com/workadventure/workadventure) at the tag matching the
-  deployed build (see `SENTRY_RELEASE` in the room HTML's `window.env`).
-- **`version`** (apiVersionHash) in `wa-client.mjs` — see
-  [§ apiVersionHash](#apiversionhash) for how to recompute it.
+  deployed build (see `SENTRY_RELEASE` in the room HTML's `window.env`), or run
+  `node scripts/vendor-proto.mjs <ref>`.
+- **`apiVersionHashes`** in the active adapter (`src/adapters/wa-*.mjs`) — see
+  [§ apiVersionHash](#apiversionhash) for how to recompute it;
+  `scripts/vendor-proto.mjs` prints it.
 - **`map/collision.json`** — `node scripts/build-collision.mjs` (fetches the
   live map and rebuilds the grid).
 
@@ -179,6 +182,31 @@ As reverse-engineered against `https://play.workadventu.re` (hosted SaaS), room
 Cross-referenced with `play/src/front/Connection/RoomConnection.ts`,
 `play/src/pusher/controllers/IoSocketController.ts`, and
 `play/src/pusher/models/PositionDispatcher.ts` in the WorkAdventure source.
+
+## Version targets
+
+WorkAdventure's wire protocol is reverse-engineered and version-specific. Each
+supported build has an **adapter** under `src/adapters/` carrying its
+`apiVersionHash` set, proto path, endpoint paths and behavioural quirks
+(space-join handshake, area-meeting space-name derivation, mic-state mask, …).
+
+| adapter | server | stability |
+|---|---|---|
+| `wa-1.33` | `play.workadventu.re` (build `v1.33.5`) | frozen — the verified prod baseline |
+| `wa-master` | `play.staging.workadventu.re` (rolling `master`) | tracking — best-effort, may lag |
+
+**Selection** (`resolveAdapter`): explicit `--target` / `WA_TARGET` wins;
+otherwise the client GETs the server's landing page, reads `v1.33.5` or
+`master@<sha>`, and maps it to `wa-<major>.<minor>` / `wa-master`; otherwise a
+host allowlist; otherwise a warned default of `wa-1.33`. The chosen adapter and
+the reason are logged on connect and shown in `wa status`.
+
+A patch release that shifts the `apiVersionHash` **appends** to that adapter's
+`apiVersionHashes` — it does not fork a new adapter. Refresh `wa-master` with
+`node scripts/vendor-proto.mjs <ref>` (prints the recomputed hash).
+
+**Before any change touching `src/`:** `node scripts/selfcheck.mjs` (prod) must
+stay green. `--target wa-master` is advisory.
 
 ### 1. Endpoints
 
