@@ -245,11 +245,20 @@ function standPoint(lp) {
 
 async function walkToPlayer(p, timeoutMs = 60_000) {
   const live = () => liveById(p.userId);
+  let lostAt = 0;
   return wa.navTo(p.x, p.y, {
     stopWithin: 16,
     getTarget: () => {
       const lp = live();
-      return lp ? standPoint(lp) : { x: p.x, y: p.y };
+      if (lp) {
+        lostAt = 0;
+        return standPoint(lp);
+      }
+      // Player left view. Give them a few seconds to reappear, then abort
+      // (navTo returns on a null target) rather than marching for the full
+      // timeout toward their stale last-known spot.
+      if (!lostAt) lostAt = Date.now();
+      return Date.now() - lostAt > 3000 ? null : { x: p.x, y: p.y };
     },
     face: () => live() ?? p,
     timeoutMs,

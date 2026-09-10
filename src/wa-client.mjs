@@ -404,18 +404,41 @@ export class WorkAdventureClient extends EventEmitter {
   // On entering/leaving a `livekitRoomProperty` area, proactively join/leave its
   // space — the server never invites a headless client to an area meeting the
   // way it does for proximity bubbles.
+  //
+  // Debounced: only join after DWELL_MS continuously inside (so *walking through*
+  // a meeting area — common on area-dense maps — doesn't spin a WebRTC peer up
+  // and straight back down), and linger LINGER_MS after leaving before tearing
+  // it down. Rapid join/leave churn here OOMs the daemon and floods the browser.
   _handleAreaMeeting(area, entering) {
     const prop = (area.rawProps ?? []).find((p) => p.type === "livekitRoomProperty");
     if (!prop) return;
+    const key = area.id ?? area.name;
     const spaceName = this._areaSpaceName(prop);
+    const DWELL_MS = 1500;
+    const LINGER_MS = 2500;
+    this._meetingTimers ??= new Map(); // spaceName -> { join?, leave? }
+    const t = this._meetingTimers.get(spaceName) ?? {};
+    this._meetingTimers.set(spaceName, t);
+
     if (entering) {
-      if (this.spaces.has(spaceName)) return;
-      this.emit("log", `meeting area "${area.name}" → joining space ${spaceName}`);
-      this._joinSpace(spaceName).catch((e) =>
-        this.emit("log", `area meeting join failed: ${e.message}`)
-      );
-    } else if (this.spaces.has(spaceName)) {
-      this._leaveSpace(spaceName);
+      if (t.leave) { clearTimeout(t.leave); t.leave = null; } // was leaving, stay
+      if (this.spaces.has(spaceName) || t.join) return;
+      t.join = setTimeout(() => {
+        t.join = null;
+        if (!this.currentAreas.has(key) || this.spaces.has(spaceName)) return;
+        this.emit("log", `meeting area "${area.name}" → joining space ${spaceName}`);
+        this._joinSpace(spaceName).catch((e) =>
+          this.emit("log", `area meeting join failed: ${e.message}`)
+        );
+      }, DWELL_MS);
+    } else {
+      if (t.join) { clearTimeout(t.join); t.join = null; return; } // left before we joined
+      if (!this.spaces.has(spaceName) || t.leave) return;
+      t.leave = setTimeout(() => {
+        t.leave = null;
+        if (this.currentAreas.has(key)) return; // walked back in
+        this._leaveSpace(spaceName);
+      }, LINGER_MS);
     }
   }
 
@@ -923,6 +946,11 @@ export class WorkAdventureClient extends EventEmitter {
       reject(new Error("client closed"));
     }
     this._pendingQueries.clear();
+    for (const t of this._meetingTimers?.values() ?? []) {
+      clearTimeout(t.join);
+      clearTimeout(t.leave);
+    }
+    this._meetingTimers?.clear();
     this.ws?.close();
   }
 }
