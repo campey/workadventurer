@@ -8,6 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Stand in the player's eyeline.** `wa to` / `greet` / invite walks now aim
+  `frontOf()` the target — ~30 px in the direction they're *facing*, not behind
+  or beside them — and turn to face them on arrival. Players' `direction` is
+  tracked; `/state` reports each player's `facing`.
+- **Spawn at the real spawn point.** The client now spawns at the `.wam`
+  map-editor "Start area" (`{ type: "start" }`, `isDefault` preferred) instead
+  of the `.tmj` `start` tile layer, which on shared template maps is often a
+  stale default elsewhere.
+- **Mic prime.** On `pc connected` the client plays one ~0.4 s silence clip so
+  the peer sees a live stream and clears the "mic on, receiving nothing" red
+  indicator (#10) — no chime needed. Bounded burst; a continuous keepalive
+  stream OOMs the daemon (werift's un-awaited send fan-out).
+- **Respond to "invite over."** WorkAdventure's *invite to discussion* on the
+  woka now auto-accepts and walks the avatar to the sender (`inviteReceived`
+  event → `acceptMeetingInvitation` → `walkToPlayer`). `/state.lastInvite`.
 - **Version-target adapters.** `src/adapters/` — one adapter per WorkAdventure
   `major.minor` (`wa-1.33` for prod, `wa-master` for staging) carrying its
   `apiVersionHash` set, proto path, endpoints and behavioural quirks. The client
@@ -15,7 +30,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--target` / `WA_TARGET`), falling back to a host allowlist then a warned
   default. `wa status` and `GET /state` report the resolved target.
   `wa selfcheck [--target <id>]` smoke-tests a target; the prod run is the merge
-  gate. `proto/messages.proto` moved to `proto/wa-1.33/messages.proto`.
+  gate. `scripts/vendor-proto.mjs <ref>` vendors a WA proto + prints its
+  `apiVersionHash`. `proto/messages.proto` moved to `proto/wa-1.33/messages.proto`.
+- **Per-room collision maps.** `map/<org>/<world>/<room>/collision.json`
+  (`build-collision.mjs <roomUrl>`); staging `tcm/workadventure/wa-village`
+  baked.
+- **`docs/field-notes.md`** — failure modes and non-obvious mechanics (spawn,
+  `#10`, werift constraints, area-meeting debounce, staging specifics).
 
 - **`wa wait-emote [player]`** (`POST /wait-emote`) — long-poll that blocks
   until a player emotes; `--emote 👍,👏` matches any of a list. The client now
@@ -41,18 +62,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`wa sound` accepts any format** — non-Opus files (mp3/wav/m4a/…) are
   transcoded once via `ffmpeg` and cached in the temp dir (`src/transcode.mjs`);
   Opus-in-Ogg still plays with no transcode. Closes #9.
-
-### Fixed
-
-- **Audio: handle the offer-initiator role.** The server assigns each WebRTC
-  connection's initiator per `webRtcStartMessage`; we only knew how to answer,
-  so connections where the server made *us* the initiator hung at "connecting".
-  Now we send the offer when told to.
-- Audio: re-assert `microphoneState` while a clip plays, to shrink the window
-  where other clients show a phantom muted-mic icon (#10; not a full fix).
-
-### Added
-
 - **`wa sound <name|file>`** (`POST /sound`) — play an audio clip into the
   WorkAdventure **proximity voice chat**. The avatar joins the meeting as a real
   mic participant: answers the P2P WebRTC offer with
@@ -61,8 +70,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `src/wa-audio.mjs` + dependency-free `src/ogg-opus.mjs`; bundled clips in
   `sounds/`. `wa-client.mjs` gained the Space/meeting layer (query round-trips,
   `joinSpaceQuery` + `addSpaceFilterMessage`, `spaceEvent` plumbing) and a
-  `micOn` option. First step toward agent speech (issue #2). LiveKit escalation
-  is detected but not yet implemented.
+  `micOn` option. First step toward agent speech (issue #2).
 - **`wa clear-bubble`** (`POST /clear-bubble`, `WaClient.clearBubble()`) —
   dismiss whatever speech or thought bubble is showing. WorkAdventure clears the
   bubble on an empty `SayMessage`. Closes #1.
@@ -71,11 +79,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **Walking over to a player (`wa to`, `wa greet`) now stops ~40px away and
-  turns to face them**, instead of halting up to ~130px off still facing its
-  travel direction. `navTo()` gained a `face` option; the daemon aims at a
-  point `STAND_GAP` px short of the player (re-derived from their live position)
-  via a shared `walkToPlayer()`. Closes #4.
+- **Walking over to a player (`wa to`, `wa greet`) now stops close and turns to
+  face them**, instead of halting up to ~130px off still facing its travel
+  direction. `navTo()` gained a `face` option; the daemon aims via a shared
+  `walkToPlayer()`. Closes #4. (Later refined to stand in the player's eyeline
+  — see Added.)
+
+### Fixed
+
+- **Area-meeting join/leave is debounced.** `_handleAreaMeeting` fired
+  `_joinSpace` / `_leaveSpace` on every `livekitRoomProperty` boundary crossing;
+  walking through an area-dense map (staging `wa-village`) churned WebRTC peers
+  up/down and OOM'd the daemon / crashed the browser. Now: join after 1.5 s
+  dwell, linger 2.5 s after leaving. Walking through is a no-op.
+- **`walkToPlayer` aborts when the target leaves view** instead of marching to
+  their stale last-known position for the full timeout (which wedged the event
+  loop against audio teardown). 3 s grace, then bail.
+- **Audio: handle the offer-initiator role.** The server assigns each WebRTC
+  connection's initiator per `webRtcStartMessage`; we only knew how to answer,
+  so connections where the server made *us* the initiator hung at "connecting".
+  Now we send the offer when told to.
+- Audio: re-assert `microphoneState` while a clip plays, to shrink the window
+  where other clients show a phantom muted-mic icon (#10; not a full fix).
+
+### Known issues
+
+- **#29 — daemon leaks memory across peer-connection cycles.** Repeated
+  proximity-bubble / invite create→connect→close balloons RSS and pins CPU
+  after ~3–6 cycles (werift `RTCPeerConnection`s not fully released on
+  `.close()`). Restart the daemon periodically.
 
 ## [0.2.0] - 2026-09-08
 

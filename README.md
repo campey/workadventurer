@@ -120,7 +120,7 @@ The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
 
 | Call | Effect |
 |---|---|
-| `GET /state` | `{ name, pos, facing, area, areas:[{name,props}], audio:{…}|null, following:…, players:[…] }` |
+| `GET /state` | `{ name, target, pos, facing, area, areas, audio:{…}|null, following:…, lastEmote, lastInvite, players:[…] }` |
 | `POST /goto` `{x,y}` or `{player}` | walk there (cancels any follow) |
 | `POST /follow` `{player}` | approach + follow (searches the map if not in view) |
 | `POST /unfollow` | stop and forget |
@@ -132,8 +132,12 @@ The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
 | `POST /wait-emote` `{player?,emote?,timeoutMs?}` | long-poll: resolves when a matching emote arrives |
 | `POST /leave` | disconnect and exit |
 
+No request maps to it, but the daemon also **auto-accepts WorkAdventure's
+"invite to discussion"** and walks to whoever sent it (`/state.lastInvite`).
+
 The daemon answers WebSocket pings, keeps the follow loop running, and
-reconnects (bounded retries) if the socket drops.
+reconnects (bounded retries) if the socket drops. Repeated proximity-bubble /
+invite cycles currently leak memory (issue #29) — restart it every few.
 
 ## Project layout
 
@@ -151,10 +155,13 @@ reconnects (bounded retries) if the socket drops.
 | `src/find-player.mjs` | standalone one-shot: connect → locate → walk over → greet → follow |
 | `plugin/` | Claude Code plugin — hooks, `/wa` command, skill, subagent |
 | `.claude-plugin/marketplace.json` | single-plugin marketplace for `claude plugin install` |
-| `scripts/build-collision.mjs` | regenerates `map/collision.json` from the live `.wam` / `.tmj` |
-| `map/collision.json` | baked collision grid + spawn tiles + named areas |
+| `scripts/build-collision.mjs` | bakes `map/<org>/<world>/<room>/collision.json` from a room's live `.wam` / `.tmj` |
+| `scripts/vendor-proto.mjs` | vendors a WA git ref's proto + prints its `apiVersionHash` (for a new adapter) |
+| `scripts/selfcheck.mjs` | live smoke test of a version target (`wa selfcheck`) |
+| `map/<org>/<world>/<room>/collision.json` | per-room baked collision grid + named areas |
 | `src/adapters/` | one adapter per WA `major.minor` (`wa-1.33`, `wa-master`) + `resolveAdapter` — see [§ Version targets](#version-targets) |
-| `proto/wa-1.33/messages.proto` | vendored from `workadventure` tag `v1.33.5` |
+| `proto/<target>/messages.proto` | vendored WA proto per target (`wa-1.33` = tag `v1.33.5`) |
+| `docs/field-notes.md` | failure modes + non-obvious mechanics (spawn, `#10`, werift, area debounce, staging) |
 
 ## Regenerating the pinned artifacts
 
@@ -168,8 +175,8 @@ when WorkAdventure updates:
 - **`apiVersionHashes`** in the active adapter (`src/adapters/wa-*.mjs`) — see
   [§ apiVersionHash](#apiversionhash) for how to recompute it;
   `scripts/vendor-proto.mjs` prints it.
-- **`map/collision.json`** — `node scripts/build-collision.mjs` (fetches the
-  live map and rebuilds the grid).
+- **`map/<slug>/collision.json`** — `node scripts/build-collision.mjs <roomUrl>`
+  (fetches the live map and rebuilds the grid; per room).
 
 ---
 
@@ -305,6 +312,13 @@ No user list arrives in `roomJoinedMessage` (those fields are commented out in
 the proto). Other players come as batched sub-messages once you're subscribed to
 their zones.
 
+**Spawn position** is resolved before that join message: the client looks for a
+`.wam` area with a `{ type: "start" }` property (`isDefault` preferred) and
+picks a random point inside it — *not* the `.tmj`'s `start` tile layer, which on
+shared template maps is often a stale default elsewhere. An explicit `spawn` opt
+wins; the baked tile layer is a fallback. See
+[docs/field-notes.md](docs/field-notes.md#spawn-point-wam-start-area-beats-the-tmj-start-layer).
+
 ### 6. Movement, and the viewport trap
 
 ```
@@ -371,9 +385,15 @@ special case. The path (`src/wa-audio.mjs`, `src/ogg-opus.mjs`):
    Opus-in-Ogg plays as-is; any other format (mp3/wav/…) is transcoded once via
    `ffmpeg` and cached (`src/transcode.mjs`). Bundled clips live in `sounds/`; a
    path argument plays any local file.
+6. On `pc connected` the client plays one ~0.4 s **silence prime** so the peer
+   sees a live stream and clears the "mic on, nothing received" **red mic**
+   (`#10`). It's a bounded burst — a *continuous* keepalive stream OOMs the
+   daemon (werift's un-awaited RTP send fan-out; see
+   [docs/field-notes.md](docs/field-notes.md#werift-constraints)).
 
 LiveKit escalation is detected and logged but not yet implemented — audio stops
-publishing when a meeting switches away from WEBRTC.
+publishing when a meeting switches away from WEBRTC. Repeated peer create/close
+cycles leak memory (issue #29).
 
 ### 10. Map areas
 
@@ -391,6 +411,13 @@ an area meeting). It then leaves on `areaLeave`. A 2-person `livekitRoomProperty
 meeting runs on WEBRTC, so `wa sound` works there today; a larger one would need
 LiveKit transport (issue #8).
 
+The area-meeting join/leave is **debounced** — the client waits ~1.5 s of
+continuous dwell before joining a meeting space and lingers ~2.5 s after
+leaving. Without this, walking *through* a `livekitRoomProperty` area on an
+area-dense map spins a WebRTC peer up and straight back down per crossing,
+which balloons the daemon and floods the browser peer. See
+[docs/field-notes.md](docs/field-notes.md#map-areas-dwell-debounce).
+
 Maps that define areas only in the `.tmj` object layers (older style) aren't
 read. `jitsiRoomProperty` areas are detected but not joined (no Jitsi client).
 
@@ -398,8 +425,11 @@ read. `jitsiRoomProperty` areas are detected but not joined (no Jitsi client).
 
 ## Pathfinding
 
-`navTo(x, y)` routes around walls and furniture. The collision grid is baked
-offline by `scripts/build-collision.mjs`, which fetches `open-space.wam` → its
+`navTo(x, y)` routes around walls and furniture. Collision grids are baked
+offline per room by `scripts/build-collision.mjs <roomUrl>` to
+`map/<org>/<world>/<room>/collision.json` (keyed by the path after `/@/`);
+`MapNav.loadForRoom()` picks the right one, and a missing file just means
+straight-line movement for that room. The baker fetches the room's `.wam` → its
 `.tmj` and marks a tile blocked if it is:
 
 1. non-zero in the dedicated `collisions` tile layer (819 cells), or
@@ -423,8 +453,12 @@ along a route that's re-planned a few times a second, easing to a stop at
 `followPoint()`. `followPoint()` returns a spot one `spacing` short of the
 target — *unless* the target is inside an enclosed room (an area whose name
 matches `/board\s*room/i`) and the follower isn't, in which case it returns the
-nearest reachable free tile just outside that room. Named areas and the room
-test both come from `map/collision.json`.
+nearest reachable free tile just outside that room.
+
+Deliberate walk-overs (`wa to`, `greet`, invite) use **`frontOf()`** instead —
+a spot ~30 px in the direction the player is *facing* (their eyeline, not
+behind them), and the avatar turns to face them on arrival. The walk aborts if
+the target leaves view rather than marching to their stale last-known position.
 
 ## Limitations / ideas
 
@@ -443,9 +477,14 @@ test both come from `map/collision.json`.
   can pick a wrong-side spot on oddly shaped rooms.
 - **Room detection** is name-based (`/board\s*room/i` over the `.wam` areas), not
   geometric.
-- Everything server-/map-specific (`version`, `proto/messages.proto`,
-  `map/collision.json`) is pinned and needs refreshing on a WorkAdventure or map
-  update.
+- **Peer-connection leak (#29).** Repeated `RTCPeerConnection` create/connect/
+  close (proximity bubbles, invites) balloons the daemon RSS and pins CPU after
+  ~3–6 cycles. werift peers aren't fully released on `.close()`. Restart the
+  daemon periodically until this is fixed.
+- Per-target pins (`apiVersionHash`, `proto/<target>/messages.proto`) and
+  per-room `map/<slug>/collision.json` need refreshing on a WorkAdventure or map
+  update — see [`## Version targets`](#version-targets) and
+  [docs/field-notes.md](docs/field-notes.md).
 
 ## Contributing
 
