@@ -194,9 +194,9 @@ function resume() {
 }
 
 // How far to stand from a player when we deliberately walk over to them
-// (`wa to`, `greet`) — plus navTo's ~16px stop tolerance, so ~48-64px in
-// practice. Close enough to read as "with them", not crowding.
-const STAND_GAP = 64;
+// (`wa to`, `greet`) — plus navTo's ~16px stop tolerance, so ~14-46px in
+// practice. Right next to them, in their eyeline (see standPoint / frontOf).
+const STAND_GAP = 30;
 
 // Walk over to a player and stand in their eyeline: aim STAND_GAP px in front
 // of them (the direction they're facing), re-derived each tick from their live
@@ -206,8 +206,8 @@ const STAND_GAP = 64;
 // the stand point must be *inside that area too* — otherwise we'd loiter on the
 // perimeter and never join the area's meeting. Clamp into the player's area
 // rectangle; if that clamp pulls us closer than MIN_STAND px to the player,
-// push back out along the same axis so we sit at the area edge, not on them.
-const MIN_STAND = 48;
+// push back out along the same axis so we don't end up standing on them.
+const MIN_STAND = 24;
 function standPoint(lp) {
   const goal = wa.frontOf(lp, STAND_GAP);
   const area = wa.areasAt(lp.x, lp.y)[0];
