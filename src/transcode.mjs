@@ -82,3 +82,24 @@ export async function ensureOpus(srcPath) {
   ]);
   return out;
 }
+
+/**
+ * Path to a short Opus-in-Ogg file of pure digital silence (48 kHz stereo, 20 ms
+ * frames), generated once and cached. wa-audio.mjs plays one right after a peer
+ * connects so the peer sees a live audio stream and clears the "mic on, nothing
+ * received" red indicator (#10). Requires ffmpeg.
+ */
+export async function silenceOpusFile(seconds = 0.4) {
+  const out = path.join(CACHE_DIR, `silence-${seconds}s-48k-stereo.ogg`);
+  if (existsSync(out)) return out;
+  await mkdir(CACHE_DIR, { recursive: true });
+  await ffmpeg([
+    "-v", "error", "-y",
+    "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+    "-t", String(seconds),
+    "-c:a", "libopus", "-b:a", "24k", "-ar", "48000", "-ac", "2",
+    "-frame_duration", "20",
+    "-f", "ogg", out,
+  ]);
+  return out;
+}
