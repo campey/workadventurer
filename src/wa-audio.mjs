@@ -352,7 +352,12 @@ export class WaAudio extends EventEmitter {
     try {
       this._silencePath ??= await silenceOpusFile();
       if (this._play) return;
-      await this.play(this._silencePath, { indicator: false });
+      const r = await this.play(this._silencePath, { indicator: false });
+      this.emit(
+        "log",
+        `mic primed: ${r.packetsSent ?? 0} silence pkts to ${r.peers ?? 0} peer(s)` +
+          (r.played ? "" : ` — ${r.reason ?? "?"}`)
+      );
     } catch (e) {
       this.emit("log", `mic prime skipped: ${e.message}`);
     }
