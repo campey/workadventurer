@@ -154,7 +154,11 @@ function runFollowTask() {
     }
     if (controller.signal.aborted) return;
     await wa.follow(() => liveById(userId), { spacing: 80, signal: controller.signal });
-    if (follow && follow.controller === controller) follow = null;
+    // Only clear the follow subject if this run ended on its own (target
+    // gone, etc). If `quiet()` aborted us, it already set `follow.paused =
+    // true` on this same object — don't stomp that back to null, or
+    // `resume()` finds nothing (#found during CLI verification).
+    if (follow && follow.controller === controller && !follow.paused) follow = null;
   })().catch((e) => log(`follow task error (${name}):`, e.message));
 }
 
