@@ -83,7 +83,7 @@ can't have a stale timer fire against a later membership.
 
 ## werift constraints
 
-### Two headless daemons *can* talk to each other — but not reliably at 3+
+### Two (or more) headless daemons can talk to each other
 
 Two `WaAudio` instances (e.g. a "claudetest" talker + a "scribe" listener),
 each properly joined to the same real WA room with its own name/port, **do**
@@ -93,15 +93,60 @@ text out the other end. (An *isolated* pair of bare clients with no real
 room/signaling infra doesn't connect — that's a different, narrower claim than
 "werift can't do werift".)
 
-What doesn't hold up: **3+ peers connecting around the same time** (e.g. two
-headless avatars *and* a real user, all in one bubble) can produce an answer
-SDP with **zero ICE candidates** for one specific connection while sibling
-connections in the same session negotiate fine — `pc connected` still fires
-(ICE/DTLS/datachannel all "succeed") but no media ever arrives
-(`buflen=0` forever on the receive side). Looks like a race under concurrent
-`_iceComplete`/gathering. See issue #32; not yet root-caused. `SDP_DEBUG=<dir>`
-env var on `wa-audio.mjs` dumps every offer/answer to `<dir>/<connId>-<label>.sdp`
-for exactly this kind of investigation.
+What used to not hold up: **3+ peers connecting around the same time** (e.g.
+two headless avatars *and* a real user, all in one bubble) could produce an
+answer SDP with **zero ICE candidates** for one specific connection while
+sibling connections in the same session negotiated fine — `pc connected`
+still fired (ICE/DTLS/datachannel all "succeed") but no media ever arrived
+(`buflen=0` forever on the receive side). **Root-caused and fixed 2026-09-12
+(issue #32).** The earlier hypothesis here ("a race under concurrent
+`_iceComplete`/gathering") was wrong — `_iceComplete()` is largely a no-op,
+since `setLocalDescription` already awaits gathering internally, and it can't
+even detect the failure: werift's ICE gathering (`ice/src/ice.js`
+`Connection.gatherCandidates`) *always* reports `"complete"`, wrapping
+everything in `Promise.allSettled` and unconditionally calling
+`setState("completed")` even when every candidate type (host bind, STUN
+srflx, TURN allocate) individually failed.
+
+The real mechanism: `_loadIce()` used to only start on the client's
+`spaceJoined` event — which fires *after* `_joinSpace` has already sent
+`addSpaceFilterMessage`, and it's that message which makes the back start
+setting up peer connections. Any `RTCPeerConnection` built in that window got
+werift's constructor-default STUN-only list (`{urls:
+"stun:stun.l.google.com:19302"}`, no TURN) — werift snapshots `iceServers`
+synchronously at construction and never re-reads it; there's no
+`pc.setConfiguration()` anywhere. Confirmed live before the fix: one
+connection's offer was sent at `T+0s` while the real ICE list only arrived at
+`T+89s` — that connection was permanently on STUN-only, no TURN, while a
+sibling that started after the list arrived worked fine. WorkAdventure's own
+front-end (`IceServersManager.ts` + `SimplePeer.ts`) avoids this by the same
+shape of fix we landed: a memoized ICE-servers promise, fetched eagerly right
+after `roomJoinedMessage` (not gated on any later join event), that every
+peer construction `await`s before building its `RTCPeerConnection` —
+confirms this is the correct mechanism, independently arrived at.
+
+Fix (`WaAudio`, `src/wa-audio.mjs`): `_iceReady` is now a memoized promise
+kicked off eagerly in the constructor; `_peer()`/`_buildPeer()` reserves a
+`connectionId → Promise<peer>` slot synchronously (so two near-simultaneous
+calls for the same id share one construction) and awaits `_iceReady` before
+constructing the `RTCPeerConnection`. Defensively, `_makeOffer()` and the
+offer branch of `_onSignal()` now count `a=candidate:` lines in the local
+SDP after `_iceComplete()` and tear the connection down instead of shipping
+a guaranteed-dead offer/answer if it's zero — belt-and-suspenders given
+werift can't be trusted to report gathering failure any other way. A bounded
+`_closedConnIds` set stops a late signal from resurrecting a connection
+that's already been torn down (failed/closed/superseded), and the supersede
+check (a fresh connectionId retiring an old one for the same user) now
+checks in-flight connections too, not just fully-built ones — a real gap the
+async refactor itself would otherwise have introduced. `SDP_DEBUG=<dir>` env
+var on `wa-audio.mjs` dumps every offer/answer to
+`<dir>/<seq>-<connId>-<label>.sdp` (a monotonic `<seq>` now, so
+renegotiations/retries on one connection don't overwrite each other's dumps).
+
+Verified live: a 3-headless-daemon session that reliably showed the
+zero-candidate failure pre-fix ran clean post-fix — every offer/answer in a
+4-way bubble (3 daemons + a real browser participant) carried real ICE
+candidates, and a real clip played from one daemon reached the others.
 
 Unit tests use a fake peer object (`{ pc: { connectionState: "connected" },
 track: { writeRtp } }`) rather than a real connection either way — even a
@@ -287,11 +332,13 @@ Rapid-fire invites (several in a few seconds) hit issue #29.
 - **`node scripts/stt-selfcheck.mjs [clip.wav]`** — the STT pipeline
   standalone, no WA connection: streams a real clip's Opus packets through
   `SttStream` at real-time pace and checks a `partial` then a `final` land.
-- **A second headless daemon instance is a legitimate live-test participant**
-  now that daemon↔daemon audio is proven (see werift constraints above) — spin
-  up two named instances (`WA_NAME`/`WA_DAEMON_PORT` per instance, same room)
-  for anything that needs a real peer without a human. Keep it to **2** at a
-  time; 3+ concurrent connections is the still-open #32 territory.
+- **A second (or third) headless daemon instance is a legitimate live-test
+  participant** now that daemon↔daemon audio is proven (see werift
+  constraints above) — spin up named instances (`WA_NAME`/`WA_DAEMON_PORT`
+  per instance, same room) for anything that needs real peers without a
+  human. 3+ concurrent connections used to be #32 territory (fixed
+  2026-09-12) — no longer a reason to cap it at 2, though `SDP_DEBUG=<dir>`
+  is still worth turning on for anything touching the peer-connect path.
 - **Media-tile / red-mic / "does it sound right" behaviour** still needs a
   human watching a real browser — that side of it can't be automated.
 - The `workadventure` subagent drives repeated live scenarios (join, walk to

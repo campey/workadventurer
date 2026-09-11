@@ -38,13 +38,25 @@ const rnd32 = () => Math.floor(Math.random() * 0xffffffff) >>> 0;
 const MAX_STT_STREAMS = 2; // hard cap: each is a real ffmpeg process + worker socket
 
 // TEMP diagnostic (werift<->werift media investigation): SDP_DEBUG=<dir> dumps
-// every offer/answer to <dir>/<connectionId>-<label>.sdp.
+// every offer/answer to <dir>/<seq>-<connectionId>-<label>.sdp. The seq counter
+// keeps renegotiations/retries on the same connection from overwriting each
+// other's dumps (they'd otherwise share a filename).
+let sdpDumpSeq = 0;
 function dumpSdp(connectionId, label, sdp) {
   const dir = process.env.SDP_DEBUG;
   if (!dir) return;
   try {
-    writeFileSync(`${dir}/${connectionId.slice(0, 8)}-${label}.sdp`, sdp);
+    const n = String(++sdpDumpSeq).padStart(4, "0");
+    writeFileSync(`${dir}/${n}-${connectionId.slice(0, 8)}-${label}.sdp`, sdp);
   } catch {}
+}
+
+// #32: an answer/offer with zero ICE candidates is guaranteed-dead — the
+// peer has nothing to connect to. werift's ICE gathering always reports
+// "complete" even when every candidate type failed, so this is the only way
+// to actually detect it.
+export function candidateCount(sdp) {
+  return (sdp.match(/^a=candidate:/gm) || []).length;
 }
 
 // Sample count of a raw Opus packet, from its TOC byte (RFC 6716 Table 2) —
@@ -69,10 +81,28 @@ export class WaAudio extends EventEmitter {
     this.listen = listen;
     /** @type {Map<string,{pc:RTCPeerConnection,track:MediaStreamTrack,spaceName:string,remoteUserId:string}>} */
     this.peers = new Map();
+    // connectionId -> Promise<peer>, for a peer that's under construction or
+    // already built. Reserved synchronously (before the ICE-readiness await
+    // below) so two near-simultaneous calls for the same connectionId await
+    // the same construction instead of racing to build two PCs (#32).
+    this._peerPromises = new Map();
+    this._peerUsers = new Map(); // connectionId -> remoteUserId, for the supersede check above
+    // connectionIds we've explicitly torn down — bounded, so a late signal
+    // for one (after failed/closed/superseded) gets dropped instead of
+    // resurrecting a dead connection (#32).
+    this._closedConnIds = new Set();
     this._play = null; // { stop(): void } while a clip is playing
     this._silencePath = null; // cached short silence clip for the connect-time prime
 
-    client.on("spaceJoined", () => this._loadIce());
+    // Load ICE servers as early as possible, not gated on "spaceJoined" —
+    // `_joinSpace` sends `addSpaceFilterMessage` well before that event
+    // fires, and it's that message which makes the back start setting up
+    // peer connections. A peer built before this resolves would otherwise
+    // get werift's constructor-default STUN-only list permanently — werift
+    // snapshots `iceServers` at construction and never re-reads it (#32).
+    // `_loadIce()` never rejects (see below), so this is always safe to await.
+    this._iceReady = this._loadIce();
+
     client.on("spaceEvent", (e) => this._onSpaceEvent(e));
     client.on("bubbleLeft", () => this.hangup("left bubble"));
     client.on("close", () => this.hangup("client closed"));
@@ -84,6 +114,10 @@ export class WaAudio extends EventEmitter {
     );
   }
 
+  // Never rejects — `_iceReady` (constructor) is awaited unconditionally by
+  // every peer construction, so a hard failure here must still let peers
+  // proceed (on the constructor-default STUN-only list) rather than wedge
+  // forever. `client.query`'s own 10s timeout already bounds the wait.
   async _loadIce() {
     try {
       const ans = await this.client.query("iceServersQuery", {});
@@ -109,10 +143,13 @@ export class WaAudio extends EventEmitter {
           "log",
           `webRtcStart conn=${payload.connectionId} from=${senderUserId} initiator=${initiator}`
         );
-        const p = this._peer(spaceName, senderUserId, payload.connectionId);
         // The server assigns the role per connection: initiator sends the offer,
         // the other side waits for it. (It varies — don't assume either.)
-        if (initiator) this._makeOffer(p).catch((e) => this.emit("log", `offer failed: ${e.message}`));
+        // _peer() now awaits ICE readiness (#32) before building the PC — not
+        // awaited here since this handler runs synchronously off an event.
+        this._peer(spaceName, senderUserId, payload.connectionId)
+          .then((p) => (initiator ? this._makeOffer(p) : undefined))
+          .catch((e) => this.emit("log", `[${payload.connectionId}] webRtcStart failed: ${e.message}`));
         break;
       }
       case "webRtcSignal":
@@ -132,18 +169,46 @@ export class WaAudio extends EventEmitter {
   }
 
   _connIdForUser(userId) {
-    for (const [id, p] of this.peers) if (p.remoteUserId === userId) return id;
+    // Check in-flight (still awaiting ICE) connections too, not just built
+    // ones — a disconnect can arrive in that window (#32's async gap).
+    for (const [id, otherUserId] of this._peerUsers) if (otherUserId === userId) return id;
     return null;
   }
 
+  // Returns a Promise<peer> — get-or-create, reserving the connectionId's
+  // slot synchronously (before _buildPeer's ICE-readiness await) so two
+  // near-simultaneous calls for the same id share one construction (#32).
   _peer(spaceName, remoteUserId, connectionId) {
-    let p = this.peers.get(connectionId);
-    if (p) return p;
+    const existing = this._peerPromises.get(connectionId);
+    if (existing) return existing;
+    // Recorded synchronously, alongside the promise reservation, so the
+    // supersede check below can find an *in-flight* (still awaiting ICE)
+    // connection for this user, not just an already-built one — a fresh
+    // connectionId can otherwise arrive for the same user while the old
+    // one is still mid-construction, and both would end up alive (#32).
+    this._peerUsers.set(connectionId, remoteUserId);
+    const promise = this._buildPeer(spaceName, remoteUserId, connectionId);
+    this._peerPromises.set(connectionId, promise);
+    return promise;
+  }
 
+  async _buildPeer(spaceName, remoteUserId, connectionId) {
     // A fresh connectionId for a user we already have supersedes the old one
-    // (the front does this when a stalled connection is retried).
-    for (const [id, old] of this.peers) {
-      if (old.remoteUserId === remoteUserId) this._closePeer(id, "superseded");
+    // (the front does this when a stalled connection is retried) — whether
+    // that old one finished building or is still awaiting ICE.
+    for (const [id, otherUserId] of this._peerUsers) {
+      if (id !== connectionId && otherUserId === remoteUserId) this._closePeer(id, "superseded");
+    }
+
+    // Wait for the real ICE server list (#32) — see the constructor comment.
+    // Bounded by client.query()'s own 10s timeout; _loadIce() never rejects.
+    await this._iceReady;
+
+    if (this._closedConnIds.has(connectionId)) {
+      // Torn down (e.g. superseded) while we were waiting on ICE — don't
+      // build a connection nobody wants any more.
+      this._peerPromises.delete(connectionId);
+      throw new Error("closed while waiting for ICE servers");
     }
 
     const pc = new RTCPeerConnection({
@@ -219,7 +284,7 @@ export class WaAudio extends EventEmitter {
     // One stable RTP identity per peer for the whole connection — like a real
     // mic. Switching ssrc/seq between clips makes the receiver drop the later
     // ones (it has already latched onto the first source).
-    p = {
+    const p = {
       pc, track, spaceName, remoteUserId, connectionId,
       ssrc: rnd32(),
       seq: Math.floor(Math.random() * 0xffff),
@@ -234,24 +299,46 @@ export class WaAudio extends EventEmitter {
   async _makeOffer(p) {
     await p.pc.setLocalDescription(await p.pc.createOffer());
     await this._iceComplete(p.pc);
-    dumpSdp(p.connectionId, "offer-local", p.pc.localDescription.sdp);
+    const sdp = p.pc.localDescription.sdp;
+    dumpSdp(p.connectionId, "offer-local", sdp);
+    const candidates = candidateCount(sdp);
+    if (candidates === 0) {
+      // Guaranteed-dead — see candidateCount() above (#32). Tear down rather
+      // than ship an offer the peer can never connect to; a fresh
+      // connectionId (WA's own retry) gets another chance.
+      this.emit("log", `[${p.connectionId}] offer has zero ICE candidates — tearing down`);
+      this._closePeer(p.connectionId, "no ice candidates");
+      return;
+    }
     this.client.sendSpacePrivateEvent(p.spaceName, p.remoteUserId, {
       webRtcSignal: {
         connectionId: p.connectionId,
-        signal: JSON.stringify({ type: "offer", sdp: p.pc.localDescription.sdp }),
+        signal: JSON.stringify({ type: "offer", sdp }),
       },
     });
-    this.emit("log", `[${p.connectionId}] offered`);
+    this.emit("log", `[${p.connectionId}] offered (${candidates} ICE candidates)`);
   }
 
   async _onSignal(spaceName, remoteUserId, connectionId, signalJson) {
+    if (this._closedConnIds.has(connectionId)) {
+      // A signal for a connection we already tore down (failed/closed/
+      // superseded) — drop it rather than resurrecting a dead PC (#32).
+      this.emit("log", `[${connectionId}] signal for a closed connection, ignored`);
+      return;
+    }
     let sig;
     try {
       sig = JSON.parse(signalJson);
     } catch {
       return this.emit("log", `[${connectionId}] unparseable signal`);
     }
-    const p = this._peer(spaceName, remoteUserId, connectionId);
+    let p;
+    try {
+      p = await this._peer(spaceName, remoteUserId, connectionId);
+    } catch (e) {
+      this.emit("log", `[${connectionId}] signal dropped: ${e.message}`);
+      return;
+    }
 
     try {
       if (sig.type === "offer") {
@@ -259,17 +346,21 @@ export class WaAudio extends EventEmitter {
         await p.pc.setRemoteDescription({ type: "offer", sdp: sig.sdp });
         await p.pc.setLocalDescription(await p.pc.createAnswer());
         await this._iceComplete(p.pc);
-        dumpSdp(connectionId, "answer-local", p.pc.localDescription.sdp);
+        const sdp = p.pc.localDescription.sdp;
+        dumpSdp(connectionId, "answer-local", sdp);
+        const candidates = candidateCount(sdp);
+        if (candidates === 0) {
+          this.emit("log", `[${connectionId}] answer has zero ICE candidates — tearing down`);
+          this._closePeer(connectionId, "no ice candidates");
+          return;
+        }
         this.client.sendSpacePrivateEvent(spaceName, remoteUserId, {
           webRtcSignal: {
             connectionId,
-            signal: JSON.stringify({
-              type: "answer",
-              sdp: p.pc.localDescription.sdp,
-            }),
+            signal: JSON.stringify({ type: "answer", sdp }),
           },
         });
-        this.emit("log", `[${connectionId}] answered`);
+        this.emit("log", `[${connectionId}] answered (${candidates} ICE candidates)`);
       } else if (sig.type === "answer") {
         dumpSdp(connectionId, "answer-remote", sig.sdp);
         await p.pc.setRemoteDescription({ type: "answer", sdp: sig.sdp });
@@ -297,8 +388,21 @@ export class WaAudio extends EventEmitter {
   }
 
   _closePeer(connectionId, why = "") {
-    const p = connectionId && this.peers.get(connectionId);
-    if (!p) return;
+    if (!connectionId) return;
+    const hadPromise = this._peerPromises.delete(connectionId);
+    this._peerUsers.delete(connectionId);
+    // Mark closed unconditionally — including a peer that was still awaiting
+    // ICE and never finished building — so a late signal for this id gets
+    // dropped instead of resurrecting it (#32; see _onSignal/_buildPeer).
+    this._closedConnIds.add(connectionId);
+    if (this._closedConnIds.size > 64) {
+      this._closedConnIds.delete(this._closedConnIds.values().next().value);
+    }
+    const p = this.peers.get(connectionId);
+    if (!p) {
+      if (hadPromise) this.emit("log", `[${connectionId}] closed before it finished connecting${why ? ` (${why})` : ""}`);
+      return;
+    }
     this.peers.delete(connectionId);
     try {
       p.stt?.close();
@@ -310,7 +414,7 @@ export class WaAudio extends EventEmitter {
   }
 
   hangup(why = "") {
-    for (const id of [...this.peers.keys()]) this._closePeer(id, why);
+    for (const id of new Set([...this.peers.keys(), ...this._peerPromises.keys()])) this._closePeer(id, why);
     this._play?.stop();
   }
 

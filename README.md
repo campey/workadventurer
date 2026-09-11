@@ -470,8 +470,7 @@ second simultaneous peer crashed the whole worker process.
 Known gaps: the speaker label falls back to the raw space-user id when
 `spaceUserName()` hasn't learned a name yet (only populated from
 `initSpaceUsersMessage`); whisper-tiny mis-hears or occasionally hallucinates
-on short/tricky audio; 3+ peers negotiating simultaneously can still wedge a
-connection (issue #32) — clean 1:1 is solid.
+on short/tricky audio.
 
 ---
 
@@ -537,9 +536,6 @@ the target leaves view rather than marching to their stale last-known position.
   walk-through churn, `walkToPlayer` marching to a stale target — both fixed
   in PR #28) it no longer shows up in normal use, including sustained
   daemon-to-daemon runs. See [docs/field-notes.md](docs/field-notes.md).
-- **3+ simultaneous peer connections can misnegotiate (#32).** An SDP answer
-  with zero ICE candidates was observed under 3-way churn (two headless
-  avatars + a real user); clean 1:1 (including daemon-to-daemon) is solid.
 - Per-target pins (`apiVersionHash`, `proto/<target>/messages.proto`) and
   per-room `map/<slug>/collision.json` need refreshing on a WorkAdventure or map
   update — see [`## Version targets`](#version-targets) and
