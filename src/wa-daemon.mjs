@@ -119,8 +119,9 @@ function wireClient(client) {
       return;
     }
     log(`invite from ${sender.name} → walking over`);
-    stopFollow();
-    walkToPlayer(sender, 90_000).then((r) => log("invite walk:", JSON.stringify(r)));
+    stopFollow().then(() =>
+      walkToPlayer(sender, 90_000).then((r) => log("invite walk:", JSON.stringify(r)))
+    );
   });
   client.on("close", (c) => {
     log("socket closed", c.code, c.reason || "");
@@ -132,10 +133,41 @@ function wireClient(client) {
   });
 }
 
-function stopFollow() {
+// Aborting a follow task's controller only *schedules* its awaits to unwind
+// as microtasks — it does not synchronously release wa._navBusy. A caller
+// that aborts and then immediately (same synchronous turn) issues a new
+// navTo()/follow() reliably loses the race and gets back {reason:"busy"},
+// because none of those unwind microtasks have had a chance to run yet.
+// awaitTaskStop lets a caller actually wait for the old task to finish
+// settling before starting new movement. Bounded as a safety net — the task
+// should always resolve promptly once aborted; this just guards against a bug
+// turning into a hang.
+async function awaitTaskStop(task) {
+  if (!task) return;
+  await Promise.race([
+    task.catch(() => {}),
+    new Promise((r) => setTimeout(r, 2000)),
+  ]);
+}
+
+async function stopFollow() {
   if (follow) {
+    const task = follow.task;
     follow.controller.abort();
     follow = null;
+    await awaitTaskStop(task);
+  }
+}
+
+/** Abort the in-flight follow task but keep the follow subject, marked
+ * paused, so resume() can pick it back up. Waits for the task to actually
+ * stop (see awaitTaskStop) before returning. */
+async function pauseFollow() {
+  if (follow && !follow.paused) {
+    const task = follow.task;
+    follow.controller.abort();
+    follow.paused = true;
+    await awaitTaskStop(task);
   }
 }
 
@@ -143,19 +175,21 @@ function stopFollow() {
 function runFollowTask() {
   if (!follow) return;
   const { controller, userId, name } = follow;
-  (async () => {
+  const current = follow;
+  current.task = (async () => {
     const t = liveById(userId);
     if (t) {
       await wa.navTo(t.x, t.y, {
         stopWithin: 96,
         getTarget: () => liveById(userId),
         timeoutMs: 90_000,
+        signal: controller.signal,
       });
     }
     if (controller.signal.aborted) return;
     await wa.follow(() => liveById(userId), { spacing: 80, signal: controller.signal });
     // Only clear the follow subject if this run ended on its own (target
-    // gone, etc). If `quiet()` aborted us, it already set `follow.paused =
+    // gone, etc). If `quiet()` paused us, it already set `follow.paused =
     // true` on this same object — don't stomp that back to null, or
     // `resume()` finds nothing (#found during CLI verification).
     if (follow && follow.controller === controller && !follow.paused) follow = null;
@@ -171,13 +205,13 @@ async function searchFor(nameNeedle, signal) {
     if (signal?.aborted) return null;
     const hit = findByName(nameNeedle);
     if (hit) return hit;
-    await wa.navTo(x, y, { stopWithin: 80, timeoutMs: 12_000 });
+    await wa.navTo(x, y, { stopWithin: 80, timeoutMs: 12_000, signal });
   }
   return findByName(nameNeedle);
 }
 
 async function startFollow(nameNeedle) {
-  stopFollow();
+  await stopFollow();
   const controller = new AbortController();
   follow = { name: nameNeedle, userId: -1, controller, paused: false, searching: true };
 
@@ -198,10 +232,7 @@ async function startFollow(nameNeedle) {
 }
 
 async function quiet() {
-  if (follow && !follow.paused) {
-    follow.controller.abort();
-    follow.paused = true;
-  }
+  await pauseFollow();
   const players = wa.listPlayers();
   const here = wa.nav?.areaAt(wa.pos.x, wa.pos.y);
   if (
@@ -398,7 +429,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       switch (url.pathname) {
         case "/goto": {
-          stopFollow();
+          await stopFollow();
           let gx = body.x;
           let gy = body.y;
           if (body.player) {
@@ -420,7 +451,7 @@ const server = http.createServer(async (req, res) => {
           return send(202, { ok: true, following: body.player, note: "approaching (searching if not yet visible)" });
         }
         case "/unfollow":
-          stopFollow();
+          await stopFollow();
           return send(200, { ok: true, following: null });
         case "/quiet":
           return send(200, await quiet());
