@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Live speech-to-text (prototype, `WA_STT=1`).** The avatar can listen:
+  `sendrecv` on the audio transceiver, a peer's Opus RTP is muxed to Ogg
+  (`src/ogg-opus-mux.mjs`), decoded by a persistent `ffmpeg`, and streamed to
+  a resident-model worker (`scripts/stt_worker.py`, `mlx_whisper`) over a Unix
+  socket. Live sliding-window transcription — the terminal line redraws in
+  place as later context corrects it, locking in on a silence gap. Guarded
+  against WA's peer-connect churn (a cap + a single-fire guard, after it once
+  spiked the daemon) and against MLX's Metal backend, which crashes on
+  concurrent `transcribe()` calls (now serialized). Verify standalone with
+  `node scripts/stt-selfcheck.mjs`. `WorkAdventureClient.spaceUserName()`
+  resolves a peer's `spaceUserId` to their room name for the speaker label.
 - **Stand in the player's eyeline.** `wa to` / `greet` / invite walks now aim
   `frontOf()` the target — ~30 px in the direction they're *facing*, not behind
   or beside them — and turn to face them on arrival. Players' `direction` is

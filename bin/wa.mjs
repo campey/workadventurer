@@ -20,7 +20,7 @@ const INFO_FILES = [
 
 const USAGE = `wa — WorkAdventure presence control
 
-  wa join [--detach] [--follow <player>] [--room U] [--name N] [--port P]
+  wa join [<room-url>] [--detach] [--name N] [--port P]
   wa leave
   wa status [--json]
   wa goto <x> <y>
@@ -46,7 +46,6 @@ const { values: flags, positionals } = parseArgs({
     json: { type: "boolean", default: false },
     "if-running": { type: "boolean", default: false },
     detach: { type: "boolean", default: false },
-    follow: { type: "string" },
     port: { type: "string" },
     room: { type: "string" },
     name: { type: "string" },
@@ -113,9 +112,9 @@ async function daemonReachable() {
 
 export const DAEMON_LOG = path.join(os.homedir(), ".workadventurer", "daemon.log");
 
-function spawnDaemon({ detached }) {
+function spawnDaemon({ detached, roomUrl }) {
   const env = { ...process.env, ...configToEnv(cfg) };
-  if (flags.follow) env.WA_FOLLOW = flags.follow;
+  if (roomUrl) env.WA_ROOM = roomUrl;
   if (detached) {
     fs.mkdirSync(path.dirname(DAEMON_LOG), { recursive: true });
     const out = fs.openSync(DAEMON_LOG, "a");
@@ -182,18 +181,18 @@ async function needDaemon() {
 
 switch (cmd) {
   case "join": {
+    const roomUrl = args[0];
     if (await daemonReachable()) {
-      if (flags.follow) { report((await api("POST", "/follow", { player: flags.follow })).json); }
-      else note("already joined");
+      note("already joined");
       process.exit(0);
     }
     if (flags.detach) {
-      spawnDaemon({ detached: true });
+      spawnDaemon({ detached: true, roomUrl });
       if (!(await waitForDaemon())) die("daemon did not come up in time");
       const s = (await api("GET", "/state")).json;
       process.stdout.write(flags.json ? JSON.stringify(s, null, 2) + "\n" : `joined as ${s.name}\n`);
     } else {
-      const child = spawnDaemon({ detached: false });
+      const child = spawnDaemon({ detached: false, roomUrl });
       child.on("exit", (code) => process.exit(code ?? 0));
     }
     break;

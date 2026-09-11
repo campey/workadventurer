@@ -30,10 +30,10 @@ import http from "node:http";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { WorkAdventureClient } from "./wa-client.mjs";
 import { WaAudio } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
+import { resolveClip } from "./resolve-clip.mjs";
 
 const cfg = resolveConfig();
 const PORT = cfg.port;
@@ -45,9 +45,12 @@ const INFO_FILES = [
 ];
 
 const ts = () => new Date().toISOString().slice(11, 19);
-const log = (...a) => console.log(ts(), ...a);
-
-const SOUNDS_DIR = fileURLToPath(new URL("../sounds/", import.meta.url));
+const log = (...a) => {
+  // Don't let a normal log line collide with an in-progress STT partial that
+  // hasn't been newline-terminated yet.
+  if (sttLineOpen) { process.stdout.write("\n"); sttLineOpen = false; }
+  console.log(ts(), ...a);
+};
 
 let wa;
 let audio; // WaAudio, bound to the current client
@@ -55,19 +58,28 @@ let follow = null; // { name, userId, controller, paused }
 let deliberateShutdown = false;
 let reconnecting = false;
 
-// Resolve a `wa sound` argument: a bare name -> sounds/<name>.ogg, otherwise a
-// path (absolute, or relative to the caller's cwd passed as `cwd`).
-function resolveClip(nameOrPath, cwd) {
-  if (/[/\\]|\.(ogg|opus)$/i.test(nameOrPath)) {
-    return path.resolve(cwd || process.cwd(), nameOrPath);
-  }
-  return path.join(SOUNDS_DIR, `${nameOrPath}.ogg`);
-}
+let sttLineOpen = false; // a provisional partial line is currently on the terminal, unterminated
 
 function attachAudio(client) {
-  audio = new WaAudio(client);
+  audio = new WaAudio(client, { listen: cfg.stt });
   audio.on("log", (m) => log("audio ·", m));
   audio.on("peerConnected", ({ remoteUserId }) => log("audio: peer connected", remoteUserId));
+  if (cfg.stt) {
+    // Redraw the provisional line in place as it's corrected; lock it in with
+    // a newline once WA finalizes it (issue #23).
+    audio.on("heard", ({ remoteUserId, text, final }) => {
+      const who = wa.spaceUserName(remoteUserId) ?? remoteUserId.split("/").pop() ?? remoteUserId;
+      const line = `SCRIBE[${who}]: ${text}`;
+      if (final) {
+        process.stdout.write(`\r\x1b[K${line}\n`);
+        sttLineOpen = false;
+        log(line); // permanent record in daemon.log
+      } else {
+        process.stdout.write(`\r\x1b[K${line}`);
+        sttLineOpen = true;
+      }
+    });
+  }
   return audio;
 }
 
@@ -506,10 +518,6 @@ wireClient(wa);
 await wa.connect();
 attachAudio(wa);
 log(`joined as userId ${wa.myUserId}; spawn (${wa.pos.x | 0},${wa.pos.y | 0})`);
-
-if (process.env.WA_FOLLOW) {
-  startFollow(process.env.WA_FOLLOW).then((r) => log("join --follow:", JSON.stringify(r)));
-}
 
 server.listen(PORT, "127.0.0.1", () => {
   const info = JSON.stringify({
