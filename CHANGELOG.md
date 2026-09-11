@@ -115,10 +115,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Known issues
 
-- **#29 — daemon leaks memory across peer-connection cycles.** Repeated
-  proximity-bubble / invite create→connect→close balloons RSS and pins CPU
-  after ~3–6 cycles (werift `RTCPeerConnection`s not fully released on
-  `.close()`). Restart the daemon periodically.
+- **#29 — daemon can leak memory across peer-connection cycles**, milder than
+  first thought: two of the three hangs that looked like this were actually
+  the area-churn and `walkToPlayer` bugs above (both fixed here). The
+  remaining gap — `_closePeer` doesn't `await pc.close()` or explicitly stop
+  the track — no longer reproduces in normal use, including sustained
+  daemon-to-daemon runs.
+- **#31 — the avatar doesn't appear in WorkAdventure's left-hand users list.**
+  That list is the world-wide `allWorldUser` Space, which the client never
+  joins.
+- **#32 — 3+ simultaneous peer connections can misnegotiate.** An SDP answer
+  with zero ICE candidates was observed under 3-way churn; clean 1:1
+  (including two headless daemons talking to each other) is solid.
 
 ## [0.2.0] - 2026-09-08
 
