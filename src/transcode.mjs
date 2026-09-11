@@ -7,13 +7,27 @@
 
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { stat, mkdir } from "node:fs/promises";
+import { stat, mkdir, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 
 const CACHE_DIR = path.join(os.tmpdir(), "wa-sound-cache");
+
+/**
+ * Delete a cached transcode so the next ensureOpus()/silenceOpusFile() call
+ * re-encodes instead of forever re-serving a corrupt/empty result (#10: a
+ * truncated cache entry — e.g. from a killed ffmpeg — otherwise poisons the
+ * mic-prime path permanently). Only ever touches files under our own cache
+ * dir; never a caller-supplied source file.
+ */
+export async function invalidateCache(cachedPath) {
+  if (path.resolve(cachedPath).indexOf(CACHE_DIR + path.sep) !== 0) return;
+  try {
+    await unlink(cachedPath);
+  } catch {}
+}
 
 // True if the first Ogg page of `file` is an Opus identification header.
 async function isOpusOgg(file) {

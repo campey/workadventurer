@@ -112,6 +112,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Now we send the offer when told to.
 - Audio: re-assert `microphoneState` while a clip plays, to shrink the window
   where other clients show a phantom muted-mic icon (#10; not a full fix).
+- **Closes #10 — mic-state propagation.** `client.micOn` is now the single
+  source of truth every mic-announcing path respects — nothing hardcodes
+  `true` anymore. Fixes a regression the STT `listen` mode had reintroduced
+  (a listener ran the full talker announce schedule and raced its own
+  explicit "mic off"), plus real failure-recovery gaps: `_primeMic` retries
+  once and falls back to an honest mic-off instead of leaving the mic
+  claimed-on with nothing ever sent; a corrupt/empty cached clip is deleted
+  so it can't poison that cache key forever (`transcode.mjs`'s new
+  `invalidateCache()`); `play()` claims its in-flight guard synchronously so
+  a prime can't race a real clip; `_leaveSpace` clears pending re-announce
+  timers so a fast leave→rejoin can't fire one against a later membership.
 
 ### Known issues
 

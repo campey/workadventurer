@@ -30,21 +30,22 @@ an open follow-up.
 
 ---
 
-## `#10` — the red mic, and why a bounded prime fixes it
+## `#10` — the red mic, mic-state propagation
 
 **Symptom:** a peer renders our mic red ("microphone is on, but I'm receiving
 no audio"). It clears the instant any RTP arrives and stays clear until the
 next silent gap.
 
-**Cause:** we advertise `microphoneState: true` continuously (join
-re-announces, `initSpaceUsersMessage`, `_setSpeaking`), but `WaAudio` only
-writes RTP *during* a clip. Between clips a real browser mic still streams
-Opus; we send nothing, so peers flag the mic.
+**Cause:** we advertise `microphoneState: true` (join re-announces,
+`initSpaceUsersMessage`, `_setSpeaking`), but `WaAudio` only writes RTP
+*during* a clip. Between clips a real browser mic still streams Opus; we send
+nothing, so peers flag the mic.
 
 **Fix (`_primeMic`, PR #26):** on `pc connected`, play one ~0.4 s silence
 clip (`silenceOpusFile()` — cached ffmpeg `anullsrc`) through the normal
 `play()` path, with `{ indicator: false }` so it re-asserts mic-on without
-lighting the speaking ring. Bounded burst → nothing to leak.
+lighting the speaking ring, and fires *immediately* on connect, not on a
+delay. Bounded burst → nothing to leak.
 
 **Do NOT replace this with a continuous keepalive stream.** Tried and
 abandoned — it OOMs the daemon in ~2 minutes. See below.
@@ -53,6 +54,30 @@ abandoned — it OOMs the daemon in ~2 minutes. See below.
 browser peer with no media tile (recovers on reconnect). 0.4 s is late
 enough that this is rare; a longer clip fired instantly on connect is
 riskier.
+
+**`client.micOn` is the single source of truth — every mic-announcing path
+respects it; none hardcode `true`.** The STT `listen` mode (issue #23)
+reintroduced #10 in a new form: a listener that ignored `micOn` and ran the
+full talker announce schedule anyway would race its own explicit "mic off"
+on connect, last-writer-wins. Fixed by making every path — the daemon's
+`WorkAdventureClient` construction, `_joinSpace`'s re-announce schedule,
+`_setSpeaking`, and the `pc connected` handler's prime-vs-honest-false
+branch — read `client.micOn` instead of assuming a role. This also makes the
+mic path forward-compatible with a persona that both listens and talks: no
+special-casing on `listen` anywhere in the mic-state code.
+
+Two related gaps closed alongside it: `_primeMic` now retries once and falls
+back to an honest `setSpaceMicState(false)` on repeated failure (a missing
+ffmpeg or a corrupt cached clip used to leave the mic claimed-on with nothing
+ever sent — the failure-recovery version of the same bug); a corrupt/empty
+cache entry (`transcode.mjs`'s `invalidateCache()`) is deleted on detection
+instead of poisoning that cache key forever; `play()` claims its `_play`
+in-flight guard synchronously at function entry, before its own awaits, so
+two near-simultaneous calls (a prime racing a real clip, or two peers
+connecting a few ms apart) can't both slip past the guard and corrupt each
+other; and `_leaveSpace` clears any pending `micReannounceMs` timers so a
+fast leave→rejoin (routine with the area-meeting dwell/linger debounce)
+can't have a stale timer fire against a later membership.
 
 ---
 

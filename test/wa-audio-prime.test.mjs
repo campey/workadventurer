@@ -7,12 +7,14 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { WaAudio } from "../src/wa-audio.mjs";
 
-function fakeClient() {
+function fakeClient({ micOn = true } = {}) {
   const c = new EventEmitter();
+  c.micOn = micOn;
   c.spaces = new Map([["s1", { spaceUserId: "u1" }]]);
   c.sent = [];
+  c.micStateCalls = [];
   c._send = (m) => c.sent.push(m);
-  c.setSpaceMicState = () => {};
+  c.setSpaceMicState = (spaceName, on) => c.micStateCalls.push({ spaceName, on });
   c.query = async () => ({ iceServersAnswer: { iceServers: [] } });
   c.adapter = {
     micState: { speakingMaskPaths: ["showVoiceIndicator", "microphoneState"] },
@@ -80,4 +82,74 @@ test("_primeMic yields to a clip that's already playing", async () => {
   audio._play = { stop() {} }; // pretend a real clip is mid-flight
   await audio._primeMic();
   assert.equal(p._rtp.length, 0, "prime did not touch the wire");
+});
+
+// #10: microphoneState must always mirror client.micOn — never hardcoded true.
+// Otherwise a listen-mode instance advertises mic-on it never intended.
+test("_setSpeaking mirrors client.micOn, on or off", () => {
+  const onClient = fakeClient({ micOn: true });
+  new WaAudio(onClient)._setSpeaking(true, false);
+  const onMsgs = onClient.sent.filter((m) => m.updateSpaceUserMessage);
+  assert.ok(onMsgs.length >= 1);
+  assert.equal(onMsgs.every((m) => m.updateSpaceUserMessage.user.microphoneState === true), true);
+
+  const offClient = fakeClient({ micOn: false });
+  new WaAudio(offClient)._setSpeaking(true, false);
+  const offMsgs = offClient.sent.filter((m) => m.updateSpaceUserMessage);
+  assert.ok(offMsgs.length >= 1);
+  assert.equal(offMsgs.every((m) => m.updateSpaceUserMessage.user.microphoneState === false), true);
+});
+
+// #10: two failed prime attempts must fall back to an honest mic-off, never
+// leave the mic claimed-on with nothing ever sent.
+test("_primeMic retries once, then reports mic off after repeated failure", async () => {
+  const client = fakeClient();
+  const audio = new WaAudio(client);
+  audio.peers.set("p1", fakePeer());
+  audio._silencePath = "/dev/null/not-a-real-clip.ogg"; // skip real silenceOpusFile() for attempt 1
+
+  let calls = 0;
+  audio.play = async () => {
+    calls++;
+    return { played: false, reason: "boom" };
+  };
+
+  await audio._primeMic();
+
+  assert.equal(calls, 2, "exactly one retry after the first failure");
+  assert.ok(client.micStateCalls.length >= 1, "falls back via client.setSpaceMicState");
+  assert.equal(
+    client.micStateCalls.every((c) => c.on === false),
+    true,
+    "honest mic-off, not a silent claimed-on"
+  );
+});
+
+// #10 (d): a real clip landing mid-prime must not be truncated by the prime,
+// nor vice versa — whichever call runs second sees the guard immediately,
+// before any await, not after racing past it.
+test("play() claims its in-flight guard synchronously, before any await", async () => {
+  const { silenceOpusFile } = await import("../src/transcode.mjs");
+  const clipA = await silenceOpusFile(1.5); // distinct cache entry from clipB
+  const clipB = await silenceOpusFile(0.4);
+
+  const audio = new WaAudio(fakeClient());
+  const p = fakePeer();
+  audio.peers.set("p1", p);
+
+  // Two calls back-to-back, neither awaited before the other starts — this is
+  // the actual race (two peers connecting a few ms apart, or a real clip
+  // landing mid-prime). The guard must already be claimed synchronously, at
+  // function entry, not after `ensureOpus`/`readOggOpus`'s awaits (#10).
+  const first = audio.play(clipA);
+  assert.ok(audio._play, "first call claimed the guard before its own awaits resolved");
+  const second = audio.play(clipB);
+
+  const [r1, r2] = await Promise.all([first, second]);
+  // The first was stopped by the second superseding it; exactly one of them
+  // actually finishes cleanly — no shared/corrupted `_play` state left behind.
+  assert.equal(r1.played, false);
+  assert.equal(r1.reason, "superseded");
+  assert.equal(r2.played, true);
+  assert.equal(audio._play, null, "guard released — nothing left dangling");
 });
