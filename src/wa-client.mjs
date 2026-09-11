@@ -364,7 +364,8 @@ export class WorkAdventureClient extends EventEmitter {
       propertiesToSync: props,
     });
     const spaceUserId = answer.joinSpaceAnswer?.spaceUserId ?? "";
-    this.spaces.set(spaceName, { spaceUserId, propertiesToSync: props });
+    const micTimers = [];
+    this.spaces.set(spaceName, { spaceUserId, propertiesToSync: props, micTimers });
     this.emit("log", `joined space ${spaceName} as ${spaceUserId}`);
     // "Watch" the Space. Without this the back keeps us in `users` but not
     // `usersToNotify`, and never sets up peer connections (WebRTCCommunication
@@ -382,14 +383,19 @@ export class WorkAdventureClient extends EventEmitter {
     if (this.micOn) {
       for (const ms of sj.micReannounceMs) {
         if (ms === 0) this.setSpaceMicState(spaceName, true);
-        else setTimeout(() => this.setSpaceMicState(spaceName, true), ms);
+        else micTimers.push(setTimeout(() => this.setSpaceMicState(spaceName, true), ms));
       }
     }
     return spaceUserId;
   }
 
   async _leaveSpace(spaceName) {
+    const mine = this.spaces.get(spaceName);
     if (!this.spaces.delete(spaceName)) return;
+    // A fast leave→rejoin (routine with the area-meeting dwell/linger
+    // debounce) must not let a stale re-announce fire against the *new*
+    // membership and re-claim mic-on we no longer intend (#10).
+    for (const t of mine?.micTimers ?? []) clearTimeout(t);
     this._send({ removeSpaceFilterMessage: { spaceFilterMessage: { spaceName } } });
     this.query("leaveSpaceQuery", { spaceName }).catch(() => {});
     this.emit("log", `left space ${spaceName}`);

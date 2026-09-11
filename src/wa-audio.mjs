@@ -23,7 +23,7 @@ import {
   RtpHeader,
 } from "werift";
 import { readOggOpus } from "./ogg-opus.mjs";
-import { ensureOpus, silenceOpusFile } from "./transcode.mjs";
+import { ensureOpus, silenceOpusFile, invalidateCache } from "./transcode.mjs";
 import { SttStream } from "./wa-stt.mjs";
 import { writeFileSync } from "node:fs"; // TEMP: SDP_DEBUG diagnostic only
 
@@ -195,16 +195,19 @@ export class WaAudio extends EventEmitter {
       this.emit("log", `[${connectionId}] pc ${s}`);
       if (s === "failed" || s === "closed") this._closePeer(connectionId, s);
       if (s === "connected") {
-        if (this.listen) {
-          // A pure listener doesn't send anything — say so honestly, no prime.
-          this.client.setSpaceMicState(spaceName, false);
-        } else {
+        // client.micOn — not `this.listen` — decides whether we publish.
+        // Listening (STT) and publishing are independent; a future persona
+        // that both listens and talks must not need special-casing here (#10).
+        if (this.client.micOn) {
           // Re-assert mic-on now that this peer is up, so it doesn't have us
           // cached as muted and drop our audio track (#10).
           this.client.setSpaceMicState(spaceName, true);
           // …and send a brief silence blip so the peer sees a live stream and
           // clears the "mic on, receiving nothing" red indicator (#10).
           this._primeMic();
+        } else {
+          // We don't send anything — say so honestly, no prime.
+          this.client.setSpaceMicState(spaceName, false);
         }
         this.emit("peerConnected", { connectionId, remoteUserId });
       }
@@ -317,19 +320,31 @@ export class WaAudio extends EventEmitter {
    * Resolves when the clip finishes or is superseded by another play()/hangup().
    */
   async play(file, { indicator = true } = {}) {
-    const opus = await ensureOpus(file);
-    const { packets, totalSamples } = await readOggOpus(opus);
-    if (!packets.length) return { played: false, reason: "empty clip" };
-
+    // Claim `_play` synchronously, before any awaits, so a second concurrent
+    // call (e.g. a real clip landing mid-prime, or two peers connecting a few
+    // ms apart) sees "something is already starting" immediately instead of
+    // racing past this guard during the ensureOpus/readOggOpus awaits (#10).
     this._play?.stop();
     let stopped = false;
-    this._play = { stop: () => (stopped = true) };
+    const token = (this._play = { stop: () => (stopped = true) });
+
+    const opus = await ensureOpus(file);
+    const { packets, totalSamples } = await readOggOpus(opus);
+    if (stopped) return { played: false, reason: "superseded" };
+    if (!packets.length) {
+      if (this._play === token) this._play = null;
+      // A corrupt/truncated cache entry demuxes to zero packets — invalidate
+      // it so the next call re-encodes instead of re-hitting the same broken
+      // file forever (#10; no-ops for a caller-supplied path, see transcode.mjs).
+      await invalidateCache(opus);
+      return { played: false, reason: "empty clip" };
+    }
 
     const targets = [...this.peers.values()].filter(
       (p) => p.pc.connectionState === "connected"
     );
     if (!targets.length) {
-      this._play = null;
+      if (this._play === token) this._play = null;
       return { played: false, reason: "no connected peers" };
     }
 
@@ -376,7 +391,7 @@ export class WaAudio extends EventEmitter {
     const endAt = performance.now();
     for (const p of targets) p.lastPlayEnd = endAt;
     this._setSpeaking(false, indicator);
-    this._play = null;
+    if (this._play === token) this._play = null;
     const states = targets.map((p) => p.pc.connectionState);
     return {
       played: !stopped,
@@ -393,6 +408,11 @@ export class WaAudio extends EventEmitter {
     // one-shot mic-state announce at join sometimes doesn't stick on the other
     // clients' UI, leaving a phantom muted icon. See #10. `indicator: false`
     // (the connect-time prime) re-asserts mic-on without lighting the ring.
+    //
+    // microphoneState always mirrors client.micOn — never hardcoded true.
+    // Otherwise a listen-mode instance that ever plays a clip (a debug /sound,
+    // say) would advertise itself as mic-on permanently, with no stream
+    // between clips: a fresh, harder-to-spot form of #10.
     for (const spaceName of this.client.spaces.keys()) {
       const mine = this.client.spaces.get(spaceName);
       if (!mine) continue;
@@ -403,7 +423,7 @@ export class WaAudio extends EventEmitter {
             user: {
               spaceUserId: mine.spaceUserId,
               showVoiceIndicator: indicator ? !!on : false,
-              microphoneState: true,
+              microphoneState: this.client.micOn,
             },
             updateMask: { paths: this.client.adapter.micState.speakingMaskPaths },
           },
@@ -416,19 +436,42 @@ export class WaAudio extends EventEmitter {
   // mic red ("on, receiving nothing") until the first RTP lands; a ~0.4 s blip
   // primes the path and it stays fine until the next real clip. Bounded — no
   // continuous stream, so nothing to leak.
+  //
+  // One retry on failure (missing ffmpeg, corrupt cache); if both attempts
+  // fail we go back to an honest mic-off rather than leaving the mic
+  // advertised on with nothing ever sent — the exact "claimed but silent"
+  // shape of #10 that a silent no-op used to leave behind.
   async _primeMic() {
-    if (this._play) return; // a real clip is already going — no need
-    try {
-      this._silencePath ??= await silenceOpusFile();
-      if (this._play) return;
-      const r = await this.play(this._silencePath, { indicator: false });
-      this.emit(
-        "log",
-        `mic primed: ${r.packetsSent ?? 0} silence pkts to ${r.peers ?? 0} peer(s)` +
-          (r.played ? "" : ` — ${r.reason ?? "?"}`)
-      );
-    } catch (e) {
-      this.emit("log", `mic prime skipped: ${e.message}`);
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      if (this._play) return; // a real clip is already going/queued — no need
+      try {
+        this._silencePath ??= await silenceOpusFile();
+        if (this._play) return;
+        const r = await this.play(this._silencePath, { indicator: false });
+        if (r.played) {
+          this.emit(
+            "log",
+            `mic primed: ${r.packetsSent ?? 0} silence pkts to ${r.peers ?? 0} peer(s)`
+          );
+          return;
+        }
+        if (r.reason === "no connected peers" || r.reason === "superseded") {
+          return; // nothing to prime right now / a real clip won the race — fine
+        }
+        // "empty clip" — play() already invalidated the bad cache entry above;
+        // clear our cached path too so the retry re-encodes rather than
+        // resolving to the same (now-deleted) file again.
+        this._silencePath = null;
+        this.emit("log", `mic prime attempt ${attempt} failed: ${r.reason ?? "?"}`);
+      } catch (e) {
+        this._silencePath = null;
+        this.emit("log", `mic prime attempt ${attempt} error: ${e.message}`);
+      }
+      if (attempt === 1) await sleep(300);
     }
+    for (const spaceName of this.client.spaces.keys()) {
+      this.client.setSpaceMicState(spaceName, false);
+    }
+    this.emit("log", "mic prime failed twice — reporting mic off, not claiming silently");
   }
 }

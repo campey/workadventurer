@@ -345,7 +345,10 @@ async function attemptReconnect() {
       target: cfg.target,
       version: cfg.version,
       wokaId: cfg.wokaId,
-      micOn: true,
+      // A listen-mode ("scribe") instance doesn't publish audio by default —
+      // client.micOn is the single source of truth every mic-announce path
+      // respects (#10). See wa-audio.mjs for the rest of that invariant.
+      micOn: !cfg.stt,
     });
     wireClient(client);
     try {
@@ -512,7 +515,8 @@ wa = new WorkAdventureClient({
   target: cfg.target,
   version: cfg.version,
   wokaId: cfg.wokaId,
-  micOn: true,
+  // See the reconnect-path comment above: micOn is single-source-of-truth.
+  micOn: !cfg.stt,
 });
 wireClient(wa);
 await wa.connect();
