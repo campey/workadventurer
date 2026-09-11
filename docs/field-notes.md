@@ -58,15 +58,41 @@ riskier.
 
 ## werift constraints
 
-### Two headless clients can't complete ICE to each other
+### Two headless daemons *can* talk to each other — but not reliably at 3+
 
-Running two `WaAudio` instances on one host and pointing them at each other
-does **not** produce a connected peer — werift↔werift ICE through
-STUN/TURN doesn't complete on a single NAT. So the connected send path can
-only be exercised against a real browser peer. Unit tests use a fake peer
-object (`{ pc: { connectionState: "connected" }, track: { writeRtp } }`);
-anything touching a live socket is verified with `scripts/selfcheck.mjs` and
-manual runs, not `node --test`.
+Two `WaAudio` instances (e.g. a "claudetest" talker + a "scribe" listener),
+each properly joined to the same real WA room with its own name/port, **do**
+negotiate and pass real audio — clean 1:1, reproducibly, with the sender's
+`writeRtp` reporting zero errors and the receiver actually decoding correct
+text out the other end. (An *isolated* pair of bare clients with no real
+room/signaling infra doesn't connect — that's a different, narrower claim than
+"werift can't do werift".)
+
+What doesn't hold up: **3+ peers connecting around the same time** (e.g. two
+headless avatars *and* a real user, all in one bubble) can produce an answer
+SDP with **zero ICE candidates** for one specific connection while sibling
+connections in the same session negotiate fine — `pc connected` still fires
+(ICE/DTLS/datachannel all "succeed") but no media ever arrives
+(`buflen=0` forever on the receive side). Looks like a race under concurrent
+`_iceComplete`/gathering. See issue #32; not yet root-caused. `SDP_DEBUG=<dir>`
+env var on `wa-audio.mjs` dumps every offer/answer to `<dir>/<connId>-<label>.sdp`
+for exactly this kind of investigation.
+
+Unit tests use a fake peer object (`{ pc: { connectionState: "connected" },
+track: { writeRtp } }`) rather than a real connection either way — even a
+working 1:1 handshake takes real network round-trips and a live WA room, too
+slow/flaky for `node --test`. Anything touching a live socket is verified with
+`scripts/selfcheck.mjs`, `scripts/stt-selfcheck.mjs`, and manual runs.
+
+### MLX / Metal isn't safe for concurrent inference
+
+Running two STT sessions' `mlx_whisper.transcribe()` calls at the same time
+(two peers each on their own `asyncio.to_thread`) crashes the whole worker
+process: `AGXG14GFamilyCommandBuffer ... failed assertion 'A command encoder
+is already encoding to this command buffer'`. Serialize all inference calls
+behind one `threading.Lock` in the worker — the async tick loops stay
+concurrent for buffering/timing, only the actual GPU call queues
+(`scripts/stt_worker.py`).
 
 ### Un-awaited RTP send fan-out
 
@@ -96,6 +122,14 @@ subtler: `_closePeer` fires `pc.close()` without `await` (it's async — awaits
 SCTP/DTLS teardown), and never stops the `MediaStreamTrack` / transceiver.
 Needs `--inspect` + heap snapshots across N cycles — **do not keep
 guess-fixing it live.** Workaround: restart the daemon every few cycles.
+
+Anything that spawns a real subprocess per peer connection (the STT worker's
+`ffmpeg`, the mic prime — less so, it's bounded) needs an explicit guard
+against this churn: a per-connection single-fire check (`onTrack` can in
+principle fire more than once) and a hard cap on concurrent instances
+(`MAX_STT_STREAMS` in `wa-audio.mjs`). Without both, a burst of peer-connect
+churn spun up unbounded worker/ffmpeg pairs and spiked the daemon to 100%+
+CPU before a single "pc connected" line had even printed.
 
 ### Misc
 
@@ -190,14 +224,22 @@ Rapid-fire invites (several in a few seconds) hit issue #29.
 ## Testing approach
 
 - **`npm test`** (`node --test`) covers pure logic only: adapter resolution,
-  the area-meeting debounce timers, invite message shapes, the mic-prime with
-  a fake peer. No sockets.
+  the area-meeting debounce timers, invite message shapes, the mic-prime and
+  Ogg mux with a fake peer / no live socket.
 - **`node scripts/selfcheck.mjs [--target <id>] [--room <url>]`** — ephemeral
   client, real join: connect / adapter match / move / bubble / area-meeting
   join / audio (SKIP without a second participant). The prod run is the merge
   gate for anything touching `src/`.
-- **Live audio / media-tile / mic behaviour** needs a human in the room —
-  automated runs can't see the browser and can't form a werift↔werift peer.
+- **`node scripts/stt-selfcheck.mjs [clip.wav]`** — the STT pipeline
+  standalone, no WA connection: streams a real clip's Opus packets through
+  `SttStream` at real-time pace and checks a `partial` then a `final` land.
+- **A second headless daemon instance is a legitimate live-test participant**
+  now that daemon↔daemon audio is proven (see werift constraints above) — spin
+  up two named instances (`WA_NAME`/`WA_DAEMON_PORT` per instance, same room)
+  for anything that needs a real peer without a human. Keep it to **2** at a
+  time; 3+ concurrent connections is the still-open #32 territory.
+- **Media-tile / red-mic / "does it sound right" behaviour** still needs a
+  human watching a real browser — that side of it can't be automated.
 - The `workadventure` subagent drives repeated live scenarios (join, walk to
   a player, invite, monitor RSS/HTTP). Watch its RSS trace — a steady climb
   past ~300 MB or an HTTP timeout means #29 is biting; `pkill -9` and restart.

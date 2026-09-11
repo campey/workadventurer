@@ -24,6 +24,8 @@ import {
 } from "werift";
 import { readOggOpus } from "./ogg-opus.mjs";
 import { ensureOpus, silenceOpusFile } from "./transcode.mjs";
+import { SttStream } from "./wa-stt.mjs";
+import { writeFileSync } from "node:fs"; // TEMP: SDP_DEBUG diagnostic only
 
 const OPUS = new RTCRtpCodecParameters({
   mimeType: "audio/opus",
@@ -33,13 +35,38 @@ const OPUS = new RTCRtpCodecParameters({
 });
 
 const rnd32 = () => Math.floor(Math.random() * 0xffffffff) >>> 0;
+const MAX_STT_STREAMS = 2; // hard cap: each is a real ffmpeg process + worker socket
+
+// TEMP diagnostic (werift<->werift media investigation): SDP_DEBUG=<dir> dumps
+// every offer/answer to <dir>/<connectionId>-<label>.sdp.
+function dumpSdp(connectionId, label, sdp) {
+  const dir = process.env.SDP_DEBUG;
+  if (!dir) return;
+  try {
+    writeFileSync(`${dir}/${connectionId.slice(0, 8)}-${label}.sdp`, sdp);
+  } catch {}
+}
+
+// Sample count of a raw Opus packet, from its TOC byte (RFC 6716 Table 2) —
+// same math as ogg-opus.mjs, needed here for inbound (listen-mode) packets.
+function opusSamples(pkt) {
+  const toc = pkt[0];
+  const config = toc >> 3;
+  const frameMs = config < 12 ? [10, 20, 40, 60][config & 3] : config < 16 ? [10, 20][config & 1] : [2.5, 5, 10, 20][config & 3];
+  const code = pkt[0] & 3;
+  const count = code === 0 ? 1 : code === 1 || code === 2 ? 2 : pkt.length > 1 ? pkt[1] & 0x3f : 1;
+  return Math.round(48 * frameMs * count);
+}
 
 export class WaAudio extends EventEmitter {
   /** @param {import("./wa-client.mjs").WorkAdventureClient} client */
-  constructor(client, { iceServers } = {}) {
+  constructor(client, { iceServers, listen = false } = {}) {
     super();
     this.client = client;
     this.iceServers = iceServers ?? [{ urls: "stun:stun.l.google.com:19302" }];
+    // Live speech-to-text on peers' inbound audio (issue #23). A pure listener
+    // doesn't need to look mic-on, so it skips the connect-time prime too.
+    this.listen = listen;
     /** @type {Map<string,{pc:RTCPeerConnection,track:MediaStreamTrack,spaceName:string,remoteUserId:string}>} */
     this.peers = new Map();
     this._play = null; // { stop(): void } while a clip is playing
@@ -125,7 +152,9 @@ export class WaAudio extends EventEmitter {
       bundlePolicy: "max-bundle",
     });
     const track = new MediaStreamTrack({ kind: "audio" });
-    pc.addTransceiver(track, { direction: "sendonly" });
+    // `sendrecv` when listening — the browser only sends us its mic if we
+    // negotiate a receive direction too; plain `sendonly` tells it not to.
+    pc.addTransceiver(track, { direction: this.listen ? "sendrecv" : "sendonly" });
     // simple-peer always negotiates a data channel and only fires its `connect`
     // event once that channel opens — so we must answer the `m=application`
     // section. Creating our own channel makes werift include SCTP in the answer.
@@ -134,16 +163,49 @@ export class WaAudio extends EventEmitter {
       this.emit("log", `[${connectionId}] datachannel "${ch.label}"`)
     );
 
+    if (this.listen) {
+      // Live speech-to-text on this peer's inbound audio (issue #23). Guarded
+      // against werift's peer-connect churn (#29): at most one SttStream per
+      // connection (onTrack can in principle fire more than once), and a hard
+      // cap on how many run at once — each one is a real ffmpeg process plus a
+      // socket into the shared worker, and repeated/rapid connects piling
+      // those up unbounded is exactly what spiked the daemon.
+      pc.onTrack.subscribe((remoteTrack) => {
+        if (remoteTrack.kind !== "audio") return;
+        const mine = this.peers.get(connectionId);
+        if (!mine || mine.stt) return; // already listening on this connection
+        const active = [...this.peers.values()].filter((p) => p.stt).length;
+        if (active >= MAX_STT_STREAMS) {
+          this.emit("log", `[${connectionId}] stt skipped — ${MAX_STT_STREAMS} already active`);
+          return;
+        }
+        const stt = new SttStream();
+        stt.on("log", (m) => this.emit("log", `[${connectionId}] stt: ${m}`));
+        stt.on("error", (e) => this.emit("log", `[${connectionId}] stt error: ${e.message}`));
+        stt.on("partial", (m) => this.emit("heard", { connectionId, remoteUserId, ...m, final: false }));
+        stt.on("final", (m) => this.emit("heard", { connectionId, remoteUserId, ...m, final: true }));
+        remoteTrack.onReceiveRtp.subscribe((rtp) =>
+          stt.push({ data: rtp.payload, samples: opusSamples(rtp.payload) })
+        );
+        mine.stt = stt;
+      });
+    }
+
     pc.connectionStateChange.subscribe((s) => {
       this.emit("log", `[${connectionId}] pc ${s}`);
       if (s === "failed" || s === "closed") this._closePeer(connectionId, s);
       if (s === "connected") {
-        // Re-assert mic-on now that this peer is up, so it doesn't have us
-        // cached as muted and drop our audio track (#10).
-        this.client.setSpaceMicState(spaceName, true);
-        // …and send a brief silence blip so the peer sees a live stream and
-        // clears the "mic on, receiving nothing" red indicator (#10).
-        this._primeMic();
+        if (this.listen) {
+          // A pure listener doesn't send anything — say so honestly, no prime.
+          this.client.setSpaceMicState(spaceName, false);
+        } else {
+          // Re-assert mic-on now that this peer is up, so it doesn't have us
+          // cached as muted and drop our audio track (#10).
+          this.client.setSpaceMicState(spaceName, true);
+          // …and send a brief silence blip so the peer sees a live stream and
+          // clears the "mic on, receiving nothing" red indicator (#10).
+          this._primeMic();
+        }
         this.emit("peerConnected", { connectionId, remoteUserId });
       }
     });
@@ -169,6 +231,7 @@ export class WaAudio extends EventEmitter {
   async _makeOffer(p) {
     await p.pc.setLocalDescription(await p.pc.createOffer());
     await this._iceComplete(p.pc);
+    dumpSdp(p.connectionId, "offer-local", p.pc.localDescription.sdp);
     this.client.sendSpacePrivateEvent(p.spaceName, p.remoteUserId, {
       webRtcSignal: {
         connectionId: p.connectionId,
@@ -189,9 +252,11 @@ export class WaAudio extends EventEmitter {
 
     try {
       if (sig.type === "offer") {
+        dumpSdp(connectionId, "offer-remote", sig.sdp);
         await p.pc.setRemoteDescription({ type: "offer", sdp: sig.sdp });
         await p.pc.setLocalDescription(await p.pc.createAnswer());
         await this._iceComplete(p.pc);
+        dumpSdp(connectionId, "answer-local", p.pc.localDescription.sdp);
         this.client.sendSpacePrivateEvent(spaceName, remoteUserId, {
           webRtcSignal: {
             connectionId,
@@ -203,6 +268,7 @@ export class WaAudio extends EventEmitter {
         });
         this.emit("log", `[${connectionId}] answered`);
       } else if (sig.type === "answer") {
+        dumpSdp(connectionId, "answer-remote", sig.sdp);
         await p.pc.setRemoteDescription({ type: "answer", sdp: sig.sdp });
       } else if (sig.type === "candidate" && sig.candidate) {
         await p.pc.addIceCandidate(sig.candidate).catch(() => {});
@@ -231,6 +297,9 @@ export class WaAudio extends EventEmitter {
     const p = connectionId && this.peers.get(connectionId);
     if (!p) return;
     this.peers.delete(connectionId);
+    try {
+      p.stt?.close();
+    } catch {}
     try {
       p.pc.close();
     } catch {}

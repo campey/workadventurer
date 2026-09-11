@@ -25,6 +25,7 @@ const BASE = {
   target: CLIENT_DEFAULTS.target, // "auto"
   wokaId: CLIENT_DEFAULTS.wokaId,
   port: 8787,
+  stt: false, // WA_STT=1 -> live speech-to-text on inbound peer audio (issue #23, prototype)
 };
 
 const ENV_MAP = {
@@ -35,6 +36,7 @@ const ENV_MAP = {
   WA_TARGET: "target",
   WA_WOKA_ID: "wokaId",
   WA_DAEMON_PORT: "port",
+  WA_STT: "stt",
 };
 
 function fromFile() {
@@ -64,6 +66,7 @@ export function resolveConfig(flags = {}) {
   );
   const merged = { ...BASE, ...fromFile(), ...fromEnv(), ...cleanFlags };
   merged.port = Number(merged.port) || BASE.port;
+  merged.stt = merged.stt === true || merged.stt === "1" || merged.stt === "true";
   return merged;
 }
 

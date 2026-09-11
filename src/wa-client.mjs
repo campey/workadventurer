@@ -64,6 +64,7 @@ export class WorkAdventureClient extends EventEmitter {
     /** @type {Map<string,{spaceUserId:string,propertiesToSync:string[]}>} */
     this.spaces = new Map(); // spaceName -> our membership
     this.groupId = null; // current proximity group, or null
+    this.spaceUserNames = new Map(); // spaceUserId -> display name, from SpaceUser
 
     // Map areas (from the room's .wam) and which ones the avatar is inside.
     /** @type {{name:string,x:number,y:number,w:number,h:number,props:Record<string,unknown>}[]} */
@@ -618,10 +619,12 @@ export class WorkAdventureClient extends EventEmitter {
       // moment to (re-)announce mic-on so no one has us cached as muted (#10).
       const sn = sub.initSpaceUsersMessage.spaceName;
       if (this.micOn && this.spaces.has(sn)) this.setSpaceMicState(sn, true);
-      this.emit("spaceUsers", {
-        spaceName: sn,
-        users: sub.initSpaceUsersMessage.users ?? [],
-      });
+      const users = sub.initSpaceUsersMessage.users ?? [];
+      // SpaceUser carries both spaceUserId and name directly — the one place
+      // we can label a peer (e.g. for STT, issue #23) without cross-referencing
+      // the room's numeric userId at all.
+      for (const u of users) if (u.spaceUserId && u.name) this.spaceUserNames.set(u.spaceUserId, u.name);
+      this.emit("spaceUsers", { spaceName: sn, users });
       return;
     }
     if (sub.privateEvent) {
@@ -690,6 +693,11 @@ export class WorkAdventureClient extends EventEmitter {
 
   playerByUuid(uuid) {
     return this.listPlayers().find((p) => p.uuid === uuid) ?? null;
+  }
+
+  /** Display name for a space-user id (the format webRTC peer events carry), or null. */
+  spaceUserName(spaceUserId) {
+    return this.spaceUserNames.get(spaceUserId) ?? null;
   }
 
   /** Accept a meeting invitation ("come over") from the player with this uuid. */

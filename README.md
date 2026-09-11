@@ -19,9 +19,13 @@ main takeaway.
 
 ## Install
 
+Not published to npm yet — install from source:
+
 ```sh
-npm i -g workadventurer     # gives you the `wa` command
-# or run it ad-hoc:  npx workadventurer wa <…>
+git clone https://github.com/campey/workadventurer.git
+cd workadventurer
+npm install
+npm link                    # gives you the `wa` command
 ```
 
 Needs Node 18+ (built-in `fetch`). Runtime deps are `ws` and `protobufjs`
@@ -34,7 +38,8 @@ Needs Node 18+ (built-in `fetch`). Runtime deps are `ws` and `protobufjs`
 command auto-starts the daemon if it isn't running.
 
 ```sh
-wa join --detach --follow David   # join the room as "claude", start following David
+wa join --detach                  # join the room as "claude"
+wa follow David                   # start following David
 wa status                         # where am I, who's around, am I following anyone
 wa quiet                          # step away to the nearest empty area (pauses the follow)
 wa resume                         # walk back and resume following
@@ -45,7 +50,7 @@ wa leave                          # disconnect and stop the daemon
 
 | Command | Does |
 |---|---|
-| `wa join [--detach] [--follow <player>]` | join the room (runs the daemon) |
+| `wa join [<room-url>] [--detach]` | join the room (runs the daemon) |
 | `wa leave` | leave and stop the daemon |
 | `wa status [--json]` | position, area, follow state, visible players |
 | `wa to <player>` | walk next to a player, no follow |
@@ -55,7 +60,7 @@ wa leave                          # disconnect and stop the daemon
 | `wa greet <player>` | walk over + "hi" speech bubble (no state change) |
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text bubble |
 | `wa clear-bubble` | dismiss whatever bubble is showing |
-| `wa sound <name\|file>` | play a clip into the proximity voice chat (see [Voice](#9-voice)) |
+| `wa sound <name\|file>` | play a clip into the proximity voice chat — bundled: `chime`, `blip`, `claude_intro` (see [Voice](#9-voice)) |
 | `wa wait-emote [player]` | block until a player emotes (`--emote <match>`, `--timeout <ms>`) |
 | `wa goto <x> <y>` | walk to raw coordinates |
 
@@ -76,7 +81,7 @@ claude --plugin-dir ./plugin        # load it from a checkout
 claude plugin install workadventure@campey/workadventurer
 ```
 
-Then, in a session, opt in with `wa join --detach --follow <yourName>`. Two
+Then, in a session, opt in with `wa join --detach && wa follow <yourName>`. Two
 hooks do the rest — `UserPromptSubmit` → `wa quiet`, `Stop` → `wa resume` —
 and both no-op instantly when no daemon is running, so a plain session pays
 nothing. The plugin also ships:
@@ -149,7 +154,9 @@ invite cycles currently leak memory (issue #29) — restart it every few.
 | `src/wa-daemon.mjs` | long-running presence + localhost HTTP control API |
 | `src/wa-audio.mjs` | `WaAudio` — P2P WebRTC (werift) into proximity meetings; publishes Opus |
 | `src/ogg-opus.mjs` | dependency-free Ogg demuxer — Opus packets out of `.ogg`/`.opus` |
+| `src/ogg-opus-mux.mjs` | the inverse — mux Opus packets into a playable/streamable Ogg file |
 | `src/transcode.mjs` | `wa sound` format bridge — non-Opus files → Ogg/Opus via `ffmpeg`, cached |
+| `src/wa-stt.mjs` + `scripts/stt_worker.py` | live speech-to-text (`WA_STT=1`) — see [§ 11](#11-live-speech-to-text-prototype-issue-23) |
 | `sounds/` | bundled Ogg/Opus clips for `wa sound` (credits in `sounds/ATTRIBUTION.md`) |
 | `src/config.mjs` | config resolution (flags → env → `~/.config` → defaults) |
 | `src/find-player.mjs` | standalone one-shot: connect → locate → walk over → greet → follow |
@@ -158,6 +165,7 @@ invite cycles currently leak memory (issue #29) — restart it every few.
 | `scripts/build-collision.mjs` | bakes `map/<org>/<world>/<room>/collision.json` from a room's live `.wam` / `.tmj` |
 | `scripts/vendor-proto.mjs` | vendors a WA git ref's proto + prints its `apiVersionHash` (for a new adapter) |
 | `scripts/selfcheck.mjs` | live smoke test of a version target (`wa selfcheck`) |
+| `scripts/stt-selfcheck.mjs` | live smoke test of the STT pipeline, standalone (no WA connection) |
 | `map/<org>/<world>/<room>/collision.json` | per-room baked collision grid + named areas |
 | `src/adapters/` | one adapter per WA `major.minor` (`wa-1.33`, `wa-master`) + `resolveAdapter` — see [§ Version targets](#version-targets) |
 | `proto/<target>/messages.proto` | vendored WA proto per target (`wa-1.33` = tag `v1.33.5`) |
@@ -366,7 +374,9 @@ is enough to stay connected.
 
 `wa sound <name>` plays an audio clip into the proximity voice chat — the same
 channel real users talk on. The avatar is a genuine mic participant, not a
-special case. The path (`src/wa-audio.mjs`, `src/ogg-opus.mjs`):
+special case. `name` is a bare word (`sounds/<name>.ogg`, e.g. `wa sound
+chime`) or a path to any local file. The path (`src/wa-audio.mjs`,
+`src/ogg-opus.mjs`):
 
 1. Connect with `microphoneState=true`.
 2. On entering a bubble the server sends `joinSpaceRequestMessage`. Answer with
@@ -420,6 +430,48 @@ which balloons the daemon and floods the browser peer. See
 
 Maps that define areas only in the `.tmj` object layers (older style) aren't
 read. `jitsiRoomProperty` areas are detected but not joined (no Jitsi client).
+
+### 11. Live speech-to-text (prototype, issue #23)
+
+`WA_STT=1` puts the avatar in **listen mode** — it negotiates `sendrecv` instead
+of `sendonly` on the audio transceiver (so peers' browsers actually send us
+their mic), and live-transcribes what it hears:
+
+```
+peer's Opus RTP  --(OggOpusMuxStream, src/ogg-opus-mux.mjs)-->  Ogg pages
+                  --(ffmpeg, persistent, forced input format)-->  16kHz mono PCM
+                  --(Unix socket)-->  scripts/stt_worker.py (resident mlx_whisper)
+                  <--(JSON lines)--  {type:"partial"|"final", text, words}
+```
+
+The worker keeps the model loaded once and re-transcribes a growing per-peer
+buffer every ~400 ms with word timestamps, so text corrects itself in place as
+more context arrives (a wrong guess gets overwritten by the next tick's better
+one) rather than committing early. A silence gap (or a 20 s cap) finalizes the
+utterance. The daemon redraws the provisional line on the terminal and locks it
+in with a newline on `final`; `/state` doesn't expose it yet (console-only).
+
+Requires `ffmpeg` and `python3` + `mlx_whisper` on `PATH` (the tiny model
+downloads once, then runs well under real-time on an M-series Mac). Verify the
+pipeline standalone — no WA connection needed — with:
+
+```sh
+node scripts/stt-selfcheck.mjs [path/to/clip.wav]
+```
+
+Each `SttStream` is capped (`MAX_STT_STREAMS` in `wa-audio.mjs`) and guards
+against `onTrack` firing more than once per connection — without that, WA's own
+peer-connect churn spun up unbounded `ffmpeg`/worker-connection pairs and
+spiked the daemon (same family as #29). The worker also serializes all
+`mlx_whisper.transcribe()` calls behind a lock — MLX's Metal backend isn't safe
+for two sessions' inference running concurrently, and without the lock a
+second simultaneous peer crashed the whole worker process.
+
+Known gaps: the speaker label falls back to the raw space-user id when
+`spaceUserName()` hasn't learned a name yet (only populated from
+`initSpaceUsersMessage`); whisper-tiny mis-hears or occasionally hallucinates
+on short/tricky audio; 3+ peers negotiating simultaneously can still wedge a
+connection (issue #32) — clean 1:1 is solid.
 
 ---
 
