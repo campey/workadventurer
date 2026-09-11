@@ -718,9 +718,10 @@ export class WorkAdventureClient extends EventEmitter {
    * within `stopWithin` px or `getTarget()` returns null. If `getTarget` is
    * given it is re-read each tick so we track a moving player.
    */
-  async walkTo(targetX, targetY, { stopWithin = 48, stepPx = 32, tickMs = 120, getTarget = null, timeoutMs = 60000 } = {}) {
+  async walkTo(targetX, targetY, { stopWithin = 48, stepPx = 32, tickMs = 120, getTarget = null, timeoutMs = 60000, signal = null } = {}) {
     const started = Date.now();
     for (;;) {
+      if (signal?.aborted) return { arrived: false, reason: "aborted" };
       if (Date.now() - started > timeoutMs) return { arrived: false, reason: "timeout" };
       let tx = targetX, ty = targetY;
       if (getTarget) {
@@ -744,7 +745,7 @@ export class WorkAdventureClient extends EventEmitter {
         : (dy > 0 ? DIRECTION.DOWN : DIRECTION.UP);
       this.pos.moving = true;
       this._emitMove(true);
-      await new Promise((r) => setTimeout(r, tickMs));
+      await WorkAdventureClient._sleepOrAbort(tickMs, signal);
     }
   }
 
@@ -753,11 +754,18 @@ export class WorkAdventureClient extends EventEmitter {
    * (falls back to straight-line if the map nav is unavailable or no route is
    * found). Re-plans every `repathMs` so it tracks a moving `getTarget()`.
    */
-  async navTo(targetX, targetY, { stopWithin = 48, getTarget = null, timeoutMs = 120000, repathMs = 2000, face = null } = {}) {
+  // `signal`, if given, cancels an in-flight navTo promptly: the wait between
+  // steps is raced against it (via _sleepOrAbort) instead of only being
+  // checked between whole waypoints, and _navBusy is released in `finally`
+  // regardless of how we exit. Without this, aborting a caller that's mid-navTo
+  // (e.g. runFollowTask's initial approach) leaves `_navBusy` held until that
+  // navTo finishes on its own — so a subsequent navTo()/follow() call issued
+  // right after the abort spuriously gets `{reason:"busy"}`.
+  async navTo(targetX, targetY, { stopWithin = 48, getTarget = null, timeoutMs = 120000, repathMs = 2000, face = null, signal = null } = {}) {
     if (this._navBusy) return { arrived: false, reason: "busy" };
     this._navBusy = true;
     try {
-      return await this._navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs, face });
+      return await this._navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs, face, signal });
     } finally {
       this._navBusy = false;
     }
@@ -765,18 +773,19 @@ export class WorkAdventureClient extends EventEmitter {
 
   // `face` may be a {x,y} point or a () => {x,y} getter; on arrival the avatar
   // turns to look at it instead of keeping its last travel direction.
-  async _navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs, face }) {
+  async _navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs, face, signal }) {
     const lookAt = () => {
       const p = typeof face === "function" ? face() : face;
       if (p) this._faceToward(p.x, p.y);
     };
     if (!this.nav) {
-      const r = await this.walkTo(targetX, targetY, { stopWithin, getTarget, timeoutMs });
+      const r = await this.walkTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, signal });
       if (r.arrived) lookAt();
       return r;
     }
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
+      if (signal?.aborted) return { arrived: false, reason: "aborted" };
       let gx = targetX, gy = targetY;
       if (getTarget) {
         const t = getTarget();
@@ -791,13 +800,13 @@ export class WorkAdventureClient extends EventEmitter {
       }
       const path = this.nav.findPath(this.pos.x, this.pos.y, gx, gy);
       if (!path || path.length === 0) {
-        await this.walkTo(gx, gy, { stopWithin, timeoutMs: repathMs, getTarget });
+        await this.walkTo(gx, gy, { stopWithin, timeoutMs: repathMs, getTarget, signal });
         continue;
       }
       const deadline = Date.now() + repathMs;
       for (const [wx, wy] of path) {
-        if (Date.now() > deadline) break;
-        const r = await this.walkTo(wx, wy, { stopWithin: 12, stepPx: 40, tickMs: 100, timeoutMs: repathMs });
+        if (Date.now() > deadline || signal?.aborted) break;
+        const r = await this.walkTo(wx, wy, { stopWithin: 12, stepPx: 40, tickMs: 100, timeoutMs: repathMs, signal });
         if (!r.arrived) break;
       }
     }
@@ -875,6 +884,21 @@ export class WorkAdventureClient extends EventEmitter {
   }
 
   /**
+   * Sleep `ms`, but wake immediately if `signal` aborts instead of waiting out
+   * the full duration. Used by follow()'s loop so a caller that aborts and
+   * then immediately issues a new navTo()/follow() doesn't find `_navBusy`
+   * still held for up to `ms` while the old loop's pending sleep finishes.
+   */
+  static _sleepOrAbort(ms, signal) {
+    return new Promise((resolve) => {
+      if (signal?.aborted) return resolve();
+      const timer = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, ms);
+      const onAbort = () => { clearTimeout(timer); resolve(); };
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  /**
    * Fluidly follow a moving target: small steps every ~100 ms along a route
    * that is re-planned a few times a second, easing to a stop at `followPoint`.
    * Resolves when `getTarget()` returns null or `signal` aborts.
@@ -895,7 +919,7 @@ export class WorkAdventureClient extends EventEmitter {
         if (dGoal <= arriveSlack) {
           this._faceToward(target.x, target.y);
           path = null;
-          await new Promise((r) => setTimeout(r, tickMs * 2));
+          await WorkAdventureClient._sleepOrAbort(tickMs * 2, signal);
           continue;
         }
 
@@ -927,7 +951,7 @@ export class WorkAdventureClient extends EventEmitter {
           : (wp.y >= this.pos.y ? DIRECTION.DOWN : DIRECTION.UP);
         this.pos.moving = true;
         this._emitMove(true);
-        await new Promise((r) => setTimeout(r, tickMs));
+        await WorkAdventureClient._sleepOrAbort(tickMs, signal);
       }
       this.pos.moving = false;
       this._emitMove(false);
