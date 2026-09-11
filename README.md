@@ -514,12 +514,14 @@ the target leaves view rather than marching to their stale last-known position.
 
 ## Limitations / ideas
 
-- **Roster only covers nearby players.** Proximity (zone) visibility works.
-  WorkAdventure also has a "Space" system — `WORLD_SPACE_NAME = "allWorldUser"`,
-  joined via `queryMessage{ joinSpaceQuery }` + `addSpaceFilterMessage`,
-  delivering `initSpaceUsersMessage` / `addSpaceUserMessage` with names but
-  **not** room positions. Not implemented; not needed for "walk to a visible
-  player".
+- **Roster only covers nearby players; the avatar doesn't show in the
+  left-hand users list (issue #31).** Proximity (zone) visibility works for
+  walking to someone. That sidebar list is populated from the world-wide
+  "Space" — `WORLD_SPACE_NAME = "allWorldUser"`, joined via
+  `queryMessage{ joinSpaceQuery }` + `addSpaceFilterMessage`, delivering
+  `initSpaceUsersMessage` / `addSpaceUserMessage` (names, availability — not
+  positions) — which the client never joins, so the back has nothing to
+  advertise us with. Possibly Matrix-backed on top; not investigated.
 - **Collision-grid fidelity.** If something still clips, that obstacle probably
   lives in a map layer `build-collision.mjs` doesn't scan (e.g. a furniture tile
   layer); inspect the `.tmj` and widen the script.
@@ -529,10 +531,15 @@ the target leaves view rather than marching to their stale last-known position.
   can pick a wrong-side spot on oddly shaped rooms.
 - **Room detection** is name-based (`/board\s*room/i` over the `.wam` areas), not
   geometric.
-- **Peer-connection leak (#29).** Repeated `RTCPeerConnection` create/connect/
-  close (proximity bubbles, invites) balloons the daemon RSS and pins CPU after
-  ~3–6 cycles. werift peers aren't fully released on `.close()`. Restart the
-  daemon periodically until this is fixed.
+- **Peer-connection leak (#29, milder than first thought).** `_closePeer`
+  doesn't `await pc.close()` or explicitly stop the track — a real gap, but
+  after fixing what turned out to be the actual causes of the big hangs (area
+  walk-through churn, `walkToPlayer` marching to a stale target — both fixed
+  in PR #28) it no longer shows up in normal use, including sustained
+  daemon-to-daemon runs. See [docs/field-notes.md](docs/field-notes.md).
+- **3+ simultaneous peer connections can misnegotiate (#32).** An SDP answer
+  with zero ICE candidates was observed under 3-way churn (two headless
+  avatars + a real user); clean 1:1 (including daemon-to-daemon) is solid.
 - Per-target pins (`apiVersionHash`, `proto/<target>/messages.proto`) and
   per-room `map/<slug>/collision.json` need refreshing on a WorkAdventure or map
   update — see [`## Version targets`](#version-targets) and

@@ -94,6 +94,20 @@ behind one `threading.Lock` in the worker — the async tick loops stay
 concurrent for buffering/timing, only the actual GPU call queues
 (`scripts/stt_worker.py`).
 
+### `SttStream` has an unexplained startup race
+
+Even in the simplest possible setup (`scripts/stt-selfcheck.mjs` — one
+process, no WA, no daemon), the very first connection attempt occasionally
+produces nothing at all: no `partial`, no `final`, no error, worker reports
+"connected" but the socket never seems to move data. Not root-caused (ruled
+out: socket-not-yet-listening — `asyncio.start_unix_server`'s `await`
+guarantees the bind is done before the log line prints; ffmpeg buffering —
+already forced `-f ogg`/`nobuffer`). `SttStream._start()` now has a cheap
+mitigation: if no socket data arrives within 3 s of connecting, kill and retry
+once. That has been enough in practice (multiple back-to-back clean runs after
+adding it), but the underlying cause is still open — worth a proper look if it
+resurfaces or starts happening more than once per session.
+
 ### Un-awaited RTP send fan-out
 
 `RTCRtpSender` subscribes to `track.onReceiveRtp` with an **async handler
@@ -111,17 +125,32 @@ it's slow (staging, TURN relay) they accumulate unbounded.
   `await pc.getSenders()[0].sendRtp(pkt)` directly — that path is awaitable,
   giving natural backpressure — plus a per-send timeout and an RSS watchdog.
 
-### Peer-connection lifecycle leak — issue #29 (open)
+### Peer-connection lifecycle leak — issue #29 (open, milder than first thought)
 
 Repeated `RTCPeerConnection` create → connect → close (proximity bubbles,
-invites) balloons the daemon RSS and pins CPU ~100% with the HTTP control API
-dead, after ~3–6 cycles on staging (more on prod). `pkill -9` to recover.
+invites) can balloon the daemon RSS and pin CPU ~100% with the HTTP control
+API dead. `pkill -9` to recover.
 
-werift's `close()` *looks* correct (it `completePeerEvents()`), so the leak is
-subtler: `_closePeer` fires `pc.close()` without `await` (it's async — awaits
-SCTP/DTLS teardown), and never stops the `MediaStreamTrack` / transceiver.
-Needs `--inspect` + heap snapshots across N cycles — **do not keep
-guess-fixing it live.** Workaround: restart the daemon every few cycles.
+werift's `close()` *looks* correct (it `completePeerEvents()`), so if there's
+a residual leak it's subtler: `_closePeer` fires `pc.close()` without `await`
+(it's async — awaits SCTP/DTLS teardown), and never stops the
+`MediaStreamTrack` / transceiver explicitly.
+
+**Update:** two of the three big hangs that looked like this turned out to be
+*other* bugs compounding ordinary peer churn, not the leak itself:
+- one was the area-meeting walk-through churn — fixed by the dwell debounce
+  (see below, PR #28)
+- one was `walkToPlayer` marching toward a vanished player's stale position
+  for the full 90s timeout, piling its tick load on top of teardown — fixed
+  in the same PR
+
+After both fixes, ~5 human-paced invite cycles from a fixed spot held RSS flat
+(77–95 MB) with HTTP always 200, and later the STT work ran two headless
+daemons through repeated connect/disconnect cycles with no issue either. The
+`await`/track-stop gap above is still real and worth fixing, but proving a
+*residual* leak now needs a long, deliberately aggressive run
+(`--inspect` + heap snapshots) — the everyday-use severity is much lower than
+it first appeared. Don't guess-fix it live.
 
 Anything that spawns a real subprocess per peer connection (the STT worker's
 `ffmpeg`, the mic prime — less so, it's bounded) needs an explicit guard
