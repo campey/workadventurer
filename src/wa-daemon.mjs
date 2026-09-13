@@ -31,7 +31,7 @@ import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { WorkAdventureClient } from "./wa-client.mjs";
-import { WaAudio } from "./wa-audio.mjs";
+import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
 import { resolveClip } from "./resolve-clip.mjs";
 
@@ -526,6 +526,7 @@ function shutdown(code) {
   for (const f of INFO_FILES) { try { fs.unlinkSync(f); } catch {} }
   try { server.close(); } catch {}
   try { wa?.close(); } catch {}
+  disposeLiveKitRuntime().catch(() => {}); // no-op unless a LiveKit room was ever created (#8)
   setTimeout(() => process.exit(code), 150);
 }
 process.on("SIGINT", () => shutdown(0));

@@ -8,6 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **LiveKit transport — connect + publish (issue #8, partial).** Past WA's
+  P2P-mesh size threshold, a meeting escalates to a LiveKit SFU instead of
+  proximity WEBRTC. `WaAudio` now handles `livekitInvitationMessage` (connect
+  via `@livekit/rtc-node`'s `Room.connect()`, first native dependency in this
+  project) and `livekitDisconnectMessage` (tear down), publishing one audio
+  track so `wa sound` works over LiveKit the same way it does over WEBRTC —
+  `play()` now routes to whichever transport is active automatically.
+  `src/transcode.mjs` gained `ensurePcm()` (LiveKit takes raw PCM, not Opus).
+  The shared LiveKit FFI runtime is released once at process shutdown
+  (`disposeLiveKitRuntime()`), not per-room-disconnect. **Scoped
+  deliberately**: subscribing to others' LiveKit audio (e.g. for STT) and
+  full switch-back-to-WEBRTC robustness are explicit follow-ups, not this
+  pass — see the issue for what's left.
 - **Live speech-to-text (prototype, `WA_STT=1`).** The avatar can listen:
   `sendrecv` on the audio transceiver, a peer's Opus RTP is muxed to Ogg
   (`src/ogg-opus-mux.mjs`), decoded by a persistent `ffmpeg`, and streamed to

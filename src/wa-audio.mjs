@@ -12,9 +12,18 @@
 //
 // One RTCPeerConnection per `connectionId` (a 3-person bubble is a mesh). Each
 // gets one sendonly Opus track fed from a pre-encoded Ogg/Opus clip.
+//
+// Past WA's P2P-mesh size threshold, a meeting escalates to a LiveKit SFU
+// instead (issue #8): the server sends `livekitInvitationMessage{token,
+// serverUrl}` — the only connection material needed, no separate token
+// minting — and later `livekitDisconnectMessage{}` when it de-escalates or
+// we leave. That's a single connection to the room, not one per peer; `play()`
+// routes to it automatically when active. Scoped to connect + publish for
+// now — subscribing to others' LiveKit audio (e.g. for STT) is a follow-up.
 
 import { EventEmitter } from "node:events";
 import { setTimeout as sleep } from "node:timers/promises";
+import { readFile } from "node:fs/promises";
 import {
   RTCPeerConnection,
   MediaStreamTrack,
@@ -22,10 +31,43 @@ import {
   RtpPacket,
   RtpHeader,
 } from "werift";
+import {
+  Room,
+  AudioSource,
+  LocalAudioTrack,
+  AudioFrame,
+  TrackPublishOptions,
+  TrackSource,
+  dispose as disposeLiveKitFfi,
+} from "@livekit/rtc-node";
 import { readOggOpus } from "./ogg-opus.mjs";
-import { ensureOpus, silenceOpusFile, invalidateCache } from "./transcode.mjs";
+import { ensureOpus, ensurePcm, silenceOpusFile, invalidateCache } from "./transcode.mjs";
 import { SttStream } from "./wa-stt.mjs";
 import { writeFileSync } from "node:fs"; // TEMP: SDP_DEBUG diagnostic only
+
+const LIVEKIT_SAMPLE_RATE = 48000;
+const LIVEKIT_FRAME_MS = 20; // matches the WEBRTC path's Opus frame pacing
+
+// Module-level (not per-instance): the LiveKit FFI runtime is shared process-
+// wide, so its one-shot dispose() belongs at process-exit time, not tucked
+// inside a single WaAudio's per-room teardown. Set on the first successful
+// connect; disposeLiveKitRuntime() is a no-op if a room was never created —
+// most daemon runs never escalate to LiveKit at all.
+let livekitEverUsed = false;
+
+/**
+ * Release the shared LiveKit FFI runtime. Call exactly once, at process
+ * shutdown (e.g. wa-daemon.mjs's SIGINT/SIGTERM handler) — never per-room-
+ * disconnect, since a meeting can de-escalate and re-escalate LiveKit more
+ * than once within one daemon's lifetime and there's only one runtime for
+ * the whole process to share.
+ */
+export async function disposeLiveKitRuntime() {
+  if (!livekitEverUsed) return;
+  try {
+    await disposeLiveKitFfi();
+  } catch {}
+}
 
 const OPUS = new RTCRtpCodecParameters({
   mimeType: "audio/opus",
@@ -93,6 +135,7 @@ export class WaAudio extends EventEmitter {
     this._closedConnIds = new Set();
     this._play = null; // { stop(): void } while a clip is playing
     this._silencePath = null; // cached short silence clip for the connect-time prime
+    this._livekit = null; // { room, source, track } while a LiveKit-escalated meeting is active (#8)
 
     // Load ICE servers as early as possible, not gated on "spaceJoined" —
     // `_joinSpace` sends `addSpaceFilterMessage` well before that event
@@ -165,7 +208,64 @@ export class WaAudio extends EventEmitter {
           this.hangup(`switched to ${payload.strategy}`);
         }
         break;
+      case "livekitInvitationMessage":
+        // The invitation is the actual trigger to connect — don't wait on
+        // switchMessage/finalizeSwitchMessage, which are informational
+        // strategy announcements and aren't guaranteed to arrive in any
+        // particular order relative to this (#8).
+        this._connectLiveKit(payload).catch((e) =>
+          this.emit("log", `LiveKit connect failed: ${e.message}`)
+        );
+        break;
+      case "livekitDisconnectMessage":
+        this._disconnectLiveKit().catch((e) =>
+          this.emit("log", `LiveKit disconnect error: ${e.message}`)
+        );
+        break;
     }
+  }
+
+  // Connect to the LiveKit SFU a meeting escalated to (#8) and publish one
+  // audio track into it. A fresh invitation (re-escalation, restart) tears
+  // down any prior connection first — same "fresh supersedes stale" pattern
+  // used for WEBRTC peers.
+  async _connectLiveKit({ token, serverUrl }) {
+    await this._disconnectLiveKit();
+
+    const room = new Room();
+    await room.connect(serverUrl, token, {
+      autoSubscribe: false, // subscribe (e.g. for STT) is an explicit follow-up, not this pass
+      dynacast: false,
+    });
+
+    const source = new AudioSource(LIVEKIT_SAMPLE_RATE, 1);
+    const track = LocalAudioTrack.createAudioTrack("wa-agent", source);
+    const opts = new TrackPublishOptions();
+    opts.source = TrackSource.SOURCE_MICROPHONE;
+    await room.localParticipant.publishTrack(track, opts);
+
+    this._livekit = { room, source, track };
+    livekitEverUsed = true;
+    this.emit("log", `LiveKit connected (${room.remoteParticipants.size} other participant(s)) and publishing`);
+  }
+
+  async _disconnectLiveKit() {
+    if (!this._livekit) return;
+    const { room, track } = this._livekit;
+    this._livekit = null;
+    try {
+      await track.close();
+    } catch {}
+    try {
+      await room.disconnect();
+    } catch {}
+    this.emit("log", "LiveKit disconnected");
+    // Not calling the module-level dispose() here: it releases the shared FFI
+    // runtime for the whole process, not just this room — per LiveKit's own
+    // docs it's a one-shot call at process exit, not per-disconnect (a
+    // meeting can de-escalate and re-escalate LiveKit repeatedly within one
+    // daemon's lifetime). The daemon's own shutdown path is responsible for
+    // calling it once, if a LiveKit room was ever created.
   }
 
   _connIdForUser(userId) {
@@ -416,14 +516,21 @@ export class WaAudio extends EventEmitter {
   hangup(why = "") {
     for (const id of new Set([...this.peers.keys(), ...this._peerPromises.keys()])) this._closePeer(id, why);
     this._play?.stop();
+    this._disconnectLiveKit().catch((e) => this.emit("log", `LiveKit disconnect error: ${e.message}`));
   }
 
   /**
-   * Play an audio clip into every connected peer. Any format ffmpeg can read is
-   * accepted (transcoded to Opus on first use); Opus-in-Ogg plays as-is.
-   * Resolves when the clip finishes or is superseded by another play()/hangup().
+   * Play an audio clip into the active transport — every connected WEBRTC
+   * peer, or the LiveKit room if a meeting has escalated to one (#8; at most
+   * one is ever active for a given bubble). Any format ffmpeg can read is
+   * accepted. Resolves when the clip finishes or is superseded by another
+   * play()/hangup().
    */
-  async play(file, { indicator = true } = {}) {
+  play(file, opts = {}) {
+    return this._livekit ? this._playLiveKit(file, opts) : this._playWebrtc(file, opts);
+  }
+
+  async _playWebrtc(file, { indicator = true } = {}) {
     // Claim `_play` synchronously, before any awaits, so a second concurrent
     // call (e.g. a real clip landing mid-prime, or two peers connecting a few
     // ms apart) sees "something is already starting" immediately instead of
@@ -504,6 +611,72 @@ export class WaAudio extends EventEmitter {
       packetsSent: sent,
       writeErrors: errs,
       peerStates: states,
+    };
+  }
+
+  // LiveKit publish path (#8). Mirrors _playWebrtc's shape (same `_play`
+  // in-flight guard, same wall-clock pacing) but feeds raw PCM frames to
+  // AudioSource.captureFrame() instead of Opus RTP packets — LiveKit's own
+  // transport handles encoding.
+  async _playLiveKit(file, { indicator = true } = {}) {
+    this._play?.stop();
+    let stopped = false;
+    const token = (this._play = { stop: () => (stopped = true) });
+
+    const { room, source } = this._livekit;
+    const pcmPath = await ensurePcm(file, { sampleRate: LIVEKIT_SAMPLE_RATE, channels: 1 });
+    const raw = await readFile(pcmPath);
+    if (stopped) return { played: false, reason: "superseded" };
+    if (raw.length < 2) {
+      if (this._play === token) this._play = null;
+      await invalidateCache(pcmPath);
+      return { played: false, reason: "empty clip" };
+    }
+
+    // `raw` is a Buffer view into Node's shared, possibly-odd-offset pool —
+    // reinterpreting its .buffer directly as Int16Array can throw ("start
+    // offset ... must be a multiple of 2") or read garbage. Copy into a
+    // fresh, zero-offset Uint8Array first (LiveKit's own docs warn about the
+    // analogous .slice()-vs-.subarray() footgun for the same reason).
+    const samples = new Int16Array(new Uint8Array(raw).buffer);
+
+    const targets = room.remoteParticipants.size;
+    this._setSpeaking(true, indicator);
+
+    const frameSamples = (LIVEKIT_SAMPLE_RATE * LIVEKIT_FRAME_MS) / 1000;
+    let sent = 0;
+    let errs = 0;
+    const startedAt = performance.now();
+    let elapsedMs = 0;
+    for (let i = 0; i < samples.length; i += frameSamples) {
+      if (stopped) break;
+      const chunk = samples.subarray(i, Math.min(i + frameSamples, samples.length));
+      try {
+        await source.captureFrame(new AudioFrame(chunk, LIVEKIT_SAMPLE_RATE, 1, chunk.length));
+        sent++;
+      } catch (e) {
+        errs++;
+        if (errs === 1) this.emit("log", `LiveKit captureFrame error: ${e.message}`);
+      }
+      elapsedMs += (chunk.length / LIVEKIT_SAMPLE_RATE) * 1000;
+      const drift = startedAt + elapsedMs - performance.now();
+      if (drift > 1) await sleep(drift);
+    }
+    if (!stopped) {
+      try {
+        await source.waitForPlayout();
+      } catch {}
+    }
+
+    this._setSpeaking(false, indicator);
+    if (this._play === token) this._play = null;
+    return {
+      played: !stopped,
+      seconds: +(samples.length / LIVEKIT_SAMPLE_RATE).toFixed(2),
+      peers: targets,
+      packetsSent: sent,
+      writeErrors: errs,
+      transport: "livekit",
     };
   }
 

@@ -242,6 +242,65 @@ CPU before a single "pc connected" line had even printed.
 
 ---
 
+## LiveKit transport (issue #8)
+
+Past WA's P2P-mesh size threshold, a meeting escalates from proximity WEBRTC
+to a LiveKit SFU: `switchMessage`/`finalizeSwitchMessage{strategy:"LIVEKIT"}`
+are informational only — the actual trigger to connect is
+`livekitInvitationMessage{token, serverUrl}`, and it isn't guaranteed to
+arrive in any particular order relative to the switch messages. Don't gate
+connecting on the switch messages; gate it on the invitation.
+
+**Library: `@livekit/rtc-node`**, not `livekit-client` (browser-only) or
+`livekit-server-sdk` (admin/token-only, no media). Native napi-rs bindings
+(`@livekit/rtc-ffi-bindings-darwin-arm64` etc., prebuilt) — this project's
+first native dependency. The public API was verified against the installed
+package's own `.d.ts`/`.cjs` and README before writing any integration code,
+not assumed from docs alone — worth doing again if this package majors.
+
+- **Publish needs raw PCM, not Opus.** `AudioSource(sampleRate, channels)` →
+  `LocalAudioTrack.createAudioTrack(name, source)` →
+  `room.localParticipant.publishTrack(track, opts)` (`opts.source =
+  TrackSource.SOURCE_MICROPHONE`) → `source.captureFrame(new
+  AudioFrame(int16Samples, sampleRate, channels, samplesPerChannel))` per
+  chunk. `src/transcode.mjs`'s `ensurePcm()` is the sibling to `ensureOpus()`
+  for this — `ffmpeg -f s16le`, same mtime+size cache pattern.
+- **`captureFrame()` does not self-pace.** Reading the actual implementation
+  (not just the types) shows it only awaits the FFI round-trip that confirms
+  the frame was *accepted* into the native jitter buffer — not real playback
+  time. Feed frames in a tight loop with no pacing and you can blow well past
+  the buffer's `queueSizeMs` (default 1000ms) for anything longer than a
+  second. `_playLiveKit()` in `wa-audio.mjs` paces itself the same way
+  `_playWebrtc()` paces RTP — fixed-size (20ms) chunks, wall-clock drift
+  compensation — then `await source.waitForPlayout()` once the loop ends.
+- **Buffer alignment footgun, worse than it sounds.** A `Buffer` from
+  `fs.readFile()` is a view into Node's shared buffer pool and its
+  `byteOffset` is not guaranteed even. Constructing an `Int16Array` directly
+  over `buffer.buffer` can throw ("start offset ... must be a multiple of
+  2") or silently read garbage depending on the offset you happened to get.
+  LiveKit's own docs warn about the related `.slice()`-vs-`.subarray()` trap
+  for the same underlying reason (aliasing vs. copying). The robust fix used
+  here: `new Int16Array(new Uint8Array(buffer).buffer)` — the `Uint8Array`
+  constructor copies when given an existing typed array, landing you on a
+  fresh, zero-offset `ArrayBuffer` before you reinterpret it.
+- **`dispose()` is process-global, one-shot — not per-room.** It releases
+  the shared FFI runtime for the whole process. Call it once at daemon
+  shutdown (`disposeLiveKitRuntime()` in `wa-daemon.mjs`'s SIGINT/SIGTERM
+  path), never inside a per-`livekitDisconnectMessage` handler — a meeting
+  can de-escalate and re-escalate LiveKit more than once in one daemon's
+  lifetime, and disposing the runtime mid-session would break every
+  subsequent connect attempt. `WaAudio` tracks module-level "was LiveKit
+  ever used this process" so the shutdown call is a no-op for the (common)
+  case of a daemon that never escalates.
+- **Scope, deliberately.** This pass is connect + publish only, verified
+  live. Not done: subscribing to others' LiveKit audio (would let STT work
+  over LiveKit too — and would actually be *simpler* than the current WEBRTC
+  route, since `AudioStream` hands you PCM directly instead of Opus RTP that
+  needs muxing to Ogg and ffmpeg-decoding); robust switch-back-to-WEBRTC if
+  a meeting shrinks back below the threshold mid-session.
+
+---
+
 ## Map areas: dwell debounce
 
 `_handleAreaMeeting` used to `_joinSpace` / `_leaveSpace` on **every**

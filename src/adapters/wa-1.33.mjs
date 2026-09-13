@@ -38,5 +38,5 @@ export default {
     updateMaskPaths: ["microphoneState"],
     speakingMaskPaths: ["showVoiceIndicator", "microphoneState"],
   },
-  meeting: { webrtcStrategyName: "WEBRTC" },
+  meeting: { webrtcStrategyName: "WEBRTC", livekitStrategyName: "LIVEKIT" },
 };

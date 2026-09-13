@@ -26,6 +26,7 @@
     "build:collision": "node scripts/build-collision.mjs"
   },
   "dependencies": {
+    "@livekit/rtc-node": "^1.0.0",
     "protobufjs": "^7.4.0",
     "werift": "^0.24.4",
     "ws": "^8.18.0"
