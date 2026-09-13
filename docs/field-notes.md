@@ -292,12 +292,61 @@ not assumed from docs alone — worth doing again if this package majors.
   subsequent connect attempt. `WaAudio` tracks module-level "was LiveKit
   ever used this process" so the shutdown call is a no-op for the (common)
   case of a daemon that never escalates.
-- **Scope, deliberately.** This pass is connect + publish only, verified
-  live. Not done: subscribing to others' LiveKit audio (would let STT work
-  over LiveKit too — and would actually be *simpler* than the current WEBRTC
-  route, since `AudioStream` hands you PCM directly instead of Opus RTP that
-  needs muxing to Ogg and ffmpeg-decoding); robust switch-back-to-WEBRTC if
-  a meeting shrinks back below the threshold mid-session.
+- **Scope, deliberately.** This pass is connect + publish only. Not done:
+  subscribing to others' LiveKit audio (would let STT work over LiveKit too
+  — and would actually be *simpler* than the current WEBRTC route, since
+  `AudioStream` hands you PCM directly instead of Opus RTP that needs muxing
+  to Ogg and ffmpeg-decoding); robust switch-back-to-WEBRTC if a meeting
+  shrinks back below the threshold mid-session.
+
+### Live status: publishes cleanly, not yet confirmed audible (unresolved)
+
+Connect + publish is verified at the SDK/protocol level, repeatedly, against
+a real escalated meeting (2-6 total participants, both solo and with a
+second headless daemon alongside): correct token claims (`identity` and
+`metadata.userId` both match our real `spaceUserId`, matching exactly what
+`back/src/Model/Services/LivekitService.ts` mints for a real browser —
+`canPublish`/`canSubscribe`/`roomJoin` all `true`), correct track kind
+(`KIND_AUDIO`), `publishTrack()` resolves with a valid track SID, and
+`play()` reports success (`packetsSent` matching the clip's real duration,
+zero `writeErrors`). None of that has ever failed.
+
+**But no human has confirmed actually hearing it, across several attempts.**
+Ruled out so far: token/metadata mismatch (WA's front-end,
+`LiveKitRoom.ts`'s `getParticipantId()`, correlates a remote participant to
+a known `SpaceUser` via `JSON.parse(participant.metadata).userId` — ours is
+correct); missing publish permission (token grants it, and no "participant
+has no publish permission" console line ever appeared, checked with console
+capture armed from a cold page reload); a UI-only miss (the "no tile" report
+turned out to be a browser panel too small to show it — resize fixed that).
+
+One real lead, not yet confirmed as *the* cause: WA's own front-end console
+showed an error cluster at the exact moment of a WEBRTC→LIVEKIT switch —
+`AbortError: Abort message received` out of `onLeaveAreasHandler` /
+`triggerAreasChange`, then "Trying to leave a space that is not joined" and
+"Received a private message for a space that does not exist", all naming
+the specific fire-pit space our daemon was in. Client-side space bookkeeping
+visibly went inconsistent right at the switch instant. Could be the actual
+cause (some client-side state needed to wire up our tile never got set),
+could be an unrelated pre-existing hiccup with suspicious timing. Needs
+follow-up with console capture armed *before* the switch happens, correlated
+against exactly which participant's audio is/isn't reaching whom.
+
+**Unrelated but important gotcha found chasing this**: a throwaway diagnostic
+that set `autoSubscribe: true` and read a few `RemoteTrack`s via
+`AudioStream` (to check whether the room routes media to us *at all*, i.e.
+isolate publish-side from room/SFU-side) reliably crashed the daemon — CPU
+to 300%+, RSS to 1GB+ within about a minute, with a *second* headless daemon
+and several humans all publishing simultaneously. The diagnostic code
+`break`s out of `for await (const frame of stream)` after ~25 frames without
+an explicit `stream.cancel()`; relying on implicit iterator-`return()`
+cleanup was not enough to stop the native side from continuing to push
+frames into an unconsumed queue. This is **not** the same bug as #29 (that's
+pure WEBRTC/werift, reproduces on code with no LiveKit involvement at all) —
+it's a distinct, LiveKit-`AudioStream`-specific leak risk that will need
+`stream.cancel()` called explicitly (not just relying on early-break cleanup)
+whenever the future subscribe path lands. Noted here so it isn't
+rediscovered the hard way.
 
 ---
 
