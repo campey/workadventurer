@@ -123,6 +123,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `invalidateCache()`); `play()` claims its in-flight guard synchronously so
   a prime can't race a real clip; `_leaveSpace` clears pending re-announce
   timers so a fast leave→rejoin can't fire one against a later membership.
+- **Closes #32 — 3+ simultaneous peer connections misnegotiating.** Root
+  cause: `_loadIce()` only started on `spaceJoined`, well after
+  `addSpaceFilterMessage` (sent from `_joinSpace`) had already made the back
+  start setting up peer connections — any `RTCPeerConnection` built in that
+  window got werift's constructor-default STUN-only ICE list, permanently
+  (werift snapshots it at construction and never re-reads it). `_iceReady`
+  is now a memoized promise kicked off eagerly in `WaAudio`'s constructor;
+  every peer construction awaits it first. Defensively, a zero-ICE-candidate
+  offer/answer is now detected (werift's ICE gathering always reports
+  "complete" even with none) and torn down rather than sent. A bounded
+  closed-connection-id set stops a late signal from resurrecting a torn-down
+  connection. Verified live: a 3-daemon session that reliably reproduced the
+  failure pre-fix ran clean post-fix, every connection carrying real ICE
+  candidates.
 
 ### Known issues
 
@@ -135,9 +149,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **#31 — the avatar doesn't appear in WorkAdventure's left-hand users list.**
   That list is the world-wide `allWorldUser` Space, which the client never
   joins.
-- **#32 — 3+ simultaneous peer connections can misnegotiate.** An SDP answer
-  with zero ICE candidates was observed under 3-way churn; clean 1:1
-  (including two headless daemons talking to each other) is solid.
 
 ## [0.2.0] - 2026-09-08
 
