@@ -1,7 +1,8 @@
-// Baseline adapter: WorkAdventure prod (play.workadventu.re, build v1.33.5).
-// Every value here is what src/wa-client.mjs / src/wa-audio.mjs used inline
-// before the version-adapter seam. FROZEN — do not change for staging/master
-// work; see docs/superpowers/specs/2026-09-10-wa-version-adapters-design.md.
+// Baseline adapter: WorkAdventure prod (play.workadventu.re, build v1.33.8 as
+// of this pin). Every value here is what src/wa-client.mjs / src/wa-audio.mjs
+// used inline before the version-adapter seam. FROZEN — do not change for
+// staging/master work; see
+// docs/superpowers/specs/2026-09-10-wa-version-adapters-design.md.
 
 import { shortHash, slugify } from "./wa-helpers.mjs";
 
@@ -13,7 +14,8 @@ export default {
   // --- mechanical ---
   // A SET of accepted apiVersionHash values: a patch release can shift the hash
   // with no behaviour change — append here, never fork a new adapter file.
-  apiVersionHashes: ["bfd20fc4"],
+  // Index 0 is what wa-client.mjs actually sends; newest first.
+  apiVersionHashes: ["05489a87", "bfd20fc4"], // v1.33.8, v1.33.5
   protoPath: "proto/wa-1.33/messages.proto",
   defaultWokaId: "506a3a64-47a9-4587-b19b-2d1eb13f9790",
   endpoints: { anonymLogin: "/anonymLogin", map: "/map", wokaList: "/woka/list" },
