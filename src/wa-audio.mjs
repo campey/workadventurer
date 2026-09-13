@@ -152,9 +152,21 @@ export class WaAudio extends EventEmitter {
   }
 
   get connected() {
+    // True on either transport (#8) — wa-daemon.mjs's /sound gate and /state
+    // both read this, and neither should report "nobody to hear it" just
+    // because a meeting escalated from WEBRTC peers to a LiveKit room.
+    if (this._livekit) return true;
     return [...this.peers.values()].some(
       (p) => p.pc.connectionState === "connected"
     );
+  }
+
+  // Other participants on whichever transport is active — a WEBRTC bubble is
+  // one peer connection per remote user; a LiveKit room is one connection
+  // total, with everyone else as a remote participant on it (#8).
+  get remoteCount() {
+    if (this._livekit) return this._livekit.room.remoteParticipants.size;
+    return this.peers.size;
   }
 
   // Never rejects — `_iceReady` (constructor) is awaited unconditionally by

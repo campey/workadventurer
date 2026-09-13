@@ -344,7 +344,7 @@ function state() {
       return { name: a?.name ?? key, props: a ? Object.keys(a.props) : [] };
     }),
     audio: audio
-      ? { peers: audio.peers.size, connected: audio.connected, inMeeting: wa.spaces.size > 0 }
+      ? { peers: audio.remoteCount, connected: audio.connected, inMeeting: wa.spaces.size > 0 }
       : null,
     lastEmote,
     lastInvite,
