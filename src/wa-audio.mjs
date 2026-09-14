@@ -18,8 +18,10 @@
 // serverUrl}` — the only connection material needed, no separate token
 // minting — and later `livekitDisconnectMessage{}` when it de-escalates or
 // we leave. That's a single connection to the room, not one per peer; `play()`
-// routes to it automatically when active. Scoped to connect + publish for
-// now — subscribing to others' LiveKit audio (e.g. for STT) is a follow-up.
+// routes to it automatically when active. In listen mode (`--stt`) we also
+// subscribe to remote participants' audio and feed it to SttStream, same as
+// the P2P path — LiveKit's AudioStream hands us already-decoded PCM, so no
+// Ogg/ffmpeg detour is needed there.
 
 import { EventEmitter } from "node:events";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -33,8 +35,11 @@ import {
 } from "werift";
 import {
   Room,
+  RoomEvent,
   AudioSource,
+  AudioStream,
   LocalAudioTrack,
+  RemoteAudioTrack,
   AudioFrame,
   TrackPublishOptions,
   TrackSource,
@@ -136,6 +141,7 @@ export class WaAudio extends EventEmitter {
     this._play = null; // { stop(): void } while a clip is playing
     this._silencePath = null; // cached short silence clip for the connect-time prime
     this._livekit = null; // { room, source, track } while a LiveKit-escalated meeting is active (#8)
+    this._livekitStt = new Map(); // track.sid -> { stt } for listen-mode LiveKit subscriptions
 
     // Load ICE servers as early as possible, not gated on "spaceJoined" —
     // `_joinSpace` sends `addSpaceFilterMessage` well before that event
@@ -167,6 +173,14 @@ export class WaAudio extends EventEmitter {
   get remoteCount() {
     if (this._livekit) return this._livekit.room.remoteParticipants.size;
     return this.peers.size;
+  }
+
+  // Active SttStreams across both transports — one shared cap (MAX_STT_STREAMS)
+  // regardless of which transport is delivering the audio.
+  _activeSttCount() {
+    return (
+      [...this.peers.values()].filter((p) => p.stt).length + this._livekitStt.size
+    );
   }
 
   // Never rejects — `_iceReady` (constructor) is awaited unconditionally by
@@ -246,9 +260,14 @@ export class WaAudio extends EventEmitter {
 
     const room = new Room();
     await room.connect(serverUrl, token, {
-      autoSubscribe: false, // subscribe (e.g. for STT) is an explicit follow-up, not this pass
+      autoSubscribe: this.listen, // only listen mode (--stt) needs others' audio
       dynacast: false,
     });
+
+    if (this.listen) {
+      room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => this._onLiveKitTrack(track, participant));
+      room.on(RoomEvent.TrackUnsubscribed, (track) => this._offLiveKitTrack(track));
+    }
 
     // queueSize (ms) is AudioSource's own internal jitter buffer, drained by
     // its own real-time pacer — default 1000ms. play() bursts an entire
@@ -266,10 +285,50 @@ export class WaAudio extends EventEmitter {
     this.emit("log", `LiveKit connected (${room.remoteParticipants.size} other participant(s)) and publishing`);
   }
 
+  // Subscribed remote audio track on the LiveKit room (listen mode only) —
+  // mirrors the P2P onTrack STT hookup, but LiveKit's AudioStream already
+  // hands us decoded PCM so SttStream skips straight to `raw` mode.
+  _onLiveKitTrack(track, participant) {
+    if (!(track instanceof RemoteAudioTrack)) return;
+    if (this._livekitStt.has(track.sid)) return; // already listening on this track
+    if (this._activeSttCount() >= MAX_STT_STREAMS) {
+      this.emit("log", `[${track.sid}] stt skipped — ${MAX_STT_STREAMS} already active`);
+      return;
+    }
+    const remoteUserId = participant?.identity ?? track.sid;
+    const stt = new SttStream({ raw: true });
+    stt.on("log", (m) => this.emit("log", `[${track.sid}] stt: ${m}`));
+    stt.on("error", (e) => this.emit("log", `[${track.sid}] stt error: ${e.message}`));
+    stt.on("partial", (m) => this.emit("heard", { connectionId: track.sid, remoteUserId, ...m, final: false }));
+    stt.on("final", (m) => this.emit("heard", { connectionId: track.sid, remoteUserId, ...m, final: true }));
+    this._livekitStt.set(track.sid, { stt });
+
+    (async () => {
+      try {
+        const stream = new AudioStream(track, { sampleRate: 16000, numChannels: 1 });
+        for await (const frame of stream) {
+          if (!this._livekitStt.has(track.sid)) break; // torn down mid-iteration
+          stt.pushPcm(Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength));
+        }
+      } catch (e) {
+        this.emit("log", `[${track.sid}] livekit audio stream error: ${e.message}`);
+      }
+    })();
+  }
+
+  _offLiveKitTrack(track) {
+    const entry = this._livekitStt.get(track.sid);
+    if (!entry) return;
+    this._livekitStt.delete(track.sid);
+    entry.stt.close();
+  }
+
   async _disconnectLiveKit() {
     if (!this._livekit) return;
     const { room, track } = this._livekit;
     this._livekit = null;
+    for (const { stt } of this._livekitStt.values()) stt.close();
+    this._livekitStt.clear();
     try {
       await track.close();
     } catch {}
@@ -356,8 +415,7 @@ export class WaAudio extends EventEmitter {
         if (remoteTrack.kind !== "audio") return;
         const mine = this.peers.get(connectionId);
         if (!mine || mine.stt) return; // already listening on this connection
-        const active = [...this.peers.values()].filter((p) => p.stt).length;
-        if (active >= MAX_STT_STREAMS) {
+        if (this._activeSttCount() >= MAX_STT_STREAMS) {
           this.emit("log", `[${connectionId}] stt skipped — ${MAX_STT_STREAMS} already active`);
           return;
         }
