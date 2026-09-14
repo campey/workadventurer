@@ -250,7 +250,12 @@ export class WaAudio extends EventEmitter {
       dynacast: false,
     });
 
-    const source = new AudioSource(LIVEKIT_SAMPLE_RATE, 1);
+    // queueSize (ms) is AudioSource's own internal jitter buffer, drained by
+    // its own real-time pacer — default 1000ms. play() bursts an entire
+    // clip's frames in without pacing of its own (see _playLiveKit), so this
+    // needs enough headroom to hold a full clip, not just fit within the
+    // default 1s window.
+    const source = new AudioSource(LIVEKIT_SAMPLE_RATE, 1, 30_000);
     const track = LocalAudioTrack.createAudioTrack("wa-agent", source);
     const opts = new TrackPublishOptions();
     opts.source = TrackSource.SOURCE_MICROPHONE;
@@ -655,14 +660,32 @@ export class WaAudio extends EventEmitter {
     const targets = room.remoteParticipants.size;
     this._setSpeaking(true, indicator);
 
+    // Chunked into 20ms frames (Opus's native frame size), fed back-to-back
+    // with no artificial real-time pacing of our own — unlike the WEBRTC/RTP
+    // path, AudioSource keeps its own internal jitter buffer (queueSize,
+    // bumped below) and paces actual playout itself; `captureFrame()`'s own
+    // await (an FFI round-trip) is throttling enough. (An earlier version of
+    // this comment blamed a since-disproven "our pacing starves the buffer"
+    // theory for a live ~50Hz buzz — pacing turned out to be irrelevant; see
+    // the .slice() comment just below for the actual cause. Left un-paced
+    // anyway since it's the architecturally correct choice regardless.)
     const frameSamples = (LIVEKIT_SAMPLE_RATE * LIVEKIT_FRAME_MS) / 1000;
     let sent = 0;
     let errs = 0;
-    const startedAt = performance.now();
-    let elapsedMs = 0;
     for (let i = 0; i < samples.length; i += frameSamples) {
       if (stopped) break;
-      const chunk = samples.subarray(i, Math.min(i + frameSamples, samples.length));
+      // .slice(), not .subarray(): AudioFrame.protoInfo() (inside this SDK)
+      // passes `this.data.buffer` straight to the native side, ignoring
+      // byteOffset entirely. A .subarray() view shares the whole clip's
+      // buffer, so every chunk's data pointer resolved to byte 0 of the
+      // *entire* clip regardless of loop index — every 20ms frame sent was
+      // actually the same first 20ms, repeated. A 20ms fragment repeated 50
+      // times a second is exactly the ~50Hz buzz heard live. .slice() copies
+      // into a fresh, independent, zero-offset buffer, which is what this
+      // FFI binding actually needs — the reverse of the usual Node `Buffer`
+      // advice (there, .slice() is the view and .subarray() the copy-safe
+      // choice; here, for a plain TypedArray, it's the other way around).
+      const chunk = samples.slice(i, Math.min(i + frameSamples, samples.length));
       try {
         await source.captureFrame(new AudioFrame(chunk, LIVEKIT_SAMPLE_RATE, 1, chunk.length));
         sent++;
@@ -670,9 +693,6 @@ export class WaAudio extends EventEmitter {
         errs++;
         if (errs === 1) this.emit("log", `LiveKit captureFrame error: ${e.message}`);
       }
-      elapsedMs += (chunk.length / LIVEKIT_SAMPLE_RATE) * 1000;
-      const drift = startedAt + elapsedMs - performance.now();
-      if (drift > 1) await sleep(drift);
     }
     if (!stopped) {
       try {
