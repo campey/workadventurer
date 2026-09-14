@@ -8,6 +8,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **LiveKit transport — connect + publish, confirmed working live (issue
+  #8, partial).** Past WA's P2P-mesh size threshold, a meeting escalates to
+  a LiveKit SFU instead of proximity WEBRTC. `WaAudio` now handles
+  `livekitInvitationMessage` (connect via `@livekit/rtc-node`'s
+  `Room.connect()`, first native dependency in this project) and
+  `livekitDisconnectMessage` (tear down), publishing one audio track so
+  `wa sound` works over LiveKit the same way it does over WEBRTC — `play()`
+  routes to whichever transport is active automatically. `src/transcode.mjs`
+  gained `ensurePcm()` (LiveKit takes raw PCM, not Opus). The shared LiveKit
+  FFI runtime is released once at process shutdown
+  (`disposeLiveKitRuntime()`), not per-room-disconnect. Verified live: real
+  speech and short clips both play back clean, confirmed by a human listener
+  on two separate machines. **Scoped deliberately**: subscribing to others'
+  LiveKit audio (e.g. for STT) and full switch-back-to-WEBRTC robustness are
+  explicit follow-ups, not this pass — see the issue for what's left.
+- **Fixed a `.slice()`-vs-`.subarray()` bug that made every LiveKit-published
+  clip longer than one frame into a repeating ~50Hz buzz** instead of its
+  real content — every 20ms chunk's data pointer was silently resolving to
+  the clip's first 20ms regardless of loop index, because
+  `AudioFrame.protoInfo()` reads a typed array's `.buffer` directly and
+  ignores `byteOffset`. See `docs/field-notes.md` for the full diagnosis.
+- **Fixed `_navTo`'s tight-loop spin near crowded or jittery targets** —
+  the actual cause of a severe, repeatable daemon crash (100–300%+ CPU, RSS
+  to 1GB+, unresponsive to SIGTERM) hit while live-testing #8, confirmed via
+  V8 CPU profiling to have nothing to do with WEBRTC/werift despite matching
+  #29's symptom table closely. `src/wa-client.mjs`'s `_navTo` now trusts
+  `walkTo()`'s own result instead of discarding it, plus a defense-in-depth
+  minimum wall-clock time per outer-loop iteration.
 - **Live speech-to-text (prototype, `WA_STT=1`).** The avatar can listen:
   `sendrecv` on the audio transceiver, a peer's Opus RTP is muxed to Ogg
   (`src/ogg-opus-mux.mjs`), decoded by a persistent `ffmpeg`, and streamed to

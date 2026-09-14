@@ -98,6 +98,37 @@ export async function ensureOpus(srcPath) {
 }
 
 /**
+ * Return a path to a raw PCM (signed 16-bit little-endian) version of
+ * `srcPath`, transcoded via ffmpeg. LiveKit's `AudioSource.captureFrame()`
+ * (issue #8) takes raw samples directly — no container, no codec — unlike the
+ * WEBRTC path which demuxes Opus packets. Same mtime+size cache pattern as
+ * `ensureOpus()`; the cache key also folds in sampleRate/channels since the
+ * same source could in principle be requested at more than one config.
+ */
+export async function ensurePcm(srcPath, { sampleRate = 48000, channels = 1 } = {}) {
+  const src = path.resolve(srcPath);
+  if (!existsSync(src)) throw new Error(`no such file: ${src}`);
+
+  const st = await stat(src);
+  const key = crypto
+    .createHash("sha1")
+    .update(`${src}\0${st.mtimeMs}\0${st.size}\0pcm${sampleRate}x${channels}`)
+    .digest("hex")
+    .slice(0, 16);
+  const out = path.join(CACHE_DIR, `${key}.pcm`);
+  if (existsSync(out)) return out;
+
+  await mkdir(CACHE_DIR, { recursive: true });
+  await ffmpeg([
+    "-v", "error", "-y",
+    "-i", src,
+    "-f", "s16le", "-ar", String(sampleRate), "-ac", String(channels),
+    out,
+  ]);
+  return out;
+}
+
+/**
  * Path to a short Opus-in-Ogg file of pure digital silence (48 kHz stereo, 20 ms
  * frames), generated once and cached. wa-audio.mjs plays one right after a peer
  * connects so the peer sees a live audio stream and clears the "mic on, nothing

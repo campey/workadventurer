@@ -401,9 +401,14 @@ chime`) or a path to any local file. The path (`src/wa-audio.mjs`,
    daemon (werift's un-awaited RTP send fan-out; see
    [docs/field-notes.md](docs/field-notes.md#werift-constraints)).
 
-LiveKit escalation is detected and logged but not yet implemented — audio stops
-publishing when a meeting switches away from WEBRTC. Repeated peer create/close
-cycles leak memory (issue #29).
+Past the P2P-mesh threshold, the server sends `livekitInvitationMessage
+{token, serverUrl}` instead — the client connects via
+[`@livekit/rtc-node`](https://github.com/livekit/node-sdks) (native, not
+werift) and publishes the same way (issue #8). `wa sound` and the mic-prime
+route through whichever transport is currently active. Subscribing to
+others' LiveKit audio (e.g. for STT) and robust switch-back-to-WEBRTC
+mid-session are still open — this is connect + publish only. Repeated peer
+create/close cycles leak memory on the WEBRTC path (issue #29).
 
 ### 10. Map areas
 
@@ -418,8 +423,8 @@ meeting's space name the same way the front-end does —
 `slugify(shortHash(roomUrl) + "-" + (prop.roomName || prop.id))` — and
 **proactively joins the space** (the server never invites a headless client to
 an area meeting). It then leaves on `areaLeave`. A 2-person `livekitRoomProperty`
-meeting runs on WEBRTC, so `wa sound` works there today; a larger one would need
-LiveKit transport (issue #8).
+meeting runs on WEBRTC; a larger one escalates to LiveKit (issue #8), which
+`wa sound` also supports now.
 
 The area-meeting join/leave is **debounced** — the client waits ~1.5 s of
 continuous dwell before joining a meeting space and lingers ~2.5 s after
