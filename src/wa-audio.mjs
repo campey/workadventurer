@@ -136,6 +136,7 @@ export class WaAudio extends EventEmitter {
     this._play = null; // { stop(): void } while a clip is playing
     this._silencePath = null; // cached short silence clip for the connect-time prime
     this._livekit = null; // { room, source, track } while a LiveKit-escalated meeting is active (#8)
+    this._livekitConnecting = null; // Promise while _connectLiveKit() is in flight (#8 connect race)
 
     // Load ICE servers as early as possible, not gated on "spaceJoined" —
     // `_joinSpace` sends `addSpaceFilterMessage` well before that event
@@ -241,9 +242,27 @@ export class WaAudio extends EventEmitter {
   // audio track into it. A fresh invitation (re-escalation, restart) tears
   // down any prior connection first — same "fresh supersedes stale" pattern
   // used for WEBRTC peers.
+  //
+  // A named area (e.g. a "fire pit") escalates straight to LiveKit with no
+  // WEBRTC phase at all, and the real SFU `room.connect()` can take a while.
+  // `_livekitConnecting` tracks that in-flight window so callers (see
+  // `waitForLiveKit()`) can wait it out instead of racing it — without this,
+  // a chime fired right after joining such an area could hit `connected ===
+  // false` and wrongly report nobody there to hear it, even though the
+  // connect was already under way and would have succeeded moments later.
   async _connectLiveKit({ token, serverUrl }) {
     await this._disconnectLiveKit();
 
+    const connecting = this._doConnectLiveKit(token, serverUrl);
+    this._livekitConnecting = connecting;
+    try {
+      await connecting;
+    } finally {
+      if (this._livekitConnecting === connecting) this._livekitConnecting = null;
+    }
+  }
+
+  async _doConnectLiveKit(token, serverUrl) {
     const room = new Room();
     await room.connect(serverUrl, token, {
       autoSubscribe: false, // subscribe (e.g. for STT) is an explicit follow-up, not this pass
@@ -264,6 +283,14 @@ export class WaAudio extends EventEmitter {
     this._livekit = { room, source, track };
     livekitEverUsed = true;
     this.emit("log", `LiveKit connected (${room.remoteParticipants.size} other participant(s)) and publishing`);
+  }
+
+  // Waits out an in-flight _connectLiveKit(), if any, instead of racing it.
+  // Bounded so a genuinely stuck/failed connect (already logged elsewhere
+  // via _onSpaceEvent's .catch) doesn't hang the caller forever.
+  async waitForLiveKit(timeoutMs = 10_000) {
+    if (!this._livekitConnecting) return;
+    await Promise.race([this._livekitConnecting.catch(() => {}), sleep(timeoutMs)]);
   }
 
   async _disconnectLiveKit() {
