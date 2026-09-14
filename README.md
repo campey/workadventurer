@@ -50,7 +50,7 @@ wa leave                          # disconnect and stop the daemon
 
 | Command | Does |
 |---|---|
-| `wa join [<room-url>] [--detach]` | join the room (runs the daemon) |
+| `wa join [<room-url>] [--detach] [--stt]` | join the room (runs the daemon); `--stt` joins as a listener (transcribes peer audio to the console instead of publishing a mic) |
 | `wa leave` | leave and stop the daemon |
 | `wa status [--json]` | position, area, follow state, visible players |
 | `wa to <player>` | walk next to a player, no follow |

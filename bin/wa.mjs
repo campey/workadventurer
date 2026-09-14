@@ -20,7 +20,7 @@ const INFO_FILES = [
 
 const USAGE = `wa — WorkAdventure presence control
 
-  wa join [<room-url>] [--detach] [--name N] [--port P]
+  wa join [<room-url>] [--detach] [--name N] [--port P] [--stt]
   wa leave
   wa status [--json]
   wa goto <x> <y>
@@ -46,6 +46,7 @@ const { values: flags, positionals } = parseArgs({
     json: { type: "boolean", default: false },
     "if-running": { type: "boolean", default: false },
     detach: { type: "boolean", default: false },
+    stt: { type: "boolean" }, // undefined unless passed, so it never overrides WA_STT/config.json
     port: { type: "string" },
     room: { type: "string" },
     name: { type: "string" },
@@ -62,7 +63,7 @@ if (!cmd || flags.help) {
   process.exit(cmd ? 0 : 2);
 }
 
-const cfg = resolveConfig({ port: flags.port, roomUrl: flags.room, name: flags.name });
+const cfg = resolveConfig({ port: flags.port, roomUrl: flags.room, name: flags.name, stt: flags.stt });
 const die = (msg, code = 1) => { process.stderr.write(`wa: ${msg}\n`); process.exit(code); };
 const note = (msg) => { if (!flags.json) process.stderr.write(`wa: ${msg}\n`); };
 

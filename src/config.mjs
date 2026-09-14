@@ -79,6 +79,7 @@ export function configToEnv(cfg) {
     WA_TARGET: cfg.target,
     WA_WOKA_ID: cfg.wokaId,
     WA_DAEMON_PORT: String(cfg.port),
+    WA_STT: cfg.stt ? "1" : "0",
     ...(cfg.version ? { WA_VERSION: cfg.version } : {}),
   };
 }
