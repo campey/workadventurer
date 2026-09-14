@@ -784,8 +784,21 @@ export class WorkAdventureClient extends EventEmitter {
       return r;
     }
     const started = Date.now();
+    // Defense in depth: guarantee at least this much wall-clock time passes
+    // per outer iteration, no matter which branch below runs. Both can, in
+    // principle, resolve every walkTo() call via its own immediate "already
+    // arrived" check (zero steps, so zero tickMs sleep) — a live getTarget()
+    // jittering (e.g. frontOf() re-resolving against a player moving inside
+    // a crowded cluster), or a findPath() waypoint list whose points are
+    // already within stopWithin of each other. Without this floor that's an
+    // unthrottled spin: 100%+ CPU, ever-growing RSS, and it doesn't even
+    // respond to signals/SIGTERM promptly since nothing ever awaits a real
+    // timer. Reproduced live, twice, in two different shapes — this closes
+    // the general case instead of chasing each specific trigger.
+    const MIN_ITER_MS = 50;
     while (Date.now() - started < timeoutMs) {
       if (signal?.aborted) return { arrived: false, reason: "aborted" };
+      const iterStart = Date.now();
       let gx = targetX, gy = targetY;
       if (getTarget) {
         const t = getTarget();
@@ -800,14 +813,22 @@ export class WorkAdventureClient extends EventEmitter {
       }
       const path = this.nav.findPath(this.pos.x, this.pos.y, gx, gy);
       if (!path || path.length === 0) {
-        await this.walkTo(gx, gy, { stopWithin, timeoutMs: repathMs, getTarget, signal });
-        continue;
+        // Trust walkTo()'s own result instead of discarding it.
+        const r = await this.walkTo(gx, gy, { stopWithin, timeoutMs: repathMs, getTarget, signal });
+        if (r.arrived) { lookAt(); return r; }
+        if (r.reason === "target-gone" || r.reason === "aborted") return r;
+        // else: genuine repathMs timeout — worth another findPath attempt
+      } else {
+        const deadline = Date.now() + repathMs;
+        for (const [wx, wy] of path) {
+          if (Date.now() > deadline || signal?.aborted) break;
+          const r = await this.walkTo(wx, wy, { stopWithin: 12, stepPx: 40, tickMs: 100, timeoutMs: repathMs, signal });
+          if (!r.arrived) break;
+        }
       }
-      const deadline = Date.now() + repathMs;
-      for (const [wx, wy] of path) {
-        if (Date.now() > deadline || signal?.aborted) break;
-        const r = await this.walkTo(wx, wy, { stopWithin: 12, stepPx: 40, tickMs: 100, timeoutMs: repathMs, signal });
-        if (!r.arrived) break;
+      const elapsed = Date.now() - iterStart;
+      if (elapsed < MIN_ITER_MS) {
+        await WorkAdventureClient._sleepOrAbort(MIN_ITER_MS - elapsed, signal);
       }
     }
     return { arrived: false, reason: "timeout" };
