@@ -53,8 +53,16 @@ function ensureWorker(log = () => {}) {
       if (!settled) { settled = true; reject(new Error(`stt-worker exited ${code} before starting`)); }
     });
     setTimeout(() => {
-      if (!settled) { settled = true; reject(new Error("stt-worker startup timeout")); }
-    }, 15000);
+      if (!settled) {
+        settled = true;
+        reject(new Error("stt-worker startup timeout"));
+        // Don't leave a slow-but-alive process running unaccounted for — the
+        // `exit` handler above resets workerProc/workerReady so the *next*
+        // ensureWorker() call gets a clean retry instead of reusing this
+        // permanently-rejected promise forever.
+        try { proc.kill(); } catch {}
+      }
+    }, 30000);
   });
   return workerReady;
 }
@@ -69,11 +77,17 @@ export function stopWorker() {
  * Live-transcribes one peer's inbound audio. Feed Opus RTP packets with
  * `push({data, samples})`; listen for `partial` / `final` ({text, words}) and
  * `error`. `close()` tears everything down.
+ *
+ * Pass `raw: true` when the caller already has decoded 16kHz mono s16le PCM
+ * (e.g. LiveKit's AudioStream, which decodes Opus for us) — this skips the
+ * Ogg-mux/ffmpeg stage entirely and writes straight to the worker socket via
+ * `pushPcm(buffer)` instead of `push({data, samples})`.
  */
 export class SttStream extends EventEmitter {
-  constructor({ channels = 2, sampleRate = 48000 } = {}) {
+  constructor({ channels = 2, sampleRate = 48000, raw = false } = {}) {
     super();
-    this.mux = new OggOpusMuxStream({ channels, sampleRate });
+    this.raw = raw;
+    this.mux = raw ? null : new OggOpusMuxStream({ channels, sampleRate });
     this.ffmpeg = null;
     this.sock = null;
     this._buf = "";
@@ -98,6 +112,12 @@ export class SttStream extends EventEmitter {
       }
     }, 3000);
 
+    this.sock = net.createConnection(SOCK_PATH);
+    this.sock.on("error", (e) => this.emit("error", e));
+    this.sock.on("data", (chunk) => this._onSockData(chunk));
+
+    if (this.raw) return; // caller feeds PCM straight into the socket via pushPcm()
+
     this.ffmpeg = spawn("ffmpeg", [
       "-v", "error",
       // Force the input format and skip probing/analysis — otherwise ffmpeg
@@ -111,10 +131,6 @@ export class SttStream extends EventEmitter {
     ], { stdio: ["pipe", "pipe", "pipe"] });
     this.ffmpeg.stderr.on("data", (c) => this.emit("log", `ffmpeg: ${c.toString().trim()}`));
     this.ffmpeg.on("error", (e) => this.emit("error", e));
-
-    this.sock = net.createConnection(SOCK_PATH);
-    this.sock.on("error", (e) => this.emit("error", e));
-    this.sock.on("data", (chunk) => this._onSockData(chunk));
 
     this.ffmpeg.stdout.pipe(this.sock);
     this.ffmpeg.stdin.write(this.mux.headerPages());
@@ -147,9 +163,25 @@ export class SttStream extends EventEmitter {
     }
   }
 
+  /** @param {Buffer} pcm  16kHz mono s16le samples (raw mode only) */
+  pushPcm(pcm) {
+    if (this._closed || !this.sock?.writable) return;
+    try {
+      this.sock.write(pcm);
+    } catch (e) {
+      this.emit("log", `stt push error: ${e.message}`);
+    }
+  }
+
   close() {
     if (this._closed) return;
     this._closed = true;
+    if (this.raw) {
+      // No ffmpeg tail to drain — just end the socket so the worker sees EOF
+      // and flushes a final transcript for whatever's still buffered.
+      try { this.sock?.end(); } catch {}
+      return;
+    }
     // End ffmpeg's stdin and let it drain + exit on its own — killing it
     // immediately truncates whatever it hasn't flushed yet, which cuts off
     // the tail of the last utterance and the socket EOF that triggers the
