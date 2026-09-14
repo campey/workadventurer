@@ -222,6 +222,17 @@ daemons through repeated connect/disconnect cycles with no issue either. The
 (`--inspect` + heap snapshots) — the everyday-use severity is much lower than
 it first appeared. Don't guess-fix it live.
 
+**Update 2, found chasing #8 with V8 CPU profiling of a live reproduction**:
+a *third*, independently-confirmed cause producing this exact
+CPU-pinned/RSS-ballooned/HTTP-dead symptom, with no werift or peer-connection
+code anywhere in the hot path — `_navTo`'s tight-loop spin near a crowded or
+jittery `getTarget()` (see the LiveKit section below). The "3–4
+proximity-bubble/invite cycles → 106% CPU, HTTP dead" case in the original
+symptom table above reads identically to this mechanism. Doesn't rule out a
+residual werift leak, but means this issue's symptom table now has *three*
+confirmed-independent causes, not one — worth re-testing what's left of #29
+with the `_navTo` fix in place before spending more effort chasing werift.
+
 Anything that spawns a real subprocess per peer connection (the STT worker's
 `ffmpeg`, the mic prime — less so, it's bounded) needs an explicit guard
 against this churn: a per-connection single-fire check (`onTrack` can in
@@ -265,24 +276,52 @@ not assumed from docs alone — worth doing again if this package majors.
   AudioFrame(int16Samples, sampleRate, channels, samplesPerChannel))` per
   chunk. `src/transcode.mjs`'s `ensurePcm()` is the sibling to `ensureOpus()`
   for this — `ffmpeg -f s16le`, same mtime+size cache pattern.
-- **`captureFrame()` does not self-pace.** Reading the actual implementation
-  (not just the types) shows it only awaits the FFI round-trip that confirms
-  the frame was *accepted* into the native jitter buffer — not real playback
-  time. Feed frames in a tight loop with no pacing and you can blow well past
-  the buffer's `queueSizeMs` (default 1000ms) for anything longer than a
-  second. `_playLiveKit()` in `wa-audio.mjs` paces itself the same way
-  `_playWebrtc()` paces RTP — fixed-size (20ms) chunks, wall-clock drift
-  compensation — then `await source.waitForPlayout()` once the loop ends.
-- **Buffer alignment footgun, worse than it sounds.** A `Buffer` from
-  `fs.readFile()` is a view into Node's shared buffer pool and its
-  `byteOffset` is not guaranteed even. Constructing an `Int16Array` directly
-  over `buffer.buffer` can throw ("start offset ... must be a multiple of
-  2") or silently read garbage depending on the offset you happened to get.
-  LiveKit's own docs warn about the related `.slice()`-vs-`.subarray()` trap
-  for the same underlying reason (aliasing vs. copying). The robust fix used
-  here: `new Int16Array(new Uint8Array(buffer).buffer)` — the `Uint8Array`
-  constructor copies when given an existing typed array, landing you on a
-  fresh, zero-offset `ArrayBuffer` before you reinterpret it.
+- **`captureFrame()` does not self-pace, and that's fine — don't pace it
+  yourself either.** Reading the actual implementation (not just the types)
+  shows it only awaits the FFI round-trip that confirms the frame was
+  *accepted* into the native jitter buffer, not real playback time. It's
+  tempting to read that as "so I must pace my own calls to real-time" (the
+  WEBRTC/RTP path does exactly that, since raw RTP has no buffer of its
+  own) — but `AudioSource` already has its own internal jitter buffer
+  (`queueSize`, default 1000ms — bump it if a clip is longer than that) and
+  paces *actual playout* itself. `_playLiveKit()` feeds 20ms chunks
+  back-to-back with no pacing of its own; `captureFrame()`'s own await is
+  throttling enough. (An external wall-clock pacer was tried first, on the
+  theory that skipping it would starve the buffer — that theory was wrong;
+  see the `.slice()` bug below for what the buzz it seemed to explain
+  actually was.)
+- **The `.slice()`-vs-`.subarray()` footgun is worse than LiveKit's own docs
+  make it sound — it silently corrupts data, not just risks a crash.**
+  `AudioFrame.protoInfo()` (inside `@livekit/rtc-node` itself) hands the
+  native FFI side `this.data.buffer` directly, ignoring the typed array's
+  own `byteOffset`/`length` entirely. Chunk a longer buffer with
+  `.subarray()` and every chunk's data pointer resolves to byte 0 of the
+  *whole original buffer*, regardless of which chunk you meant — not a
+  crash, not an exception, just silently wrong audio. For repeated 20ms
+  playback chunks, that means every single frame sent is actually the
+  clip's first 20ms, over and over: a perfectly periodic artifact at the
+  frame rate (50 times/second → an audible ~50Hz buzz, confirmed live —
+  its suspiciously exact frequency was the tell). `.slice()` on a plain
+  `Int16Array` copies into a fresh, independent, zero-offset buffer, which
+  is what this FFI binding actually needs. This is the *reverse* of the
+  usual `Buffer` advice below (there, `.slice()` is the view/footgun and
+  `.subarray()` the safe copy-avoiding choice) — the direction flips
+  because `Buffer.prototype.slice` is a Node-specific override, while a
+  plain `Int16Array`'s `.slice()`/`.subarray()` follow the standard
+  ECMAScript TypedArray contract (`.slice()` copies, `.subarray()` views).
+  Don't assume the convention carries over just because the method names
+  match.
+- **Buffer alignment footgun** (separate issue, same neighborhood): a
+  `Buffer` from `fs.readFile()` is a view into Node's shared buffer pool and
+  its `byteOffset` is not guaranteed even. Constructing an `Int16Array`
+  directly over `buffer.buffer` can throw ("start offset ... must be a
+  multiple of 2") or silently read garbage depending on the offset you
+  happened to get. The robust fix used here: `new Int16Array(new
+  Uint8Array(buffer).buffer)` — the `Uint8Array` constructor copies when
+  given an existing typed array, landing you on a fresh, zero-offset
+  `ArrayBuffer` before you reinterpret it. (This one was correct from the
+  start and never the cause of the buzz above — the two bugs just live in
+  adjacent lines of the same function, easy to conflate.)
 - **`dispose()` is process-global, one-shot — not per-room.** It releases
   the shared FFI runtime for the whole process. Call it once at daemon
   shutdown (`disposeLiveKitRuntime()` in `wa-daemon.mjs`'s SIGINT/SIGTERM
@@ -299,54 +338,62 @@ not assumed from docs alone — worth doing again if this package majors.
   to Ogg and ffmpeg-decoding); robust switch-back-to-WEBRTC if a meeting
   shrinks back below the threshold mid-session.
 
-### Live status: publishes cleanly, not yet confirmed audible (unresolved)
+### Live status: resolved — publish confirmed audible and correct
 
-Connect + publish is verified at the SDK/protocol level, repeatedly, against
-a real escalated meeting (2-6 total participants, both solo and with a
-second headless daemon alongside): correct token claims (`identity` and
-`metadata.userId` both match our real `spaceUserId`, matching exactly what
-`back/src/Model/Services/LivekitService.ts` mints for a real browser —
-`canPublish`/`canSubscribe`/`roomJoin` all `true`), correct track kind
-(`KIND_AUDIO`), `publishTrack()` resolves with a valid track SID, and
-`play()` reports success (`packetsSent` matching the clip's real duration,
-zero `writeErrors`). None of that has ever failed.
+Connect + publish is verified at the SDK/protocol level (correct token
+claims, correct track kind, clean `publishTrack()`/`play()` results — see
+the bullets above) *and*, after fixing the two bugs below, confirmed
+audible and correct by a human listener, on two separate physical
+machines/headphones, for both a short clip (`chime`) and real speech
+(`claude_intro`, 4.24s).
 
-**But no human has confirmed actually hearing it, across several attempts.**
-Ruled out so far: token/metadata mismatch (WA's front-end,
-`LiveKitRoom.ts`'s `getParticipantId()`, correlates a remote participant to
-a known `SpaceUser` via `JSON.parse(participant.metadata).userId` — ours is
-correct); missing publish permission (token grants it, and no "participant
-has no publish permission" console line ever appeared, checked with console
-capture armed from a cold page reload); a UI-only miss (the "no tile" report
-turned out to be a browser panel too small to show it — resize fixed that).
+Getting there took two unrelated bugs, both found live against a real
+escalated meeting with several real participants:
 
-One real lead, not yet confirmed as *the* cause: WA's own front-end console
-showed an error cluster at the exact moment of a WEBRTC→LIVEKIT switch —
-`AbortError: Abort message received` out of `onLeaveAreasHandler` /
-`triggerAreasChange`, then "Trying to leave a space that is not joined" and
-"Received a private message for a space that does not exist", all naming
-the specific fire-pit space our daemon was in. Client-side space bookkeeping
-visibly went inconsistent right at the switch instant. Could be the actual
-cause (some client-side state needed to wire up our tile never got set),
-could be an unrelated pre-existing hiccup with suspicious timing. Needs
-follow-up with console capture armed *before* the switch happens, correlated
-against exactly which participant's audio is/isn't reaching whom.
+1. **The daemon kept crashing on approach, well before LiveKit even entered
+   the picture.** CPU to 100–300%+, RSS to 1GB+, unresponsive to SIGTERM.
+   V8 CPU profiling of two live reproductions showed the hot path was
+   entirely `_navTo`/`findPath`/`walkTo`/protobuf-encode/`ws`-send — no
+   werift, no LiveKit anywhere in it. Root cause and fix are in
+   `_navTo`, `src/wa-client.mjs` (see the commit fixing it) — a jittery
+   `getTarget()` (e.g. `frontOf()` re-resolving against a player moving
+   inside a crowded cluster of avatars, exactly the LiveKit-threshold
+   scenario) let `walkTo()` report "arrived" on its very first internal
+   check, before it ever took a step or hit its own per-step sleep —
+   discarding that result and blindly re-looping turned into an
+   unthrottled spin. **This is very likely the real explanation for a
+   good chunk of #29's original symptom table too** (the "3–4
+   proximity-bubble/invite cycles → 106% CPU, HTTP dead" case in
+   particular reads identically) — #29's werift/`_closePeer`-await
+   theory was never disproven, but this is a second, independently
+   confirmed mechanism that produces the exact same externally-visible
+   symptom without touching WEBRTC at all. An earlier live-testing note
+   this same session, attributing the crash to a "2 agents + 1 human"
+   composition, was a coincidental correlation, not a compositional
+   trigger — crowded scenes simply made the jitter (and thus the spin)
+   more likely, regardless of whether the crowd was agents or humans.
+2. **Once approach was stable, publish itself produced a periodic ~50Hz
+   buzz on any clip longer than one frame** — see the `.slice()`-vs-
+   `.subarray()` bullet above. Diagnosed by elimination: token/metadata/
+   permissions all independently confirmed correct; resampling math
+   confirmed exact; a single giant `captureFrame()` call (no chunking)
+   played clean, which is what pointed at the chunking step itself rather
+   than the network or the room/SFU.
 
-**Unrelated but important gotcha found chasing this**: a throwaway diagnostic
-that set `autoSubscribe: true` and read a few `RemoteTrack`s via
-`AudioStream` (to check whether the room routes media to us *at all*, i.e.
-isolate publish-side from room/SFU-side) reliably crashed the daemon — CPU
-to 300%+, RSS to 1GB+ within about a minute, with a *second* headless daemon
-and several humans all publishing simultaneously. The diagnostic code
-`break`s out of `for await (const frame of stream)` after ~25 frames without
-an explicit `stream.cancel()`; relying on implicit iterator-`return()`
-cleanup was not enough to stop the native side from continuing to push
-frames into an unconsumed queue. This is **not** the same bug as #29 (that's
-pure WEBRTC/werift, reproduces on code with no LiveKit involvement at all) —
-it's a distinct, LiveKit-`AudioStream`-specific leak risk that will need
-`stream.cancel()` called explicitly (not just relying on early-break cleanup)
-whenever the future subscribe path lands. Noted here so it isn't
-rediscovered the hard way.
+**Distinct gotcha found while investigating, worth keeping in mind for the
+still-pending subscribe follow-up**: a throwaway diagnostic that set
+`autoSubscribe: true` and read a few `RemoteTrack`s via `AudioStream` (to
+check whether the room routes media to us at all) reliably crashed the
+daemon — CPU to 300%+, RSS to 1GB+ within about a minute — until it was
+rewritten to call `stream.getReader()` + an explicit `reader.cancel()` in a
+`finally` block; merely `break`-ing out of a `for await` loop early was not
+enough to stop the native side from continuing to push frames into an
+unconsumed queue. With that explicit cancel it worked cleanly (confirmed
+receiving real, non-silent human audio — 301 frames, RMS in the
+hundreds-to-thousands range). The diagnostic itself was never shipped
+(reverted after confirming it), but whoever builds the real subscribe path
+should call `reader.cancel()` explicitly, every time, not rely on
+early-break cleanup.
 
 ---
 
