@@ -478,6 +478,10 @@ const server = http.createServer(async (req, res) => {
           const clip = resolveClip(String(body.name), body.cwd);
           if (!fs.existsSync(clip))
             return send(404, { ok: false, error: `no clip at ${clip}` });
+          // A named area escalates straight to LiveKit, and that connect can
+          // still be in flight right after joining -- wait it out instead of
+          // racing it (#8 follow-up).
+          await audio.waitForLiveKit();
           if (!audio.connected)
             return send(409, { ok: false, error: "no one in the bubble to hear it" });
           // Fire and forget — play() streams the clip in real time, which can
