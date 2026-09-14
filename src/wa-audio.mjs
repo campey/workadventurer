@@ -30,6 +30,7 @@ import {
   RTCRtpCodecParameters,
   RtpPacket,
   RtpHeader,
+  useVP8,
 } from "werift";
 import {
   Room,
@@ -329,7 +330,21 @@ export class WaAudio extends EventEmitter {
     }
 
     const pc = new RTCPeerConnection({
-      codecs: { audio: [OPUS] },
+      // `video: [useVP8()]` isn't for us to ever send/use — we only ever add
+      // an audio transceiver below. It's here because a real WA browser
+      // peer's offer always includes an m=video section, even with the
+      // camera off, and werift's codec negotiation throws unconditionally
+      // when a media section's codec list comes up empty against our local
+      // config (it doesn't special-case "we don't support this kind at
+      // all" vs. "we do but nothing overlapped") — so with no local video
+      // codec declared at all, that throw happened on the video section
+      // before the perfectly-compatible audio section right after it was
+      // ever processed, killing the whole connection. This is exactly
+      // werift's own `generateDefaultPeerConfig()` default (VP8 included);
+      // our previous `{ audio: [OPUS] }` override had silently dropped it.
+      // The resulting video transceiver stays recvonly and untouched — nothing
+      // downstream reads from it.
+      codecs: { audio: [OPUS], video: [useVP8()] },
       iceServers: this.iceServers,
       bundlePolicy: "max-bundle",
     });
