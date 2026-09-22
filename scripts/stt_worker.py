@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -52,6 +53,22 @@ MAX_UTTERANCE_S = 20  # force-finalize a runaway utterance
 
 def log(*a):
     print(*a, file=sys.stderr, flush=True)
+
+
+# whisper-tiny (small/fast, so more prone to this than larger models) can get
+# stuck decoding the same short phrase over and over on ambiguous/quiet audio
+# — mlx_whisper's built-in compression-ratio hallucination guard doesn't
+# reliably catch it. Detect a 1-6 word phrase repeating 4+ times in a row and
+# cut the runaway tail instead of emitting (and logging) hundreds of words of
+# the same loop.
+_REPEAT_RE = re.compile(r"\b(\w+(?:\s+\w+){0,5})\b(?:\s+\1\b){3,}", re.IGNORECASE)
+
+
+def collapse_repetition(text):
+    m = _REPEAT_RE.search(text)
+    if not m:
+        return text
+    return text[: m.end()].rstrip() + " …"
 
 
 class MicSession:
@@ -83,7 +100,7 @@ class MicSession:
             for seg in r.get("segments", [])
             for w in seg.get("words", [])
         ]
-        return {"text": r["text"].strip(), "words": words}
+        return {"text": collapse_repetition(r["text"].strip()), "words": words}
 
     def reset(self):
         self.buf = np.zeros(0, dtype=np.float32)
@@ -131,7 +148,10 @@ async def handle_conn(reader, writer, transcribe):
             if debug:
                 log(f"[{peer}] transcribe -> {result['text']!r}")
             if silent or force:
-                send(writer, {"type": "final", **result})
+                # Silence closing out a buffer that never had real speech in
+                # it transcribes to "" — nothing to finalize, just reset.
+                if result["text"]:
+                    send(writer, {"type": "final", **result})
                 session.reset()
             elif result["text"] != session.last_partial_text:
                 session.last_partial_text = result["text"]

@@ -73,6 +73,10 @@ function attachAudio(client) {
     // (once raw, once via `log()`). Detached mode instead logs one clean,
     // timestamped line per finalized utterance and drops partials entirely.
     audio.on("heard", ({ remoteUserId, text, final }) => {
+      // Silence closing out a buffer that never had real speech transcribes
+      // to "" — the worker skips sending these, but guard here too rather
+      // than trust that on every code path.
+      if (final && !text) return;
       const who = wa.spaceUserName(remoteUserId) ?? remoteUserId.split("/").pop() ?? remoteUserId;
       const line = `SCRIBE[${who}]: ${text}`;
       if (!process.stdout.isTTY) {
