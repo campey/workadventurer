@@ -66,14 +66,22 @@ function attachAudio(client) {
   audio.on("peerConnected", ({ remoteUserId }) => log("audio: peer connected", remoteUserId));
   if (cfg.stt) {
     // Redraw the provisional line in place as it's corrected; lock it in with
-    // a newline once WA finalizes it (issue #23).
+    // a newline once WA finalizes it (issue #23). The `\r\x1b[K` cursor
+    // control only means anything on a real terminal — under `--detach`,
+    // stdout is `daemon.log` (a plain file), so those bytes would just pile
+    // up as garbled literal text and every final would get written twice
+    // (once raw, once via `log()`). Detached mode instead logs one clean,
+    // timestamped line per finalized utterance and drops partials entirely.
     audio.on("heard", ({ remoteUserId, text, final }) => {
       const who = wa.spaceUserName(remoteUserId) ?? remoteUserId.split("/").pop() ?? remoteUserId;
       const line = `SCRIBE[${who}]: ${text}`;
+      if (!process.stdout.isTTY) {
+        if (final) log(line);
+        return;
+      }
       if (final) {
         process.stdout.write(`\r\x1b[K${line}\n`);
         sttLineOpen = false;
-        log(line); // permanent record in daemon.log
       } else {
         process.stdout.write(`\r\x1b[K${line}`);
         sttLineOpen = true;
