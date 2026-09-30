@@ -472,6 +472,8 @@ export class WorkAdventureClient extends EventEmitter {
     this._send({
       publicEvent: {
         spaceName,
+        // name is ignored server-side (the back overwrites name/characterTextures with the
+        // sender's SpaceUser); sent only to mirror the real client. See docs/field-notes.md.
         spaceEvent: { spaceMessage: { message: text, name: this.cfg.name } },
       },
     });
