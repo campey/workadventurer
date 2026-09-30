@@ -103,52 +103,32 @@ not assumed from docs alone — worth doing again if this package majors.
   but it was initially — wrongly — assumed to be the explanation for a bug
   that turned out to be pure WEBRTC (see below).
 
-## WEBRTC codec negotiation against real browser peers (PR #46)
+## A LiveKit-shaped report that turned out to be pure WEBRTC (PR #46)
 
 Found live, immediately downstream of the "named area ≠ LiveKit" correction
-above. Reported symptom: joining a named meeting area with a single other
-real player, `/sound` 409'd with `no one in the bubble to hear it` right
-after joining; rejoining sometimes "fixed" it. This looked LiveKit-shaped
-(see #45 above) but wasn't — live testing (joining the user's own session,
-`SDP_DEBUG`-capturing the real SDP) showed the meeting was on plain WEBRTC
-the whole time, `peers:1, connected:false`.
+above — worth keeping here precisely *because* it looked like this
+document's territory and wasn't. Reported symptom: joining a named meeting
+area with a single other real player, `/sound` 409'd with `no one in the
+bubble to hear it` right after joining; rejoining sometimes "fixed" it. The
+connect-race guard above (PR #45) looked like the obvious explanation — it
+wasn't. Live testing (joining the reporter's own session, `SDP_DEBUG`-
+capturing the real SDP) showed the meeting was on plain WEBRTC the whole
+time, `peers:1, connected:false`, no LiveKit involved at all.
 
-**Root cause:** a real WA browser peer's SDP offer always includes an
-`m=video` section, even with the camera off. Our `RTCPeerConnection` only
-ever declared an audio codec (`codecs: { audio: [OPUS] }`), but werift's
-`TransceiverManager.setRemoteRTP()` throws unconditionally whenever a media
-section's codec list, filtered against local config, comes up empty — it
-doesn't distinguish "we don't support this *kind* at all" from "we do but
-nothing overlapped". Since `m=video` sorts before `m=audio` in a real
-browser's offer, that throw happened before the perfectly compatible audio
-section right after it was ever processed, killing the whole connection
-(`negotiate codecs failed`). **This only hits the real-browser-peer
-answering path** (`initiator=false`, i.e. we're responding to *their*
-offer) — two headless daemons never trip it, since neither side's offer
-ever includes video, which is why werift-to-werift testing never surfaced
-it and it took a real human peer to find.
+The actual root cause — a `RTCPeerConnection` codec-configuration gap that
+only bites against a real browser peer — is a general werift constraint,
+not LiveKit-specific, so its full writeup and the fix live in
+`docs/field-notes.md`'s `## werift constraints` → `### Misc`. The lesson
+worth keeping *here*: a bug discovered while chasing a LiveKit-area report
+is not automatically a LiveKit bug — reproduce live and check which
+transport is actually active (see the transport-model section above)
+before trusting a theory about where the fix belongs.
 
-**Fix:** declare `video: [useVP8()]` too (imported from `werift`), matching
-werift's own `generateDefaultPeerConfig()` default — the project's
-audio-only override had silently dropped it. We never add our own video
-transceiver; werift auto-creates a recvonly one for the remote's `m=video`
-section and nothing downstream reads from it — this is purely to let codec
-negotiation for that section succeed instead of throwing.
-
-**A wrong fix was tried first and is worth remembering as a trap:**
-stripping the `m=video` section out of the raw SDP text before
-`setRemoteDescription()`. That avoids the codec throw, but WebRTC requires
-strict positional correspondence between offer and answer `m=` sections —
-removing one outright broke a *later* ICE candidate for the now-missing
-video mid (`Media section for sdpMid was not found`, a different crash).
-Fix the codec *configuration*, not the wire format; don't hand-edit SDP to
-route around a negotiation gap unless you're also prepared to keep every
-positional/mid reference consistent afterward.
-
-**Testing technique worth reusing:** `SDP_DEBUG=<dir>` (already in
-`wa-audio.mjs`, gated on the env var) dumps every offer/answer to disk.
-The exact SDP that reproduced this crash live is checked in as a test
-fixture (`test/fixtures/live-browser-offer-with-video.sdp`) and
+**Testing technique worth reusing, regardless of where the bug lives:**
+`SDP_DEBUG=<dir>` (already in `wa-audio.mjs`, gated on the env var) dumps
+every offer/answer to disk. The exact SDP that reproduced this crash live
+is checked in as a test fixture
+(`test/fixtures/live-browser-offer-with-video.sdp`) and
 `test/wa-video-codec-negotiation.test.mjs` runs it through **real
 werift** (`RTCPeerConnection.setRemoteDescription()`), not a mock — one
 test proves the bug against the exact peer-connection config `WaAudio`

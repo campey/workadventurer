@@ -250,6 +250,22 @@ CPU before a single "pc connected" line had even printed.
   connection and advance monotonically like a real mic. Switching `ssrc`
   between clips makes the receiver latch the first source and drop later ones.
 - **`pc.close()` is `async`** — `_closePeer` should `await` it (see #29).
+- **`RTCPeerConnection`'s `codecs` config needs a `video` entry too, even
+  though this project never sends or reads video.** A real WA browser
+  peer's SDP offer always includes an `m=video` section (camera off or
+  not), and werift throws unconditionally on any media section with zero
+  codec overlap against local config — it doesn't special-case "unsupported
+  kind" vs. "no overlap". Since `m=video` sorts before `m=audio` in a real
+  offer, an audio-only `codecs` config (`{ audio: [OPUS] }`) kills the
+  *whole* connection, audio included, before the compatible audio section
+  is ever reached. `WaAudio`'s config is `{ audio: [OPUS], video:
+  [useVP8()] }` — matching werift's own `generateDefaultPeerConfig()`
+  default, which an earlier audio-only override had silently dropped. Only
+  hits the real-browser-answering path (`initiator=false`); two headless
+  daemons never trip it, since neither side's offer includes video. Full
+  writeup, plus a wrong-fix trap worth avoiding (stripping the SDP's
+  `m=video` section breaks ICE candidate matching for that mid), in
+  `docs/livekit.md`.
 
 ---
 
@@ -259,9 +275,14 @@ Moved to its own doc, since it kept growing: **`docs/livekit.md`**. Covers
 the transport model (escalation is by mesh size, not area type — a wrong
 assumption about that cost real debugging time, see PR #45 vs. #46 there),
 the publish path and its two live-found bugs (`.slice()`-vs-`.subarray()`
-data corruption, the connect-race guard), the WEBRTC codec-negotiation fix
-for real browser peers, and the subscribe path's known gotcha for whoever
-builds it next.
+data corruption, the connect-race guard), and the subscribe path's known
+gotcha for whoever builds it next.
+
+(PR #46, found while chasing the same LiveKit-shaped report as #45, turned
+out to be pure WEBRTC, not LiveKit — its full writeup lives above, in this
+section's `### Misc`. `docs/livekit.md` keeps only the short version of
+that story: a reminder that a bug found near LiveKit isn't automatically a
+LiveKit bug.)
 
 The `_navTo` tight-loop spin mentioned in earlier versions of this section
 is *not* LiveKit-specific — it lives in `src/wa-client.mjs` and is covered
