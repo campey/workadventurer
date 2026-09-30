@@ -372,3 +372,58 @@ Rapid-fire invites (several in a few seconds) hit issue #29.
 - The `workadventure` subagent drives repeated live scenarios (join, walk to
   a player, invite, monitor RSS/HTTP). Watch its RSS trace — a steady climb
   past ~300 MB or an HTTP timeout means #29 is biting; `pkill -9` and restart.
+
+---
+
+## "Chat" is two unrelated systems
+
+Worth stating plainly — this took a full research pass to untangle (#39,
+#48) and shouldn't need re-discovering:
+
+- **Proximity/bubble chat** — ephemeral, tied to whoever's nearby right now.
+  Rides the same WebSocket protocol this client already speaks
+  (`ProximityChatRoom.ts` upstream). **Not Matrix at all.** No auth beyond
+  the existing anonymous connection. This is #48.
+- **Area chat** (a named room, e.g. the Fire Pit) — persistent, genuinely
+  Matrix-backed. This is #39, and it's a much deeper rabbit hole:
+
+  - An area's Matrix room is a fixed ID baked into the map at edit time
+    (`POST /roomArea` → `matrixProvider.createRoomForArea()`), not
+    created/resolved at runtime. `_loadAreas()`
+    (`src/wa-client.mjs:174-193`) is where this client would see it, as a
+    `matrixRoomPropertyData` property with a `matrixRoomId` like
+    `!QjtmHAhrGndEpKZWkS:chat.workadventu.re`.
+  - **Anonymous access is a dead end.** `GameManager.ts` only constructs a
+    Matrix client if `userIsConnected` (OIDC); `ConnectionManager.
+    anonymousLogin()` explicitly wipes Matrix credentials; `POST
+    /anonymLogin` returns only `{authToken, userUuid}`. The only
+    token-minting path is a live browser round-trip: OIDC login → Synapse
+    SSO redirect → `GET /matrix-callback` → `client.login("m.login.token",
+    {token})`. Entering an area also requires `socketData.chatID` (which
+    `_wsUrl()` sets to `""` today) so the pusher can invite the client into
+    the room — anonymous users have no `chatID` to invite.
+  - **It's self-service, though — not admin-gated.** WA has three access
+    tiers (`docs.workadventu.re/admin/manage-access/`): Anonymous (what
+    this client uses), **Visitor** (self-service — register via the
+    "Register" button or social login, no admin involved), and Member
+    (admin-added only). A Visitor account is real/OIDC-backed and should
+    satisfy `userIsConnected`. The earlier assumption that a Synapse-admin-
+    provisioned bot was required was wrong — flagged here so it doesn't
+    get re-assumed.
+  - **Creating the account is not automatable by Claude, no exception** —
+    account creation and entering a password are both prohibited actions
+    regardless of user permission. A human has to do the one-time
+    Visitor-register-and-login step in a real browser; after that the
+    resulting `access_token`/`refresh_token` should be reusable headlessly
+    against `chat.workadventu.re` directly, no browser needed for sending.
+  - **As of 2026-09-30, no area on the map has a Matrix room at all** — the
+    Fire Pit's `matrixRoomPropertyData` was removed (it's a
+    `livekitRoomProperty` area now); a full re-scan of all 20 areas,
+    including the northern cluster (Bench 1/2, Left/Right Board Room, Great
+    Hall Podium, Audience — all Jitsi/megaphone, unrelated), turned up zero
+    Matrix properties anywhere. Before this, the Fire Pit's room
+    (`!QjtmHAhrGndEpKZWkS:chat.workadventu.re`) was independently diagnosed
+    dead/orphaned (Synapse 404 "no known servers" — not a permissions
+    issue, affects any identity including a real logged-in browser
+    session). Net effect either way: #39 needs a live Matrix-enabled area
+    on the map before it's testable, which it currently doesn't have.
