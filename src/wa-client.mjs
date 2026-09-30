@@ -462,6 +462,21 @@ export class WorkAdventureClient extends EventEmitter {
     });
   }
 
+  /**
+   * Send a chat message (SpaceMessage) to everyone in a Space we're a member
+   * of — works the same whether that Space is a proximity bubble or a
+   * meeting-room area (#48). Not Matrix; see docs/field-notes.md.
+   */
+  sendChatMessage(spaceName, text) {
+    if (!this.spaces.has(spaceName)) throw new Error(`not a member of space ${spaceName}`);
+    this._send({
+      publicEvent: {
+        spaceName,
+        spaceEvent: { spaceMessage: { message: text, name: this.cfg.name } },
+      },
+    });
+  }
+
   /** Send a PrivateSpaceEvent (webRtcSignal, webRtcStartMessage, …) to one member. */
   sendSpacePrivateEvent(spaceName, receiverUserId, event) {
     this._send({
@@ -657,7 +672,21 @@ export class WorkAdventureClient extends EventEmitter {
       });
       return;
     }
-    // variableMessage, publicEvent, other space* — ignored.
+    if (sub.publicEvent) {
+      const pe = sub.publicEvent;
+      const sm = pe.spaceEvent?.spaceMessage;
+      if (sm) {
+        this.emit("chatMessage", {
+          spaceName: pe.spaceName,
+          senderUserId: pe.senderUserId,
+          name: sm.name || this.spaceUserName(pe.senderUserId) || "",
+          text: sm.message,
+        });
+      }
+      // spaceIsTyping, muteAudio/VideoForEverybody — not handled yet.
+      return;
+    }
+    // variableMessage, other space* — ignored.
     if (process.env.WA_DEBUG) {
       const k = Object.keys(sub)[0];
       if (k && k !== "userMovedMessage") this.emit("log", `SUB ${k}: ${JSON.stringify(sub[k]).slice(0, 300)}`);

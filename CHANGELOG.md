@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Space chat — send/receive text chat over WA's `SpaceMessage` (issue
+  #48).** Works identically whether the client's current "Space" is an
+  ambient proximity bubble or a meeting-room area — same `_joinSpace()`
+  machinery, same message shape. Not Matrix (see #39, deliberately
+  deferred — `docs/field-notes.md` has the full model).
+  `WorkAdventureClient.sendChatMessage(spaceName, text)` sends; an inbound
+  `publicEvent`'s `spaceMessage` emits a `chatMessage` event. New daemon
+  endpoint `POST /chat {text}` (sends to every Space currently joined) and
+  `wa chat <text>` CLI command; `/state.lastChatMessage` reports the most
+  recently received message. Verified live: two headless daemons in a
+  shared bubble exchanged messages both directions over a real WA room.
 - **LiveKit transport — connect + publish, confirmed working live (issue
   #8, partial).** Past WA's P2P-mesh size threshold, a meeting escalates to
   a LiveKit SFU instead of proximity WEBRTC. `WaAudio` now handles

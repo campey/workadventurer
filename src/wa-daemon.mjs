@@ -19,6 +19,9 @@
 //   POST /thought-bubble {text}          -> thinking cloud over the avatar
 //   POST /clear-bubble                   -> dismiss whatever bubble is showing
 //   POST /sound          {name}          -> play a clip into the proximity voice chat
+//   POST /chat           {text}          -> send a chat message to every Space we're
+//                                            currently in (proximity bubble and/or
+//                                            meeting-room area — #48, not Matrix)
 //   POST /leave                          -> disconnect and exit
 //
 // Also: when another player invites the avatar over (WorkAdventure's "invite
@@ -89,6 +92,7 @@ const liveFollowTarget = () => (follow ? liveById(follow.userId) : null);
 
 let lastEmote = null; // { userId, name, emote, at }
 let lastInvite = null; // { name, uuid, at, walking }
+let lastChatMessage = null; // { spaceName, name, text, at } — most recently received (not sent)
 const emoteWaiters = new Set(); // { player, emote, resolve, timer }
 
 function wireClient(client) {
@@ -107,6 +111,11 @@ function wireClient(client) {
       emoteWaiters.delete(w);
       w.resolve({ emote: e.emote, name: e.name, userId: e.userId });
     }
+  });
+  client.on("chatMessage", ({ spaceName, senderUserId, name, text }) => {
+    const who = name || senderUserId;
+    lastChatMessage = { spaceName, name: who, text, at: Date.now() };
+    log(`chat[${spaceName}] ${who}: ${text}`);
   });
   client.on("inviteReceived", ({ uuid, name, userId }) => {
     // A player invited us over. Accept, then walk to them — one-shot, like `wa to`.
@@ -348,6 +357,7 @@ function state() {
       : null,
     lastEmote,
     lastInvite,
+    lastChatMessage,
     following: follow
       ? {
           name: follow.name,
@@ -498,6 +508,14 @@ const server = http.createServer(async (req, res) => {
             )
             .catch((e) => log(`sound "${body.name}" failed: ${e.message}`));
           return send(202, { ok: true, sound: body.name, playing: true });
+        }
+        case "/chat": {
+          if (!body.text) return send(400, { ok: false, error: "need {text}" });
+          const spaceNames = [...wa.spaces.keys()];
+          if (!spaceNames.length)
+            return send(409, { ok: false, error: "not in a chat with anyone nearby" });
+          for (const sn of spaceNames) wa.sendChatMessage(sn, String(body.text));
+          return send(200, { ok: true, chat: String(body.text), spaces: spaceNames.length });
         }
         case "/wait-emote": {
           // Long-poll: resolve when a matching emote arrives, or time out.
