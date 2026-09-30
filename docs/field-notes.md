@@ -397,21 +397,30 @@ vendored proto (`proto/wa-1.33/messages.proto`):
   CLI / `POST /chat` daemon endpoint. Covers both the proximity-bubble case
   and the meeting-room-area case with the same code, since they're the same
   underlying mechanism.
-  - **`characterTextures` is safe to omit on send.** It's optional/repeated
-    in the proto; this client sends only `{message, name}`. Verified live
-    against a real browser client (not just headless↔headless): the message
-    still renders correctly in the Proximity Chat panel — sender name,
-    timestamp, text all correct — with a generic fallback avatar icon
-    instead of the real woka texture. No broken-image glitch, nothing to
-    add here unless a future feature specifically wants the real texture
-    shown.
-  - **`SpaceMessage.name` is the sender label the real client actually
-    displays** — confirmed by the same live screenshot (sent with
-    `name: "space-chat"`, rendered as "space-chat" in the panel). On
-    receive, this client prefers the sender's known `SpaceUser` name
-    (`spaceUserName()`, from `initSpaceUsersMessage`) over the inbound
-    `SpaceMessage.name` when both are available — the real client's own
-    display name is the more trustworthy source if it's already been seen.
+  - **The real client fully trusts a message's own `name` and
+    `characterTextures` — no server-side identity binding.** Confirmed
+    directly from WA's own front-end source
+    (`play/src/front/Chat/Connection/Proximity/ProximityChatRoom.ts`,
+    `addNewMessage()`): it seeds `chatUser` from the sender's known
+    `SpaceUser` (the room roster — real name, real woka), then
+    unconditionally does `if (name) chatUser.username = name;` and, if
+    `characterTextures.length > 0`, replaces `chatUser.pictureStore` with
+    whatever those textures decode to. Both are per-message overrides, not
+    validated against the actual `senderUserId` in any way — only a
+    blacklist check uses the real `senderUserId` (`event.sender`), which a
+    client can't spoof since the pusher stamps it, not the sender.
+    **Practical upshot: a message can carry an arbitrary display name (e.g.
+    `"David (scribed)"` for an STT-scribe attribution) and, separately, an
+    arbitrary avatar via `characterTextures`, and the real client will
+    render exactly that.** This client sends only `{message, name}` and
+    omits `characterTextures` (falls back to nothing added, so the receiver
+    naturally shows the sender's own real avatar — confirmed live: no
+    broken-image glitch). On receive, this client currently prefers a
+    cached `SpaceUser` name (`spaceUserName()`) over the inbound
+    `SpaceMessage.name` when both exist — the *opposite* of what WA's own
+    client does (inbound `name` always wins there). Worth reconciling if a
+    future feature needs bit-for-bit parity with the real client's receive
+    behavior; not a correctness issue for #48 today.
   - **Timestamps are client-side, not carried on the wire.** `SpaceMessage`
     has no timestamp field; the real client's "05:50 PM" in the chat panel
     is stamped locally at receipt. `lastChatMessage.at` in this client's
