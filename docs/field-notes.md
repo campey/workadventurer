@@ -391,10 +391,36 @@ vendored proto (`proto/wa-1.33/messages.proto`):
   Board Room, any `livekitRoomProperty`/`jitsiRoomProperty` area) are both
   just Spaces, joined via the same `_joinSpace()` the client already has
   (`src/wa-client.mjs:355-450`). Not Matrix. No auth beyond the existing
-  anonymous connection. **This is #48** — scoped to send/receive
-  `SpaceMessage` on whichever Space(s) the client currently belongs to,
-  covering both the proximity-bubble case and the meeting-room-area case
-  with the same code, since they're the same underlying mechanism.
+  anonymous connection. **This is #48** — implemented: send via
+  `WorkAdventureClient.sendChatMessage(spaceName, text)`
+  (`src/wa-client.mjs`), receive via a `chatMessage` event, `wa chat <text>`
+  CLI / `POST /chat` daemon endpoint. Covers both the proximity-bubble case
+  and the meeting-room-area case with the same code, since they're the same
+  underlying mechanism.
+  - **`characterTextures` is safe to omit on send.** It's optional/repeated
+    in the proto; this client sends only `{message, name}`. Verified live
+    against a real browser client (not just headless↔headless): the message
+    still renders correctly in the Proximity Chat panel — sender name,
+    timestamp, text all correct — with a generic fallback avatar icon
+    instead of the real woka texture. No broken-image glitch, nothing to
+    add here unless a future feature specifically wants the real texture
+    shown.
+  - **`SpaceMessage.name` is the sender label the real client actually
+    displays** — confirmed by the same live screenshot (sent with
+    `name: "space-chat"`, rendered as "space-chat" in the panel). On
+    receive, this client prefers the sender's known `SpaceUser` name
+    (`spaceUserName()`, from `initSpaceUsersMessage`) over the inbound
+    `SpaceMessage.name` when both are available — the real client's own
+    display name is the more trustworthy source if it's already been seen.
+  - **Timestamps are client-side, not carried on the wire.** `SpaceMessage`
+    has no timestamp field; the real client's "05:50 PM" in the chat panel
+    is stamped locally at receipt. `lastChatMessage.at` in this client's
+    `/state` does the same (`Date.now()` on receipt) — nothing to send.
+  - **Not implemented, sibling proto messages in the same `SpaceEvent`
+    oneof:** `SpaceIsTyping` (typing indicator), `MuteAudioForEverybody`/
+    `MuteVideoForEverybody`. Deliberately out of scope for #48; the client
+    silently ignores them on receive (`_handleSub`'s `sub.publicEvent`
+    branch only acts on `spaceMessage`).
 - **Matrix — a separate, optional, persistent backend layered onto a
   specific area**, not a different chat mechanism and not what "area chat"
   means by default. An area gets Matrix *in addition to* its own Space chat
