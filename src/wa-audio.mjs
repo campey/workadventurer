@@ -332,14 +332,23 @@ export class WaAudio extends EventEmitter {
     this._livekitStt.set(track.sid, { stt });
 
     (async () => {
+      const stream = new AudioStream(track, { sampleRate: 16000, numChannels: 1 });
+      // A plain `for await...break` does NOT stop the native side from
+      // continuing to push frames into an unconsumed queue — confirmed live,
+      // reliably crashed the daemon within a minute (CPU 300%+, RSS 1GB+).
+      // Must use an explicit reader + explicit cancel(), every exit path,
+      // via `finally` (see docs/field-notes.md's LiveKit section).
+      const reader = stream.getReader();
       try {
-        const stream = new AudioStream(track, { sampleRate: 16000, numChannels: 1 });
-        for await (const frame of stream) {
-          if (!this._livekitStt.has(track.sid)) break; // torn down mid-iteration
+        while (true) {
+          const { value: frame, done } = await reader.read();
+          if (done || !this._livekitStt.has(track.sid)) break; // torn down mid-iteration
           stt.pushPcm(Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength));
         }
       } catch (e) {
         this.emit("log", `[${track.sid}] livekit audio stream error: ${e.message}`);
+      } finally {
+        try { await reader.cancel(); } catch {}
       }
     })();
   }
