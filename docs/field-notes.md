@@ -412,10 +412,45 @@ vendored proto (`proto/wa-1.33/messages.proto`):
   Board Room, any `livekitRoomProperty`/`jitsiRoomProperty` area) are both
   just Spaces, joined via the same `_joinSpace()` the client already has
   (`src/wa-client.mjs:355-450`). Not Matrix. No auth beyond the existing
-  anonymous connection. **This is #48** — scoped to send/receive
-  `SpaceMessage` on whichever Space(s) the client currently belongs to,
-  covering both the proximity-bubble case and the meeting-room-area case
-  with the same code, since they're the same underlying mechanism.
+  anonymous connection. **This is #48** — implemented: send via
+  `WorkAdventureClient.sendChatMessage(spaceName, text)`
+  (`src/wa-client.mjs`), receive via a `chatMessage` event, `wa chat <text>`
+  CLI / `POST /chat` daemon endpoint. Covers both the proximity-bubble case
+  and the meeting-room-area case with the same code, since they're the same
+  underlying mechanism.
+  - **The real client fully trusts a message's own `name` and
+    `characterTextures` — no server-side identity binding.** Confirmed
+    directly from WA's own front-end source
+    (`play/src/front/Chat/Connection/Proximity/ProximityChatRoom.ts`,
+    `addNewMessage()`): it seeds `chatUser` from the sender's known
+    `SpaceUser` (the room roster — real name, real woka), then
+    unconditionally does `if (name) chatUser.username = name;` and, if
+    `characterTextures.length > 0`, replaces `chatUser.pictureStore` with
+    whatever those textures decode to. Both are per-message overrides, not
+    validated against the actual `senderUserId` in any way — only a
+    blacklist check uses the real `senderUserId` (`event.sender`), which a
+    client can't spoof since the pusher stamps it, not the sender.
+    **Practical upshot: a message can carry an arbitrary display name (e.g.
+    `"David (scribed)"` for an STT-scribe attribution) and, separately, an
+    arbitrary avatar via `characterTextures`, and the real client will
+    render exactly that.** This client sends only `{message, name}` and
+    omits `characterTextures` (falls back to nothing added, so the receiver
+    naturally shows the sender's own real avatar — confirmed live: no
+    broken-image glitch). On receive, this client currently prefers a
+    cached `SpaceUser` name (`spaceUserName()`) over the inbound
+    `SpaceMessage.name` when both exist — the *opposite* of what WA's own
+    client does (inbound `name` always wins there). Worth reconciling if a
+    future feature needs bit-for-bit parity with the real client's receive
+    behavior; not a correctness issue for #48 today.
+  - **Timestamps are client-side, not carried on the wire.** `SpaceMessage`
+    has no timestamp field; the real client's "05:50 PM" in the chat panel
+    is stamped locally at receipt. `lastChatMessage.at` in this client's
+    `/state` does the same (`Date.now()` on receipt) — nothing to send.
+  - **Not implemented, sibling proto messages in the same `SpaceEvent`
+    oneof:** `SpaceIsTyping` (typing indicator), `MuteAudioForEverybody`/
+    `MuteVideoForEverybody`. Deliberately out of scope for #48; the client
+    silently ignores them on receive (`_handleSub`'s `sub.publicEvent`
+    branch only acts on `spaceMessage`).
 - **Matrix — a separate, optional, persistent backend layered onto a
   specific area**, not a different chat mechanism and not what "area chat"
   means by default. An area gets Matrix *in addition to* its own Space chat

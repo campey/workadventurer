@@ -34,6 +34,8 @@ const USAGE = `wa — WorkAdventure presence control
   wa thought-bubble <text…>
   wa clear-bubble             dismiss whatever bubble is showing
   wa sound <name|file>        play a clip into the proximity voice chat
+  wa chat <text…>             send a chat message to whoever's currently nearby
+                              (proximity bubble or meeting-room area — not Matrix)
   wa wait-emote [player]      block until a player emotes  [--emote <match>] [--timeout <ms>]
   wa selfcheck                smoke-test a version target  [--target <id>] [--room <url>]
 
@@ -163,7 +165,7 @@ function report(json) {
   if (flags.json) { process.stdout.write(JSON.stringify(json, null, 2) + "\n"); return; }
   if (json.raw) { process.stdout.write(String(json.raw).trim() + "\n"); return; }
   const bits = [];
-  for (const k of ["following", "goingTo", "quietSpot", "greeted", "speechBubble", "thoughtBubble", "sound", "nothingToResume", "alreadyQuiet", "alreadyFollowing", "leaving"]) {
+  for (const k of ["following", "goingTo", "quietSpot", "greeted", "speechBubble", "thoughtBubble", "sound", "chat", "nothingToResume", "alreadyQuiet", "alreadyFollowing", "leaving"]) {
     if (json[k] !== undefined && json[k] !== null && json[k] !== false) bits.push(`${k}: ${typeof json[k] === "object" ? JSON.stringify(json[k]) : json[k]}`);
   }
   process.stdout.write((bits.length ? bits.join(", ") : "ok") + "\n");
@@ -276,6 +278,15 @@ switch (cmd) {
     await needDaemon();
     const r = await api("POST", "/sound", { name: args.join(" "), cwd: process.cwd() });
     if (!r.ok) die(r.json.error || `sound failed (${r.status})`);
+    report(r.json);
+    break;
+  }
+  case "chat": {
+    const text = args.join(" ").trim();
+    if (!text) die("usage: wa chat <text>", 2);
+    await needDaemon();
+    const r = await api("POST", "/chat", { text });
+    if (!r.ok) die(r.json.error || `chat failed (${r.status})`);
     report(r.json);
     break;
   }

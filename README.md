@@ -61,6 +61,7 @@ wa leave                          # disconnect and stop the daemon
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text bubble |
 | `wa clear-bubble` | dismiss whatever bubble is showing |
 | `wa sound <name\|file>` | play a clip into the proximity voice chat — bundled: `chime`, `blip`, `claude_intro` (see [Voice](#9-voice)) |
+| `wa chat <text>` | send a chat message to whoever's currently nearby (proximity bubble or meeting-room area — not Matrix) |
 | `wa wait-emote [player]` | block until a player emotes (`--emote <match>`, `--timeout <ms>`) |
 | `wa goto <x> <y>` | walk to raw coordinates |
 
@@ -125,7 +126,7 @@ The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
 
 | Call | Effect |
 |---|---|
-| `GET /state` | `{ name, target, pos, facing, area, areas, audio:{…}|null, following:…, lastEmote, lastInvite, players:[…] }` |
+| `GET /state` | `{ name, target, pos, facing, area, areas, audio:{…}|null, following:…, lastEmote, lastInvite, lastChatMessage, players:[…] }` |
 | `POST /goto` `{x,y}` or `{player}` | walk there (cancels any follow) |
 | `POST /follow` `{player}` | approach + follow (searches the map if not in view) |
 | `POST /unfollow` | stop and forget |
@@ -134,6 +135,7 @@ The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
 | `POST /speech-bubble` `{text}` / `POST /thought-bubble` `{text}` | text bubble |
 | `POST /clear-bubble` | dismiss whatever bubble is showing |
 | `POST /sound` `{name}` | play a clip into the proximity voice chat |
+| `POST /chat` `{text}` | send a chat message to every Space currently joined (proximity bubble and/or meeting-room area) |
 | `POST /wait-emote` `{player?,emote?,timeoutMs?}` | long-poll: resolves when a matching emote arrives |
 | `POST /leave` | disconnect and exit |
 
