@@ -407,10 +407,12 @@ Past the P2P-mesh threshold, the server sends `livekitInvitationMessage
 {token, serverUrl}` instead — the client connects via
 [`@livekit/rtc-node`](https://github.com/livekit/node-sdks) (native, not
 werift) and publishes the same way (issue #8). `wa sound` and the mic-prime
-route through whichever transport is currently active. Subscribing to
-others' LiveKit audio (e.g. for STT) and robust switch-back-to-WEBRTC
-mid-session are still open — this is connect + publish only. Repeated peer
-create/close cycles leak memory on the WEBRTC path (issue #29).
+route through whichever transport is currently active. In listen mode
+(`--stt`) it also subscribes to remote participants' audio the same way —
+see [§ 11](#11-live-speech-to-text-prototype-issue-23). Robust
+switch-back-to-WEBRTC mid-session is still open — this is connect + publish
+(+ subscribe) only. Repeated peer create/close cycles leak memory on the
+WEBRTC path (issue #29).
 
 ### 10. Map areas
 
@@ -440,23 +442,40 @@ read. `jitsiRoomProperty` areas are detected but not joined (no Jitsi client).
 
 ### 11. Live speech-to-text (prototype, issue #23)
 
-`WA_STT=1` puts the avatar in **listen mode** — it negotiates `sendrecv` instead
-of `sendonly` on the audio transceiver (so peers' browsers actually send us
-their mic), and live-transcribes what it hears:
+`--stt` (`WA_STT=1`) puts the avatar in **listen mode**. On the P2P WEBRTC
+path it negotiates `sendrecv` instead of `sendonly` on the audio transceiver
+(so peers' browsers actually send us their mic); on the LiveKit path (past
+the P2P-mesh threshold, [§ 9](#9-audio--webrtc-p2p--livekit)) it subscribes
+to each remote participant's track via `RoomEvent.TrackSubscribed`. Either
+way it live-transcribes what it hears:
 
 ```
-peer's Opus RTP  --(OggOpusMuxStream, src/ogg-opus-mux.mjs)-->  Ogg pages
-                  --(ffmpeg, persistent, forced input format)-->  16kHz mono PCM
-                  --(Unix socket)-->  scripts/stt_worker.py (resident mlx_whisper)
-                  <--(JSON lines)--  {type:"partial"|"final", text, words}
+WEBRTC:   peer's Opus RTP --(OggOpusMuxStream)--> Ogg pages --(ffmpeg)--> 16kHz mono PCM ---+
+LiveKit:  peer's track    --(AudioStream, already-decoded PCM)---------------------------> 16kHz mono PCM ---+
+                                                                                                              |
+                                            --(Unix socket)-->  scripts/stt_worker.py (resident mlx_whisper)
+                                            <--(JSON lines)--  {type:"partial"|"final", text, words}
 ```
+
+LiveKit's `AudioStream` already hands back decoded PCM, so that path skips
+the Ogg-mux/ffmpeg detour entirely — `SttStream`'s `raw: true` mode
+(`pushPcm()`) writes straight to the worker socket instead. Consuming
+`AudioStream` needs an explicit `reader.cancel()` in a `finally` block, not
+a bare `for await...break` — see
+[docs/field-notes.md](docs/field-notes.md#livekit-transport-issue-8) for why.
 
 The worker keeps the model loaded once and re-transcribes a growing per-peer
 buffer every ~400 ms with word timestamps, so text corrects itself in place as
 more context arrives (a wrong guess gets overwritten by the next tick's better
 one) rather than committing early. A silence gap (or a 20 s cap) finalizes the
-utterance. The daemon redraws the provisional line on the terminal and locks it
-in with a newline on `final`; `/state` doesn't expose it yet (console-only).
+utterance — only if there's actual text; silence alone doesn't emit an empty
+`final`. A repetition guard truncates the rare whisper-tiny failure mode where
+it loops a short phrase for the length of the whole utterance. In an
+interactive terminal the daemon redraws the provisional line in place and
+locks it in with a newline on `final`; under `--detach` (stdout is
+`daemon.log`, a plain file — cursor control doesn't mean anything there) it
+instead logs one clean, timestamped line per finalized utterance and drops
+partials. `/state` doesn't expose transcripts yet (console-only).
 
 Requires `ffmpeg` and `python3` + `mlx_whisper` on `PATH` (the tiny model
 downloads once, then runs well under real-time on an M-series Mac). Verify the
@@ -466,13 +485,14 @@ pipeline standalone — no WA connection needed — with:
 node scripts/stt-selfcheck.mjs [path/to/clip.wav]
 ```
 
-Each `SttStream` is capped (`MAX_STT_STREAMS` in `wa-audio.mjs`) and guards
-against `onTrack` firing more than once per connection — without that, WA's own
-peer-connect churn spun up unbounded `ffmpeg`/worker-connection pairs and
-spiked the daemon (same family as #29). The worker also serializes all
-`mlx_whisper.transcribe()` calls behind a lock — MLX's Metal backend isn't safe
-for two sessions' inference running concurrently, and without the lock a
-second simultaneous peer crashed the whole worker process.
+Each `SttStream` is capped (`MAX_STT_STREAMS` in `wa-audio.mjs`, shared across
+both transports) and guards against `onTrack`/`TrackSubscribed` firing more
+than once per connection — without that, WA's own peer-connect churn spun up
+unbounded `ffmpeg`/worker-connection pairs and spiked the daemon (same family
+as #29). The worker also serializes all `mlx_whisper.transcribe()` calls
+behind a lock — MLX's Metal backend isn't safe for two sessions' inference
+running concurrently, and without the lock a second simultaneous peer crashed
+the whole worker process.
 
 Known gaps: the speaker label falls back to the raw space-user id when
 `spaceUserName()` hasn't learned a name yet (only populated from

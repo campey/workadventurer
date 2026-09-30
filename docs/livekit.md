@@ -135,7 +135,11 @@ test proves the bug against the exact peer-connection config `WaAudio`
 uses, the other proves the fix, both against a real captured production
 payload rather than a synthetic approximation.
 
-## Receive (subscribe) — not yet built
+## Receive (subscribe, PR #44) — STT over LiveKit
+
+**The gotcha below was found first, then briefly re-broken by this PR's own
+first draft, then fixed again** — worth reading in that order since it's an
+easy mistake to repeat, not just historical trivia:
 
 A throwaway diagnostic that set `autoSubscribe: true` and read a few
 `RemoteTrack`s via `AudioStream` (to check whether the room routes media to
@@ -146,14 +150,37 @@ a `for await` loop early was not enough to stop the native side from
 continuing to push frames into an unconsumed queue. With that explicit
 cancel it worked cleanly (confirmed receiving real, non-silent human
 audio — 301 frames, RMS in the hundreds-to-thousands range). The
-diagnostic itself was never shipped (reverted after confirming it), but
-whoever builds the real subscribe path should call `reader.cancel()`
-explicitly, every time, not rely on early-break cleanup.
+diagnostic itself was never shipped, but its conclusion was meant for
+whoever built the real subscribe path: call `reader.cancel()` explicitly,
+every time, not rely on early-break cleanup.
 
-Once built, this would let STT work over LiveKit too — and should actually
-be *simpler* than the current WEBRTC route, since `AudioStream` hands you
-PCM directly instead of Opus RTP that needs muxing to Ogg and
-ffmpeg-decoding.
+**The real subscribe path's first draft got this wrong anyway** — a plain
+`for await (const frame of stream) { ...; break; }`, the exact pattern the
+note above warns against — and it wasn't caught during implementation, only
+later while re-reading this doc during a docs-reconciliation pass on the
+already-"finished" PR. Fixed to match the prescription. **Not yet
+re-confirmed live** the way the original diagnostic was (no populated
+meeting was available at fix time) — treat the subscribe path as
+code-correct-but-unverified until someone watches CPU/RSS during a real
+multi-participant LiveKit meeting with `--stt` on.
+
+**What actually landed:** `_doConnectLiveKit` passes `autoSubscribe:
+this.listen` (only listen mode needs others' audio) and, in listen mode,
+wires `RoomEvent.TrackSubscribed`/`TrackUnsubscribed` to feed each remote
+participant's audio into a `SttStream`, sharing the P2P path's
+`MAX_STT_STREAMS` cap. `AudioStream` hands back already-decoded 16kHz PCM —
+simpler than the WEBRTC route as predicted below — so `SttStream` gained a
+`raw: true` mode (`pushPcm()`) that writes straight to the worker socket,
+skipping the Ogg-mux/ffmpeg stage the P2P path needs to decode Opus.
+Verified live against a 7-person LiveKit meeting: real transcripts,
+correctly attributed to speakers via LiveKit `participant.identity`.
+
+Four more bugs surfaced live while testing this, none LiveKit-specific —
+full writeups in `docs/field-notes.md`'s STT section: `ensureWorker()`'s
+startup-timeout leak (permanently wedged STT after one slow model load),
+`--detach` mode logging raw ANSI redraw sequences into `daemon.log` (a
+plain file), empty-text `final` events spamming blank log lines, and
+whisper-tiny's repetition-loop hallucination on ambiguous audio.
 
 ## Status
 
@@ -165,9 +192,11 @@ ffmpeg-decoding.
   done, both live-verified**, including rejoining the reporter's own live
   session and having them confirm hearing a chime played through the
   fixed path.
-- **Subscribe, and robust switch-back-to-WEBRTC if a meeting shrinks below
-  the threshold mid-session: not yet built.** Explicit, scoped-out
-  follow-ups.
+- **Subscribe / STT over LiveKit (PR #44): landed, live-verified for
+  transcription; the `reader.cancel()` cleanup fix itself is not yet
+  re-verified live** (see above — needs a populated meeting + CPU/RSS
+  watch). Robust switch-back-to-WEBRTC if a meeting shrinks below the
+  threshold mid-session is still a scoped-out follow-up.
 
 ## Related, but not LiveKit-specific
 
