@@ -375,33 +375,46 @@ Rapid-fire invites (several in a few seconds) hit issue #29.
 
 ---
 
-## "Chat" is two unrelated systems
+## Chat: one wire mechanism (Space chat) + one separate optional add-on (Matrix)
 
-Worth stating plainly — this took a full research pass to untangle (#39,
-#48) and shouldn't need re-discovering:
+Worth stating precisely — an earlier pass through this (#39, #48) framed it
+as "proximity chat vs. area chat," implying two different chat backends,
+one of them inherently Matrix. That's a misnomer. The actual model, from the
+vendored proto (`proto/wa-1.33/messages.proto`):
 
-- **Proximity/bubble chat** — ephemeral, tied to whoever's nearby right now.
-  Rides the same WebSocket protocol this client already speaks
-  (`ProximityChatRoom.ts` upstream). **Not Matrix at all.** No auth beyond
-  the existing anonymous connection. This is #48.
-- **Area chat** (a named room, e.g. the Fire Pit) — persistent, genuinely
-  Matrix-backed. This is #39, and it's a much deeper rabbit hole:
+- **Space chat — the one chat mechanism the client protocol actually has.**
+  A `SpaceMessage` sent as `PublicEventFrontToPusher{spaceName,
+  spaceEvent:{spaceMessage:{message, characterTextures, name}}}`, received
+  back as `PublicEvent` with the same shape. It works identically no matter
+  *why* you're a member of that Space — an ambient proximity bubble (two
+  players standing near each other) and a meeting-room area (the Fire Pit, a
+  Board Room, any `livekitRoomProperty`/`jitsiRoomProperty` area) are both
+  just Spaces, joined via the same `_joinSpace()` the client already has
+  (`src/wa-client.mjs:355-450`). Not Matrix. No auth beyond the existing
+  anonymous connection. **This is #48** — scoped to send/receive
+  `SpaceMessage` on whichever Space(s) the client currently belongs to,
+  covering both the proximity-bubble case and the meeting-room-area case
+  with the same code, since they're the same underlying mechanism.
+- **Matrix — a separate, optional, persistent backend layered onto a
+  specific area**, not a different chat mechanism and not what "area chat"
+  means by default. An area gets Matrix *in addition to* its own Space chat
+  by carrying a `matrixRoomPropertyData` property (a fixed room ID baked in
+  at map-edit time via `POST /roomArea` →
+  `matrixProvider.createRoomForArea()`) — `_loadAreas()`
+  (`src/wa-client.mjs:174-193`) is where this client would see it, e.g.
+  `matrixRoomId: "!QjtmHAhrGndEpKZWkS:chat.workadventu.re"`. **This is #39**,
+  and it's a much deeper rabbit hole:
 
-  - An area's Matrix room is a fixed ID baked into the map at edit time
-    (`POST /roomArea` → `matrixProvider.createRoomForArea()`), not
-    created/resolved at runtime. `_loadAreas()`
-    (`src/wa-client.mjs:174-193`) is where this client would see it, as a
-    `matrixRoomPropertyData` property with a `matrixRoomId` like
-    `!QjtmHAhrGndEpKZWkS:chat.workadventu.re`.
   - **Anonymous access is a dead end.** `GameManager.ts` only constructs a
     Matrix client if `userIsConnected` (OIDC); `ConnectionManager.
     anonymousLogin()` explicitly wipes Matrix credentials; `POST
     /anonymLogin` returns only `{authToken, userUuid}`. The only
     token-minting path is a live browser round-trip: OIDC login → Synapse
     SSO redirect → `GET /matrix-callback` → `client.login("m.login.token",
-    {token})`. Entering an area also requires `socketData.chatID` (which
-    `_wsUrl()` sets to `""` today) so the pusher can invite the client into
-    the room — anonymous users have no `chatID` to invite.
+    {token})`. Entering an area's Matrix room also requires
+    `socketData.chatID` (which `_wsUrl()` sets to `""` today) so the pusher
+    can invite the client via `EnterChatRoomAreaQuery` — anonymous users
+    have no `chatID` to invite.
   - **It's self-service, though — not admin-gated.** WA has three access
     tiers (`docs.workadventu.re/admin/manage-access/`): Anonymous (what
     this client uses), **Visitor** (self-service — register via the
@@ -416,9 +429,10 @@ Worth stating plainly — this took a full research pass to untangle (#39,
     Visitor-register-and-login step in a real browser; after that the
     resulting `access_token`/`refresh_token` should be reusable headlessly
     against `chat.workadventu.re` directly, no browser needed for sending.
-  - **As of 2026-09-30, no area on the map has a Matrix room at all** — the
+  - **As of 2026-09-30, no area on the map has Matrix enabled at all** — the
     Fire Pit's `matrixRoomPropertyData` was removed (it's a
-    `livekitRoomProperty` area now); a full re-scan of all 20 areas,
+    `livekitRoomProperty` area now, so it still has ordinary Space chat, just
+    no Matrix persistence layered on top); a full re-scan of all 20 areas,
     including the northern cluster (Bench 1/2, Left/Right Board Room, Great
     Hall Podium, Audience — all Jitsi/megaphone, unrelated), turned up zero
     Matrix properties anywhere. Before this, the Fire Pit's room
