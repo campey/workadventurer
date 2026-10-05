@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **STT to Space chat (issue #41).** In `--stt` listen mode the daemon now
+  posts each final transcript to Space chat as one `Name: text` line (to every
+  Space joined; chat is append-only and the displayed name is fixed per
+  connection, so the speaker label is in the text), and shows each partial in a
+  thought bubble over the avatar, cleared on final. The bubble is on by default
+  for now; a separate flag is a later follow-up. Logic in `src/stt-room-output.mjs`.
+  Verified live: partials updated the bubble and the chat line landed in a real
+  browser's Proximity Chat. Finals only land once the stream flushes on a
+  silence gap or close, so a clip with no trailing audio finalizes late.
 - **The four `wa-1.34` behaviours #70 inherited on faith are now verified live
   (issue #71).** They were run against v1.34.0 with two
   headless avatars and a human: chat in both directions (exact text, correct

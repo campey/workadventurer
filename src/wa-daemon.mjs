@@ -37,6 +37,7 @@ import { WorkAdventureClient } from "./wa-client.mjs";
 import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
 import { resolveClip } from "./resolve-clip.mjs";
+import { makeSttRoomOutput } from "./stt-room-output.mjs";
 
 const cfg = resolveConfig();
 const PORT = cfg.port;
@@ -75,6 +76,12 @@ function attachAudio(client) {
     // up as garbled literal text and every final would get written twice
     // (once raw, once via `log()`). Detached mode instead logs one clean,
     // timestamped line per finalized utterance and drops partials entirely.
+    // Room output (#41): thought-bubble partials, Space-chat finals. A send
+    // failure must never break the console path below.
+    const roomOutput = makeSttRoomOutput(client);
+    audio.on("heard", (e) => {
+      try { roomOutput(e); } catch (err) { log(`stt room output failed: ${err.message}`); }
+    });
     audio.on("heard", ({ remoteUserId, text, final }) => {
       // Silence closing out a buffer that never had real speech transcribes
       // to "" — the worker skips sending these, but guard here too rather
