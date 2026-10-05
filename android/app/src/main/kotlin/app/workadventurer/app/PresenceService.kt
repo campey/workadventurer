@@ -11,8 +11,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import app.workadventurer.app.session.Command
-import app.workadventurer.app.session.Connection
-import app.workadventurer.app.session.SessionState
+import app.workadventurer.app.ui.notificationText
 import app.workadventurer.protocol.RoomConfig
 import app.workadventurer.protocol.Wa133
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +30,12 @@ class PresenceService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var observer: Job? = null
 
+    // The observer posts from a background thread. Cancelling its job doesn't wait for a notify() already
+    // in flight, which on a real phone left a stale ongoing notification after Leave. All posting goes
+    // through this guard so nothing can be posted once we've deactivated.
+    private val postLock = Any()
+    private var active = false
+
     private val session get() = (application as WaApp).session
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -39,6 +44,7 @@ class PresenceService : Service() {
         when (intent?.action) {
             ACTION_JOIN -> {
                 ensureChannel()
+                synchronized(postLock) { active = true }
                 ServiceCompat.startForeground(
                     this, NOTIF_ID, notification("Connecting…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
                 )
@@ -49,13 +55,13 @@ class PresenceService : Service() {
                 session.dispatch(Command.Join(cfg))
                 observer?.cancel()
                 observer = scope.launch {
-                    session.state.collect { s ->
-                        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(summary(s)))
-                    }
+                    session.state.collect { s -> post(notificationText(s)) }
                 }
             }
             ACTION_LEAVE -> {
+                deactivate()
                 session.dispatch(Command.Leave)
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         }
@@ -63,16 +69,20 @@ class PresenceService : Service() {
     }
 
     override fun onDestroy() {
-        session.dispatch(Command.Leave)
+        deactivate()
         scope.cancel()
+        session.dispatch(Command.Leave)
         super.onDestroy()
     }
 
-    private fun summary(s: SessionState): String = when (val c = s.connection) {
-        Connection.Connected -> "Connected · ${s.players.size} players"
-        Connection.Connecting, Connection.Disconnected -> "Connecting…"
-        is Connection.Reconnecting -> "Reconnecting…"
-        is Connection.Failed -> "Failed: ${c.message}"
+    private fun post(text: String) = synchronized(postLock) {
+        if (active) getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(text))
+    }
+
+    /** After this returns no notification can be posted, and ours is gone. */
+    private fun deactivate() = synchronized(postLock) {
+        active = false
+        getSystemService(NotificationManager::class.java).cancel(NOTIF_ID)
     }
 
     private fun notification(text: String): Notification {
