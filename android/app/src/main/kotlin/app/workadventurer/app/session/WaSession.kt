@@ -1,10 +1,16 @@
 package app.workadventurer.app.session
 
+import app.workadventurer.nav.Navigator
+import app.workadventurer.nav.Pt
+import app.workadventurer.nav.Target
+import app.workadventurer.nav.frontOf
+import app.workadventurer.nav.snapToFree
 import app.workadventurer.protocol.Area
 import app.workadventurer.protocol.JoinFailed
 import app.workadventurer.protocol.Player
 import app.workadventurer.protocol.PusherConnection
 import app.workadventurer.protocol.RoomConfig
+import app.workadventurer.protocol.toFacing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -13,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -20,6 +27,10 @@ import kotlinx.coroutines.launch
 sealed interface Command {
     data class Join(val config: RoomConfig) : Command
     data object Leave : Command
+    data class Follow(val userId: Int) : Command
+    data class WalkToPlayer(val userId: Int) : Command
+    data class WalkToArea(val areaKey: String) : Command // Area.id ?: Area.name
+    data object StopMoving : Command
 }
 
 sealed interface Connection {
@@ -30,12 +41,20 @@ sealed interface Connection {
     data class Failed(val message: String) : Connection
 }
 
+/** What the avatar is doing about movement right now. */
+sealed interface Activity {
+    data object Idle : Activity
+    data class WalkingTo(val label: String) : Activity
+    data class Following(val label: String) : Activity
+}
+
 data class SessionState(
     val connection: Connection = Connection.Disconnected,
     val roomName: String = "",
     val players: List<Player> = emptyList(), // sorted by name, case-insensitive
     val areas: List<Area> = emptyList(),
     val inAreas: List<Area> = emptyList(),
+    val activity: Activity = Activity.Idle,
 )
 
 typealias ConnectionFactory = (RoomConfig) -> PusherConnection
@@ -48,8 +67,11 @@ typealias ConnectionFactory = (RoomConfig) -> PusherConnection
  * only resets once a connection has stayed up for [stableAfterMs], so a connection that joins and drops
  * straight away can't hammer the server (or flicker an avatar in and out of a shared room) every second.
  *
+ * Movement commands ([Command.Follow] etc.) are ignored unless [Connection.Connected]; a new movement replaces
+ * the current one; Join, Leave, a failed join and a dropped connection all cancel it.
+ *
  * Thread-safety: [dispatch] runs on the caller's thread while runs execute on [scope]'s threads. Every
- * dispatch bumps a generation under [lock]; a run only writes state or adopts a connection while its
+ * Join/Leave bumps a generation under [lock]; a run only writes state or adopts a connection while its
  * generation is still current, so a late write from a cancelled run can never override a newer Leave/Join.
  */
 class WaSession(
@@ -66,20 +88,93 @@ class WaSession(
     private var generation = 0
     private var job: Job? = null
     private var conn: PusherConnection? = null
+    private var moveJob: Job? = null
+    private var moveSeq = 0
 
-    fun dispatch(cmd: Command) = synchronized(lock) {
+    fun dispatch(cmd: Command) {
+        synchronized(lock) {
+            when (cmd) {
+                is Command.Join -> {
+                    val gen = restart()
+                    // Set synchronously so observers never see the previous room's (or a stale Failed) state first.
+                    _state.value = SessionState(connection = Connection.Connecting, roomName = cmd.config.roomUrl)
+                    job = scope.launch { run(cmd.config, gen) }
+                }
+                Command.Leave -> {
+                    restart()
+                    _state.value = SessionState()
+                }
+                is Command.Follow -> startMovement { c ->
+                    val p = c.state.players.value[cmd.userId] ?: return@startMovement null
+                    Plan(Activity.Following(label(p))) { nav -> nav.follow({ targetOf(c, cmd.userId) }) }
+                }
+                is Command.WalkToPlayer -> startMovement { c ->
+                    val p = c.state.players.value[cmd.userId] ?: return@startMovement null
+                    Plan(Activity.WalkingTo(label(p))) { nav ->
+                        nav.navTo(
+                            target = Pt(p.x.toDouble(), p.y.toDouble()),
+                            stopWithin = 24.0,
+                            getTarget = { targetOf(c, cmd.userId)?.let { frontOf(it, c.position(), 64.0, c.grid.value) } },
+                            face = { targetOf(c, cmd.userId)?.let { Pt(it.x, it.y) } },
+                        )
+                    }
+                }
+                is Command.WalkToArea -> startMovement { c ->
+                    val a = c.state.areas.firstOrNull { (it.id ?: it.name) == cmd.areaKey } ?: return@startMovement null
+                    Plan(Activity.WalkingTo(a.name)) { nav ->
+                        val centre = Pt(a.x + a.w / 2.0, a.y + a.h / 2.0)
+                        nav.navTo(c.grid.value?.snapToFree(centre.x, centre.y) ?: centre, stopWithin = 24.0)
+                    }
+                }
+                Command.StopMoving -> stopMovement()
+            }
+        }
+    }
+
+    /** Ends the current presence run (and any movement) and returns the new generation. Caller holds [lock]. */
+    private fun restart(): Int {
         generation++
-        val gen = generation
         job?.cancel(); job = null
         conn?.close(); conn = null
-        when (cmd) {
-            is Command.Join -> {
-                // Set synchronously so observers never see the previous room's (or a stale Failed) state first.
-                _state.value = SessionState(connection = Connection.Connecting, roomName = cmd.config.roomUrl)
-                job = scope.launch { run(cmd.config, gen) }
+        stopMovement()
+        return generation
+    }
+
+    private class Plan(val activity: Activity, val run: suspend (Navigator) -> Unit)
+
+    private fun label(p: Player) = p.name.ifBlank { "Unnamed player" }
+
+    private fun targetOf(c: PusherConnection, userId: Int): Target? =
+        c.state.players.value[userId]?.let { Target(it.x.toDouble(), it.y.toDouble(), it.direction.toFacing()) }
+
+    /** Caller holds [lock]. Only while Connected; a new movement replaces the current one. */
+    private fun startMovement(build: (PusherConnection) -> Plan?) {
+        val c = conn ?: return
+        if (_state.value.connection != Connection.Connected) return
+        val plan = build(c) ?: return
+        moveJob?.cancel()
+        val id = ++moveSeq
+        val gen = generation
+        _state.update { it.copy(activity = plan.activity) }
+        moveJob = scope.launch {
+            try {
+                plan.run(Navigator({ c.grid.value }, c, nowMs))
+            } finally {
+                synchronized(lock) {
+                    if (gen == generation && id == moveSeq) {
+                        moveJob = null
+                        _state.update { it.copy(activity = Activity.Idle) }
+                    }
+                }
             }
-            Command.Leave -> _state.value = SessionState()
         }
+    }
+
+    /** Caller holds [lock]. */
+    private fun stopMovement() {
+        moveSeq++
+        moveJob?.cancel(); moveJob = null
+        _state.update { it.copy(activity = Activity.Idle) }
     }
 
     private fun setState(gen: Int, f: (SessionState) -> SessionState) = synchronized(lock) {
@@ -119,6 +214,7 @@ class WaSession(
             } catch (e: Exception) {
                 // transient: retry below
             } finally {
+                synchronized(lock) { if (gen == generation) stopMovement() }
                 c.close()
                 c.state.clear()
             }
@@ -133,12 +229,10 @@ class WaSession(
     }
 
     private suspend fun mirrorState(c: PusherConnection, gen: Int) {
-        c.state.players.collect { map ->
+        // Pose too, so `inAreas` follows the avatar as it walks.
+        combine(c.state.players, c.state.myPose) { players, _ -> players }.collect { map ->
             setState(gen) {
-                it.copy(
-                    players = map.values.sortedBy { p -> p.name.lowercase() },
-                    inAreas = c.state.currentAreas(),
-                )
+                it.copy(players = map.values.sortedBy { p -> p.name.lowercase() }, inAreas = c.state.currentAreas())
             }
         }
     }
