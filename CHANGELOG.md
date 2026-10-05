@@ -32,7 +32,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `docs/field-notes.md` "When prod bumps". Verified live with
   `wa selfcheck --target production` (resolved `wa-1.34`; connect, move, speech
   bubble, area-meeting join pass); invitations, chat send, greet and thought
-  bubbles are not exercised (recorded in the adapter's `verified`).
+  bubbles were not exercised at the time — they have since been verified live
+  (see the entry at the top of this section, issue #71).
 - **Space chat — send/receive text chat over WA's `SpaceMessage` (issue
   #48).** Works identically whether the client's current "Space" is an
   ambient proximity bubble or a meeting-room area — same `_joinSpace()`
