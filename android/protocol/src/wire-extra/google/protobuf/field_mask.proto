@@ -1,0 +1,13 @@
+// Minimal copy of google/protobuf/field_mask.proto. Wire bundles wrappers/struct
+// but not FieldMask, and proto/wa-1.33/messages.proto imports it.
+syntax = "proto3";
+
+package google.protobuf;
+
+option java_package = "com.google.protobuf";
+option java_multiple_files = true;
+option java_outer_classname = "FieldMaskProto";
+
+message FieldMask {
+  repeated string paths = 1;
+}
