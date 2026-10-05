@@ -30,6 +30,7 @@ tasks.matching { it.name.startsWith("generate") && it.name.endsWith("Protos") }
     .configureEach { dependsOn(protoWithPackage) }
 
 dependencies {
+    api(project(":nav"))
     api(libs.wire.runtime)
     api(libs.okhttp)
     api(libs.coroutines.core)
