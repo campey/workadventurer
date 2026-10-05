@@ -27,7 +27,6 @@ import argparse
 import asyncio
 import json
 import os
-import re
 import sys
 import threading
 import time
@@ -61,14 +60,32 @@ def log(*a):
 # reliably catch it. Detect a 1-6 word phrase repeating 4+ times in a row and
 # cut the runaway tail instead of emitting (and logging) hundreds of words of
 # the same loop.
-_REPEAT_RE = re.compile(r"\b(\w+(?:\s+\w+){0,5})\b(?:\s+\1\b){3,}", re.IGNORECASE)
-
-
+#
+# A backreference regex (`(\w+(?:\s+\w+){0,5})` + `(?:\s+\1\b){3,}`) looks
+# like the natural way to write this but is actually broken for a
+# *single-word* loop: nothing stops the capture group's own `{0,5}` from
+# greedily swallowing more repeats of that same word into the "phrase"
+# itself, so the backreference ends up matching a repeat-of-a-repeat and the
+# whole match balloons across the entire string instead of truncating —
+# confirmed live: a real "fucking" x150+ hallucination sailed straight
+# through uncollapsed. Explicit position-scanning avoids the ambiguity.
 def collapse_repetition(text):
-    m = _REPEAT_RE.search(text)
-    if not m:
-        return text
-    return text[: m.end()].rstrip() + " …"
+    words = text.split()
+    n = len(words)
+    for phrase_len in range(1, 7):
+        i = 0
+        while i + phrase_len * 4 <= n:
+            phrase = words[i : i + phrase_len]
+            reps = 1
+            j = i + phrase_len
+            while j + phrase_len <= n and words[j : j + phrase_len] == phrase:
+                reps += 1
+                j += phrase_len
+            if reps >= 4:
+                kept = words[: i + phrase_len * min(reps, 2)]
+                return " ".join(kept) + " …"
+            i += 1
+    return text
 
 
 class MicSession:

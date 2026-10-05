@@ -69,7 +69,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - whisper-tiny occasionally loops on a short phrase for an entire
     utterance (a known small-model hallucination failure mode) — added a
     guard that detects a 1-6 word phrase repeating 4+ times in a row and
-    truncates the runaway tail.
+    truncates the runaway tail. **A real live call caught the first version
+    of this guard not actually working for a single-word loop** (a
+    `fucking` × 150+ hallucination sailed straight through) — the
+    backreference regex it used let its own capture group swallow extra
+    repeats of the word into the "phrase," so the match (and thus the
+    "truncation" point) ballooned across the whole string instead of
+    stopping early. Rewritten as explicit position-scanning, which doesn't
+    have that ambiguity; re-verified against all previously-seen real
+    examples, including the one that slipped through.
 - **Fixed a `.slice()`-vs-`.subarray()` bug that made every LiveKit-published
   clip longer than one frame into a repeating ~50Hz buzz** instead of its
   real content — every 20ms chunk's data pointer was silently resolving to
