@@ -107,3 +107,35 @@ after the move.
   the field-notes "Testing approach").
 - Hygiene (CLAUDE.md): avatar named after the worktree; a test daemon for the
   browser-side peer gets its own port; `wa leave` when done.
+
+## G2 decisions (2026-10-05, added after G0/G1)
+
+Made while planning G2 (`docs/superpowers/plans/2026-10-05-android-client-g2-nav.md`);
+the spec above left these open.
+
+- **Collision maps are built on the phone at runtime**, from the room's `.wam` +
+  `.tmj` (user decision), not bundled. The app accepts any room URL, and bundling
+  would cover only the three rooms the Node client ever baked. The baked
+  `map/**/collision.json` files are test fixtures and a live parity target, never
+  read at runtime. `android/` stays self-contained, so the later move to its own
+  repo is still a move, not an untangling.
+- **The grid loads in the background after the join.** The `.tmj` is ~1.5 MB
+  (afrolabs); it must not delay joining. Until it arrives, and permanently if it
+  fails, movement is straight-line. The `.tmj` is cached on disk (24 h TTL; a stale
+  cache is used if a refetch fails).
+- **`:nav` is pure JVM and independent of `:protocol`** (`:protocol` depends on
+  `:nav`, not the reverse). It owns the grid, A\*, steering, the collision builder,
+  and a coroutine `Navigator` that drives a `MovementSink`; `PusherConnection`
+  implements the sink. Cancellation replaces the Node client's `AbortSignal`.
+- **Movement semantics differ from Node on purpose:** one final "stopped"
+  message per movement, not one per waypoint (which makes other players' avatars
+  stutter); a minimum per-iteration delay as an explicit anti-spin guard (Node hit a
+  live CPU/RSS spin-crash).
+- **Out of G2:** the enclosed-room heuristic in `followPoint` (`roomAt` /
+  `pointOutsideRoom` / `nearestEmptyArea`, a hard-coded `board room` regex for one
+  map), joining a bubble on entering an area (G3), joystick and map rendering.
+- **Finding that changes the testing note above:** Node-parity is checked on
+  pathfinding with *exact* path equality (a straight port, including the binary
+  heap's tie-breaking); the runtime builder is checked against the baked maps by a
+  live parity command (`wa-cli collision --baked`), since the `.tmj` files are too
+  large to keep as fixtures.
