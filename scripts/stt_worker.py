@@ -202,6 +202,12 @@ async def handle_conn(reader, writer, transcribe):
         except Exception as e:
             log(f"[{peer}] send failed: {e}")
 
+    # Silent buffers produce no transcript events at all (see the speech gate
+    # in tick_loop), so a healthy-but-quiet connection would look identical to
+    # a dead one to SttStream's "no data within 3s" startup-race check. Say
+    # hello so liveness doesn't depend on someone talking.
+    send(writer, {"type": "ready"})
+
     await asyncio.gather(reader_loop(), tick_loop())
     # flush whatever's left as a final utterance
     if len(session.buf) > 0:

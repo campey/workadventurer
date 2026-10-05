@@ -40,3 +40,21 @@ test("a later initSpaceUsersMessage updates an existing name", () => {
   c._handleSub({ initSpaceUsersMessage: { spaceName: "s1", users: [{ spaceUserId: "u1", name: "New" }] } });
   assert.equal(c.spaceUserName("u1"), "New");
 });
+
+test("a user who joins the space later (addSpaceUserMessage) is nameable", () => {
+  const c = client();
+  c._handleSub({ initSpaceUsersMessage: { spaceName: "s1", users: [{ spaceUserId: "u1", name: "Early" }] } });
+  assert.equal(c.spaceUserName("late"), null);
+  c._handleSub({ addSpaceUserMessage: { spaceName: "s1", user: { spaceUserId: "late", name: "Late Joiner" } } });
+  assert.equal(c.spaceUserName("late"), "Late Joiner");
+  assert.equal(c.spaceUserName("u1"), "Early", "existing names untouched");
+});
+
+test("updateSpaceUserMessage renames, but an update without a name keeps the old one", () => {
+  const c = client();
+  c._handleSub({ addSpaceUserMessage: { spaceName: "s1", user: { spaceUserId: "u1", name: "Old" } } });
+  c._handleSub({ updateSpaceUserMessage: { spaceName: "s1", user: { spaceUserId: "u1", name: "New" } } });
+  assert.equal(c.spaceUserName("u1"), "New");
+  c._handleSub({ updateSpaceUserMessage: { spaceName: "s1", user: { spaceUserId: "u1", name: "" } } }); // e.g. a mic-state-only update
+  assert.equal(c.spaceUserName("u1"), "New");
+});
