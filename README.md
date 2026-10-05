@@ -169,8 +169,9 @@ invite cycles currently leak memory (issue #29) — restart it every few.
 | `scripts/selfcheck.mjs` | live smoke test of a version target (`wa selfcheck`) |
 | `scripts/stt-selfcheck.mjs` | live smoke test of the STT pipeline, standalone (no WA connection) |
 | `map/<org>/<world>/<room>/collision.json` | per-room baked collision grid + named areas |
-| `src/adapters/` | one adapter per WA `major.minor` (`wa-1.33`, `wa-master`) + `resolveAdapter` — see [§ Version targets](#version-targets) |
-| `proto/<target>/messages.proto` | vendored WA proto per target (`wa-1.33` = tag `v1.33.5`) |
+| `src/adapters/` | one adapter per WA `major.minor` (`wa-1.33`, `wa-1.34`, `wa-master`) + `resolveAdapter` — see [§ Version targets](#version-targets) |
+| `proto/<target>/messages.proto` | vendored WA proto per target (`wa-1.33` = tag `v1.33.8`, `wa-1.34` = tag `v1.34.0`) |
+| `scripts/proto-diff.mjs` | structural wire diff of two vendored protos, flagging removals the client uses — see [§ Version targets](#version-targets) |
 | `docs/field-notes.md` | failure modes + non-obvious mechanics (spawn, `#10`, werift, area debounce, staging) |
 
 ## Regenerating the pinned artifacts
@@ -209,18 +210,21 @@ supported build has an **adapter** under `src/adapters/` carrying its
 
 | adapter | server | stability |
 |---|---|---|
-| `wa-1.33` | `play.workadventu.re` (build `v1.33.5`) | frozen — the verified prod baseline |
+| `wa-1.34` | `play.workadventu.re` (build `v1.34.0`) | frozen — current prod; spreads `wa-1.33` and overrides only the hash + proto |
+| `wa-1.33` | prior prod (`v1.33.x`) | frozen — the original verified baseline |
 | `wa-master` | `play.staging.workadventu.re` (rolling `master`) | tracking — best-effort, may lag |
 
 **Selection** (`resolveAdapter`): explicit `--target` / `WA_TARGET` wins;
 otherwise the client GETs the server's landing page, reads `v1.33.5` or
 `master@<sha>`, and maps it to `wa-<major>.<minor>` / `wa-master`; otherwise a
-host allowlist; otherwise a warned default of `wa-1.33`. The chosen adapter and
+host allowlist (prod → `wa-1.34`); otherwise a warned default of `wa-1.33`. An unknown newer minor falls back to the *newest* released adapter and warns that the server may answer `NEW_VERSION`. The chosen adapter and
 the reason are logged on connect and shown in `wa status`.
 
 A patch release that shifts the `apiVersionHash` **appends** to that adapter's
 `apiVersionHashes` — it does not fork a new adapter. Refresh `wa-master` with
-`node scripts/vendor-proto.mjs <ref>` (prints the recomputed hash).
+`node scripts/vendor-proto.mjs <ref>` (prints the recomputed hash). When **prod moves to a new `major.minor`** (it does without notice — see
+[docs/field-notes.md § When prod bumps](docs/field-notes.md#when-prod-bumps)), clients stop connecting
+with `NEW_VERSION` until there's an adapter for it.
 
 **Before any change touching `src/`:** `node scripts/selfcheck.mjs` (prod) must
 stay green. `--target wa-master` is advisory.

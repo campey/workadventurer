@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ADAPTERS,
   matchVersion,
@@ -52,14 +55,24 @@ test("resolveAdapter: probed v1.33.x -> wa-1.33", async () => {
   assert.ok(!r.warn);
 });
 
-test("resolveAdapter: probed unknown minor -> newest released + warn", async () => {
+test("resolveAdapter: probed v1.34.x -> wa-1.34, no warn", async () => {
   const r = await resolveAdapter({
     roomUrl: "https://play.workadventu.re/@/a/b/c",
     probeFn: async () => ({ kind: "release", minor: "1.34", raw: "v1.34.0" }),
   });
-  assert.equal(r.adapter.id, "wa-1.33");
+  assert.equal(r.adapter.id, "wa-1.34");
+  assert.ok(!r.warn);
+});
+
+test("resolveAdapter: probed unknown minor -> newest released + warn", async () => {
+  const r = await resolveAdapter({
+    roomUrl: "https://play.workadventu.re/@/a/b/c",
+    probeFn: async () => ({ kind: "release", minor: "1.35", raw: "v1.35.0" }),
+  });
+  assert.equal(r.adapter.id, "wa-1.34", "falls back to the NEWEST released adapter");
   assert.equal(r.warn, true);
-  assert.match(r.why, /no wa-1\.34/);
+  assert.match(r.why, /no wa-1\.35/);
+  assert.match(r.why, /NEW_VERSION/, "must say what failure to expect, since this is how prod's v1.34 bump surfaced (#55)");
 });
 
 test("resolveAdapter: probed master, sha matches tracked -> no warn", async () => {
@@ -87,7 +100,7 @@ test("resolveAdapter: probe fails, known host -> allowlist", async () => {
     roomUrl: "https://play.workadventu.re/@/a/b/c",
     probeFn: async () => null,
   });
-  assert.equal(r.adapter.id, "wa-1.33");
+  assert.equal(r.adapter.id, "wa-1.34");
   assert.match(r.why, /allowlist/);
 });
 
@@ -99,4 +112,34 @@ test("resolveAdapter: probe fails, unknown host -> warned default", async () => 
   assert.equal(r.adapter.id, "wa-1.33");
   assert.equal(r.warn, true);
   assert.match(r.why, /default/);
+});
+
+// An adapter whose hash set drifts from the proto it ships is how a version bump
+// becomes a surprise (#55): the server answers NEW_VERSION and nothing here said so.
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+for (const [id, adapter] of Object.entries(ADAPTERS)) {
+  test(`adapter ${id}: its vendored proto exists`, () => {
+    assert.ok(fs.existsSync(path.join(root, adapter.protoPath)), `missing ${adapter.protoPath}`);
+  });
+
+  test(`adapter ${id}: its apiVersionHashes include the hash its vendored proto was computed with`, () => {
+    const source = fs.readFileSync(path.join(root, path.dirname(adapter.protoPath), "SOURCE"), "utf8");
+    const vendored = source.match(/^apiVersionHash: (\w+)$/m)?.[1];
+    assert.ok(vendored, `no apiVersionHash line in ${path.dirname(adapter.protoPath)}/SOURCE`);
+    assert.ok(
+      adapter.apiVersionHashes.includes(vendored),
+      `${id} sends ${adapter.apiVersionHashes[0]} but proto was vendored at ${vendored}`
+    );
+  });
+}
+
+test("adapters: the allowlisted prod host resolves to the newest released adapter", async () => {
+  const r = await resolveAdapter({
+    roomUrl: "https://play.workadventu.re/@/a/b/c",
+    probeFn: async () => null,
+  });
+  const released = Object.values(ADAPTERS).filter((a) => a.stability !== "tracking");
+  const newest = released.map((a) => a.id).sort().at(-1);
+  assert.equal(r.adapter.id, newest, "when prod bumps, bump the allowlist with the new adapter");
 });
