@@ -485,14 +485,19 @@ pipeline standalone — no WA connection needed — with:
 node scripts/stt-selfcheck.mjs [path/to/clip.wav]
 ```
 
-Each `SttStream` is capped (`MAX_STT_STREAMS` in `wa-audio.mjs`, shared across
-both transports) and guards against `onTrack`/`TrackSubscribed` firing more
-than once per connection — without that, WA's own peer-connect churn spun up
-unbounded `ffmpeg`/worker-connection pairs and spiked the daemon (same family
-as #29). The worker also serializes all `mlx_whisper.transcribe()` calls
-behind a lock — MLX's Metal backend isn't safe for two sessions' inference
-running concurrently, and without the lock a second simultaneous peer crashed
-the whole worker process.
+Each `SttStream` counts against a safety cap (`MAX_STT_STREAMS` in
+`wa-audio.mjs`, shared across both transports; default 8, override with
+`WA_STT_MAX_STREAMS`) and the code guards against `onTrack`/`TrackSubscribed`
+firing more than once per connection — without that, WA's own peer-connect
+churn spun up unbounded `ffmpeg`/worker-connection pairs and spiked the
+daemon (same family as #29). The cap is *not* a compute budget: the worker
+discards all-quiet buffers without running whisper, so an idle or muted mic
+costs almost nothing. What is genuinely limited is how many people talk *at
+once*, since the worker serializes all `mlx_whisper.transcribe()` calls
+behind a lock (MLX's Metal backend isn't safe for two sessions' inference
+running concurrently — without the lock a second simultaneous peer crashed
+the whole worker process) and each tick re-transcribes the speaker's whole
+in-progress utterance. Measurements are in `docs/livekit.md`.
 
 Known gaps: the speaker label falls back to the raw space-user id when
 `spaceUserName()` hasn't learned a name yet (only populated from

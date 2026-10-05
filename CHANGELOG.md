@@ -78,6 +78,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     stopping early. Rewritten as explicit position-scanning, which doesn't
     have that ambiguity; re-verified against all previously-seen real
     examples, including the one that slipped through.
+  - **Only the first two subscribed participants were ever transcribed.**
+    Slots were first-come-first-served and held until the track went away,
+    so a muted participant who happened to subscribe first squatted a slot
+    while whoever was actually talking got `stt skipped`. The cap existed
+    because the worker ran a whisper pass every 400ms on *any* non-empty
+    buffer, silence included, all serialized behind one GPU lock. The worker
+    now discards all-quiet buffers without calling whisper (100ms-window RMS
+    against the existing quiet threshold, keeping a 0.2s lead-in), so idle
+    open mics are nearly free, and the default cap is 8
+    (`WA_STT_MAX_STREAMS` to override).
+  - **A participant already in the room when the listener connected could be
+    silently skipped.** WA can send two LiveKit invitations back to back;
+    two overlapping `room.connect()` calls share one identity, so the server
+    kicks the older one, orphaning its STT streams, and the survivor then
+    skipped those tracks as "already listening". Connects are now serialized
+    (a burst collapses to the latest invitation), the track handlers attach
+    *before* `connect()` with a sweep of already-subscribed tracks after it,
+    and a stream whose audio ends removes its own entry. Found with a
+    multi-agent bench, not a human call — see `docs/livekit.md`.
+  - People who joined the space *after* the listener were labelled by raw
+    space-user id for the whole session (`SCRIBE[open-space_33]`) —
+    `addSpaceUserMessage` / `updateSpaceUserMessage` weren't handled, only
+    the initial member snapshot.
+  - The worker now sends a `ready` hello on connect, so `SttStream`'s
+    "no data within 3s" startup check no longer reconnects every silent
+    stream once for no reason. The daemon also logs who it is transcribing
+    (`stt: transcribing <id> — N active`, `stopped`, `audio ended`) and which
+    room each LiveKit invitation is for.
 - **Fixed a `.slice()`-vs-`.subarray()` bug that made every LiveKit-published
   clip longer than one frame into a repeating ~50Hz buzz** instead of its
   real content — every 20ms chunk's data pointer was silently resolving to
