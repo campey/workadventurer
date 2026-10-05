@@ -11,7 +11,10 @@
 //
 // What a proto diff can NOT show is a behaviour change behind an unchanged
 // shape, so `verified` records what was actually exercised against the live
-// server. Everything under `unexercised` is inherited from 1.33 on faith.
+// server. Anything listed under `unexercised` is inherited from 1.33 on faith.
+// It is empty because the four items #70 had to inherit (issue #71) have since
+// been run live — that is NOT an audit of every CLI command (`wa quiet`,
+// `wa wait-emote`, … were not separately exercised).
 
 import wa133 from "./wa-1.33.mjs";
 
@@ -34,12 +37,13 @@ export default {
       "wa sound over both transports",
       "STT over both transports, late joiners named",
       "speech bubble set + clear, area-meeting join (`wa selfcheck --target production` resolved wa-1.34 and passed)",
+      // 2026-10-05, two headless avatars + a human (issue #71):
+      "sendChatMessage both ways — exact text and sender name on the receiver, ~1s",
+      "wa greet — walks to within ~26px, ends facing the target, joins the shared space",
+      "thought-bubble / speech-bubble / clear — server accepts, connection healthy, and a human saw both render",
+      "meeting invitation (invite-over) — a human invited the avatar; it accepted and walked over (`arrived: true`)",
     ],
-    unexercised: [
-      "meeting invitations (invite-over accept + walk)",
-      "sendChatMessage",
-      "greet / thought-bubble",
-    ],
+    unexercised: [],
   },
   // A SET: a patch release can shift the hash with no behaviour change — append
   // here (computed by scripts/vendor-proto.mjs), never fork a new adapter file.
