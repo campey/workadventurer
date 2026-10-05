@@ -158,11 +158,16 @@ every time, not rely on early-break cleanup.
 `for await (const frame of stream) { ...; break; }`, the exact pattern the
 note above warns against — and it wasn't caught during implementation, only
 later while re-reading this doc during a docs-reconciliation pass on the
-already-"finished" PR. Fixed to match the prescription. **Not yet
-re-confirmed live** the way the original diagnostic was (no populated
-meeting was available at fix time) — treat the subscribe path as
-code-correct-but-unverified until someone watches CPU/RSS during a real
-multi-participant LiveKit meeting with `--stt` on.
+already-"finished" PR. Fixed to match the prescription.
+
+**Re-confirmed live, 2026-10-05**, against a real populated meeting (5-6
+participants, several minutes of continuous multi-speaker transcription):
+daemon CPU stayed in the teens–20s%, the STT worker's CPU spiked into the
+80-90s% only during active inference bursts (expected — that's the model
+doing work, not a leak) and settled back down between them, RSS for both
+processes stayed well under 150MB throughout. No sign of the 300%+
+CPU / 1GB+ RSS blowup the original diagnostic hit. The `reader.cancel()`
+fix holds under real sustained load.
 
 **What actually landed:** `_doConnectLiveKit` passes `autoSubscribe:
 this.listen` (only listen mode needs others' audio) and, in listen mode,
@@ -192,11 +197,12 @@ whisper-tiny's repetition-loop hallucination on ambiguous audio.
   done, both live-verified**, including rejoining the reporter's own live
   session and having them confirm hearing a chime played through the
   fixed path.
-- **Subscribe / STT over LiveKit (PR #44): landed, live-verified for
-  transcription; the `reader.cancel()` cleanup fix itself is not yet
-  re-verified live** (see above — needs a populated meeting + CPU/RSS
-  watch). Robust switch-back-to-WEBRTC if a meeting shrinks below the
-  threshold mid-session is still a scoped-out follow-up.
+- **Subscribe / STT over LiveKit (PR #44): done, fully live-verified** —
+  both transcription correctness and the `reader.cancel()` cleanup fix
+  (see above: no CPU/RSS blowup over several minutes of real
+  multi-participant, multi-speaker use). Robust switch-back-to-WEBRTC if a
+  meeting shrinks below the threshold mid-session is still a scoped-out
+  follow-up.
 
 ## Related, but not LiveKit-specific
 
