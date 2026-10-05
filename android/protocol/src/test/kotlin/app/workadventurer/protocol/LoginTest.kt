@@ -37,13 +37,20 @@ class LoginTest {
     }
 
     @Test
+    fun wsUrlUsesApiVersionHashOverride() {
+        // For probing a server build that has no adapter yet (mirrors the Node client's WA_VERSION).
+        val u = wsUrl(RoomConfig(name = "n", apiVersionHash = "23c8eb8c"), tabId = "t")
+        assertEquals("23c8eb8c", u.queryParameter("version"))
+    }
+
+    @Test
     fun wsUrlCarriesRoomWokaVersionAndMediaState() {
         val cfg = RoomConfig(name = "n", micOn = false)
         val u = wsUrl(cfg, tabId = "abc123abc123")
         assertEquals("/ws/room", u.encodedPath)
         assertEquals(Wa133.DEFAULT_ROOM, u.queryParameter("roomId"))
         assertEquals(listOf(Wa133.DEFAULT_WOKA), u.queryParameterValues("characterTextureIds"))
-        assertEquals("05489a87", u.queryParameter("version"))
+        assertEquals("23c8eb8c", u.queryParameter("version")) // prod v1.34.0 (live-verified; see field-notes)
         assertEquals("false", u.queryParameter("microphoneState"))
         assertEquals("false", u.queryParameter("cameraState"))
         assertEquals("abc123abc123", u.queryParameter("tabId"))

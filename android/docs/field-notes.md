@@ -20,6 +20,24 @@ anything here that contradicts it means the spec gets revised first.
   `UpdateSpaceUserMessage.updateMask`). Fixed by vendoring a minimal
   `field_mask.proto` into `protocol/src/wire-extra/` as an extra Wire source dir.
   `proto/` itself is untouched.
+- **Prod moved to v1.34.0 and rejects the 1.33 `apiVersionHash`es.** First live run
+  (2026-10-05, hash `05489a87`): login, `/map`, spawn and the websocket upgrade
+  (token as `Sec-WebSocket-Protocol`, `Origin` header) all worked, then the server
+  sent `errorScreenMessage` "Please refresh / A new version of WorkAdventure is
+  available". `play.workadventu.re/` reports `v1.34.0`. Hash for that tag, from
+  `node scripts/vendor-proto.mjs --check v1.34.0` (read-only): **`23c8eb8c`**.
+  Re-run with that hash: joined as a normal player, saw the others, in-area
+  detection worked. So the **1.33 proto still decodes against a 1.34.0 server**;
+  the hash was the only blocker. The Android default is now `23c8eb8c`
+  (`Wa133.API_VERSION_HASHES[0]`, old hashes kept); `--api-version` / 
+  `RoomConfig.apiVersionHash` override it to probe a build with no adapter.
+  **Not verified:** that the Node CLI fails the same way on prod (same mechanism,
+  so very likely: its wa-1.33 adapter sends `05489a87`). It needs a proper
+  `wa-1.34` adapter / vendored proto. That's repo-wide adapter work, deliberately
+  not done here.
+- OkHttp passes a manually set `Sec-WebSocket-Protocol` header through unchanged
+  and doesn't require the server to echo it: the risk flagged in the plan didn't
+  materialise.
 - The vendored proto has no `package` line; `protoWithPackage` copies it with
   `package app.workadventurer.proto;` injected. Wire codegen and a round-trip of
   `ClientToServerMessage.joinRoomFrontMessage` verified.

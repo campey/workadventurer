@@ -33,7 +33,7 @@ fun wsUrl(cfg: RoomConfig, tabId: String): HttpUrl =
         .encodedPath("/ws/room")
         .addQueryParameter("roomId", cfg.roomUrl)
         .addQueryParameter("characterTextureIds", cfg.wokaId)
-        .addQueryParameter("version", Wa133.API_VERSION_HASHES[0])
+        .addQueryParameter("version", cfg.apiVersionHash)
         .addQueryParameter("roomName", "")
         .addQueryParameter("cameraState", "false")
         .addQueryParameter("microphoneState", cfg.micOn.toString())

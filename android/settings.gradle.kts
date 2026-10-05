@@ -7,3 +7,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "workadventure-app"
 include(":protocol")
+include(":wa-cli")
