@@ -12,6 +12,41 @@ anything here that contradicts it means the spec gets revised first.
 - The Gradle wrapper was generated from a one-off Gradle 8.10.2 download (avoids
   `brew install gradle`, which pulls a from-source `openjdk` on macOS 14).
 
+## G1 (emulator only so far; the real-phone locked-screen check is still open)
+
+Emulator: Pixel-class AVD `Medium_Phone_API_35` (Android 15), debug APK, 2026-10-05.
+
+- **Works:** join → `Connecting…` → `Connected` in about 8–10 s on the emulator
+  (login + `/map` + `.wam` + websocket), 3 players and 20 areas listed, no crash,
+  no `SecurityException`. `PresenceService` runs as `isForeground=true`,
+  `types=0x80` (`microphone`) on API 35. Notification has the Leave action; Leave
+  from the UI sets `Not in a room` and stops the service and notification.
+- **Doze (forced, `dumpsys battery unplug` + `deviceidle force-idle`, state read
+  back as `IDLE`):** with the app backgrounded, a stand-in avatar joined (list
+  went 3 → 4) and left (4 → 3); status stayed `Connected`. So the websocket kept
+  delivering room events under forced deep Doze, and a backgrounded activity
+  being recreated didn't touch the session (the process and service live
+  independently of the activity).
+- **Caveats (what this does NOT prove):** forced Doze via `dumpsys` doesn't
+  reproduce a real device's network restrictions or OEM battery managers; the
+  permissions were pre-granted with `adb shell pm grant` so the real permission
+  flow (and its denial path) is untested; no 10-minute screen-locked run; I did
+  not capture whether a silent reconnect happened (status would have shown
+  `Reconnecting`, and I only sampled it at a few points); whether OkHttp's
+  20 s `pingInterval` is needed is unmeasured.
+- **Launch command in the plan was wrong:** `am start -n app.workadventurer/.MainActivity`
+  expands against the `applicationId`, but the class lives under the `namespace`
+  (`app.workadventurer.app`). Use `app.workadventurer/app.workadventurer.app.MainActivity`.
+- **Emulator AVD is `Medium_Phone_API_35`**, not `Medium_Phone` (`emulator -list-avds`).
+- **`adb shell input text` dropped characters:** typed `android-client-spec-emu`,
+  the field held `and`, so the avatar joined the real room briefly as **`and`**
+  instead of a worktree-derived name (a hygiene miss; it left cleanly). Probably
+  `input text` racing Compose recomposition, but **unverified**: the real-phone
+  run (real typing) will show if it's an app bug.
+- **A system dialog ("Messages isn't responding", the emulator's own Google
+  Messages app) pushed our activity to the background twice** while the device
+  was force-idled. Not our app; the process and service survived both times.
+
 ## G0
 
 - **Wire does not bundle `google/protobuf/field_mask.proto`.** It resolves
