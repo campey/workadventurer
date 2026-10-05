@@ -1,5 +1,6 @@
 package app.workadventurer.app.ui
 
+import app.workadventurer.app.session.Activity
 import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.SessionState
 import app.workadventurer.proto.PositionMessage
@@ -29,6 +30,12 @@ class PresenceFormatTest {
         assertEquals("Connecting…", notificationText(state(Connection.Connecting)))
         assertEquals("Reconnecting (attempt 1) in 1s", notificationText(state(Connection.Reconnecting(1, 1_000))))
         assertEquals("Couldn't join: nope", notificationText(state(Connection.Failed("nope"))))
+    }
+
+    @Test fun activityTextDescribesWhatTheAvatarIsDoing() {
+        assertEquals(null, activityText(Activity.Idle))
+        assertEquals("Following Ada", activityText(Activity.Following("Ada")))
+        assertEquals("Walking to Fire pit", activityText(Activity.WalkingTo("Fire pit")))
     }
 
     @Test fun playerLabelHandlesEmptyName() {
