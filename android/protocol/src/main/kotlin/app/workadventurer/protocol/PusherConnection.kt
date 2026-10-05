@@ -1,5 +1,9 @@
 package app.workadventurer.protocol
 
+import app.workadventurer.nav.Facing
+import app.workadventurer.nav.MovementSink
+import app.workadventurer.nav.NavGrid
+import app.workadventurer.nav.Pt
 import app.workadventurer.proto.AvailabilityStatus
 import app.workadventurer.proto.ClientToServerMessage
 import app.workadventurer.proto.JoinRoomFrontMessage
@@ -17,8 +21,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
@@ -28,6 +35,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
@@ -44,7 +52,8 @@ open class PusherConnection(
     val state: RoomState = RoomState(),
     private val keepAliveMs: Long = 5_000,
     private val joinTimeoutMs: Long = 20_000,
-) {
+    private val cacheDir: File? = null,
+) : MovementSink {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val seq = AtomicLong(1)
     private val joined = CompletableDeferred<Unit>()
@@ -58,6 +67,28 @@ open class PusherConnection(
     open val closed: Deferred<Closed> get() = _closed
     open val log: SharedFlow<String> get() = _log.asSharedFlow()
 
+    private val _grid = MutableStateFlow<NavGrid?>(null)
+
+    /** The room's collision grid: null until the background load finishes (and forever if it fails). */
+    open val grid: StateFlow<NavGrid?> get() = _grid.asStateFlow()
+
+    override fun position(): Pt = state.myPose.value.let { Pt(it.x, it.y) }
+
+    override fun move(x: Double, y: Double, facing: Facing, moving: Boolean) {
+        state.setMyPose(x, y, facing)
+        send(ClientToServerMessage(userMovesMessage = UserMovesMessage(position = positionMessage(moving), viewport = viewport())))
+    }
+
+    private fun nudgeOffBlockedTile(g: NavGrid) {
+        val p = position()
+        if (!g.isPxBlocked(p.x, p.y)) return
+        val (tx, ty) = g.pxToTile(p.x, p.y)
+        val free = g.nearestFree(tx, ty) ?: return
+        val c = g.tileCenterPx(free.first, free.second)
+        _log.tryEmit("spawn tile is blocked; nudged to ${c.x.toInt()},${c.y.toInt()}")
+        move(c.x, c.y, state.myPose.value.facing, false)
+    }
+
     /** login -> areas -> spawn -> websocket; returns after roomJoinedMessage, throws [JoinFailed]. */
     open suspend fun connect() {
         // Any failure here (rejection, timeout, cancellation by a Leave) must not leave a half-open socket
@@ -65,7 +96,8 @@ open class PusherConnection(
         try {
             val login = anonymLogin(http, cfg)
             _log.tryEmit("anonymLogin ok (uuid ${login.userUuid})")
-            val areas = loadAreas(http, cfg)
+            val wam = fetchWamJson(http, cfg)
+            val areas = wam?.let { try { parseWam(it) } catch (e: Exception) { emptyList() } }.orEmpty()
             state.areas = areas
             spawn = pickSpawn(areas)
             state.setMyPosition(spawn.x, spawn.y)
@@ -80,6 +112,21 @@ open class PusherConnection(
             // A server that accepts the upgrade but never answers would otherwise hang us on "Connecting…".
             withTimeoutOrNull(joinTimeoutMs) { joined.await() }
                 ?: throw JoinFailed("timed out waiting for roomJoinedMessage")
+
+            // The ~1.5 MB map must never delay joining, so the collision grid loads in the background; until it
+            // arrives (or forever, if it fails) movement is straight-line.
+            wam?.let { text ->
+                scope.launch {
+                    val g = loadNavGrid(http, text, cacheDir)
+                    if (g == null) {
+                        _log.tryEmit("nav grid unavailable; movement stays straight-line")
+                    } else {
+                        _grid.value = g
+                        _log.tryEmit("nav grid ready (${g.w}x${g.h})")
+                        nudgeOffBlockedTile(g)
+                    }
+                }
+            }
         } catch (t: Throwable) {
             close()
             throw t
@@ -105,9 +152,9 @@ open class PusherConnection(
         )
     }
 
-    private fun position(moving: Boolean): PositionMessage {
+    private fun positionMessage(moving: Boolean): PositionMessage {
         val (x, y) = state.myPosition()
-        return PositionMessage(x = x, y = y, direction = PositionMessage.Direction.DOWN, moving = moving)
+        return PositionMessage(x = x, y = y, direction = state.myPose.value.facing.toDirection(), moving = moving)
     }
 
     private fun fail(reason: String) {
@@ -159,7 +206,7 @@ open class PusherConnection(
             _log.tryEmit("roomConnectedMessage received; sending joinRoomFrontMessage")
             send(ClientToServerMessage(joinRoomFrontMessage = JoinRoomFrontMessage(
                 name = cfg.name,
-                positionMessage = position(false),
+                positionMessage = positionMessage(false),
                 viewportMessage = viewport(),
                 availabilityStatus = AvailabilityStatus.ONLINE,
             )))
@@ -183,7 +230,7 @@ open class PusherConnection(
         keepAlive = scope.launch {
             while (true) {
                 delay(keepAliveMs)
-                send(ClientToServerMessage(userMovesMessage = UserMovesMessage(position = position(false), viewport = viewport())))
+                send(ClientToServerMessage(userMovesMessage = UserMovesMessage(position = positionMessage(false), viewport = viewport())))
             }
         }
     }
