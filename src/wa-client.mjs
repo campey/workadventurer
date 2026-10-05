@@ -650,6 +650,15 @@ export class WorkAdventureClient extends EventEmitter {
       this.emit("spaceUsers", { spaceName: sn, users });
       return;
     }
+    // The init snapshot only covers who was already in the space. Anyone who
+    // joins later arrives one at a time as addSpaceUserMessage, so without
+    // this a late joiner is labelled by raw space-user id for the whole
+    // session (found live: a transcript read `SCRIBE[open-space_33]`). An
+    // update only carries `name` when it actually changed it.
+    if (sub.addSpaceUserMessage || sub.updateSpaceUserMessage) {
+      const u = (sub.addSpaceUserMessage ?? sub.updateSpaceUserMessage).user;
+      if (u?.spaceUserId && u.name) this.spaceUserNames.set(u.spaceUserId, u.name);
+    }
     if (sub.privateEvent) {
       const pe = sub.privateEvent;
       const ev = pe.spaceEvent ?? {};

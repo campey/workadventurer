@@ -54,6 +54,40 @@ def log(*a):
     print(*a, file=sys.stderr, flush=True)
 
 
+# whisper-tiny (small/fast, so more prone to this than larger models) can get
+# stuck decoding the same short phrase over and over on ambiguous/quiet audio
+# — mlx_whisper's built-in compression-ratio hallucination guard doesn't
+# reliably catch it. Detect a 1-6 word phrase repeating 4+ times in a row and
+# cut the runaway tail instead of emitting (and logging) hundreds of words of
+# the same loop.
+#
+# A backreference regex (`(\w+(?:\s+\w+){0,5})` + `(?:\s+\1\b){3,}`) looks
+# like the natural way to write this but is actually broken for a
+# *single-word* loop: nothing stops the capture group's own `{0,5}` from
+# greedily swallowing more repeats of that same word into the "phrase"
+# itself, so the backreference ends up matching a repeat-of-a-repeat and the
+# whole match balloons across the entire string instead of truncating —
+# confirmed live: a real "fucking" x150+ hallucination sailed straight
+# through uncollapsed. Explicit position-scanning avoids the ambiguity.
+def collapse_repetition(text):
+    words = text.split()
+    n = len(words)
+    for phrase_len in range(1, 7):
+        i = 0
+        while i + phrase_len * 4 <= n:
+            phrase = words[i : i + phrase_len]
+            reps = 1
+            j = i + phrase_len
+            while j + phrase_len <= n and words[j : j + phrase_len] == phrase:
+                reps += 1
+                j += phrase_len
+            if reps >= 4:
+                kept = words[: i + phrase_len * min(reps, 2)]
+                return " ".join(kept) + " …"
+            i += 1
+    return text
+
+
 class MicSession:
     def __init__(self, transcribe):
         self._transcribe = transcribe
@@ -74,6 +108,21 @@ class MicSession:
     def duration_s(self):
         return len(self.buf) / SAMPLE_RATE
 
+    def has_speech(self):
+        """True if any 100ms window of the buffer is above the quiet threshold."""
+        win = SAMPLE_RATE // 10
+        n = len(self.buf) // win
+        if n == 0:
+            return bool(len(self.buf)) and float(np.sqrt(np.mean(self.buf**2))) >= SILENCE_RMS
+        windows = self.buf[: n * win].reshape(n, win)
+        return bool((np.sqrt(np.mean(windows**2, axis=1)) >= SILENCE_RMS).any())
+
+    def discard_quiet(self):
+        """Drop an all-quiet buffer, keeping a short lead-in so a speech onset
+        landing right after this tick isn't clipped."""
+        self.buf = self.buf[-int(0.2 * SAMPLE_RATE):]
+        self.last_partial_text = None
+
     def transcribe_current(self):
         if len(self.buf) < SAMPLE_RATE * 0.2:  # <200ms — not worth a call
             return None
@@ -83,7 +132,7 @@ class MicSession:
             for seg in r.get("segments", [])
             for w in seg.get("words", [])
         ]
-        return {"text": r["text"].strip(), "words": words}
+        return {"text": collapse_repetition(r["text"].strip()), "words": words}
 
     def reset(self):
         self.buf = np.zeros(0, dtype=np.float32)
@@ -116,6 +165,13 @@ async def handle_conn(reader, writer, transcribe):
                 log(f"[{peer}] loop wake t={time.time():.3f} buflen={len(session.buf)}")
             if len(session.buf) == 0:
                 continue
+            # An open mic with nobody talking is the common case in a big
+            # call. Without this, every idle stream still costs a whisper
+            # pass per tick (all serialized behind one GPU lock), which is
+            # the real reason the daemon had to cap concurrent streams.
+            if not session.has_speech():
+                session.discard_quiet()
+                continue
             force = session.duration_s() >= MAX_UTTERANCE_S
             silent = session.trailing_is_silent()
             if debug:
@@ -131,7 +187,10 @@ async def handle_conn(reader, writer, transcribe):
             if debug:
                 log(f"[{peer}] transcribe -> {result['text']!r}")
             if silent or force:
-                send(writer, {"type": "final", **result})
+                # Silence closing out a buffer that never had real speech in
+                # it transcribes to "" — nothing to finalize, just reset.
+                if result["text"]:
+                    send(writer, {"type": "final", **result})
                 session.reset()
             elif result["text"] != session.last_partial_text:
                 session.last_partial_text = result["text"]
@@ -142,6 +201,12 @@ async def handle_conn(reader, writer, transcribe):
             w.write((json.dumps(obj) + "\n").encode("utf-8"))
         except Exception as e:
             log(f"[{peer}] send failed: {e}")
+
+    # Silent buffers produce no transcript events at all (see the speech gate
+    # in tick_loop), so a healthy-but-quiet connection would look identical to
+    # a dead one to SttStream's "no data within 3s" startup-race check. Say
+    # hello so liveness doesn't depend on someone talking.
+    send(writer, {"type": "ready"})
 
     await asyncio.gather(reader_loop(), tick_loop())
     # flush whatever's left as a final utterance

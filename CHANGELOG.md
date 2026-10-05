@@ -31,9 +31,81 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   FFI runtime is released once at process shutdown
   (`disposeLiveKitRuntime()`), not per-room-disconnect. Verified live: real
   speech and short clips both play back clean, confirmed by a human listener
-  on two separate machines. **Scoped deliberately**: subscribing to others'
-  LiveKit audio (e.g. for STT) and full switch-back-to-WEBRTC robustness are
-  explicit follow-ups, not this pass — see the issue for what's left.
+  on two separate machines. **Scoped deliberately**: full switch-back-to-WEBRTC
+  robustness mid-session is still an explicit follow-up — see the issue for
+  what's left. Subscribing to others' LiveKit audio (e.g. for STT) landed
+  separately, below.
+- **STT now works over LiveKit-escalated meetings (issue #23 follow-up).**
+  `--stt` previously only wired transcription into the P2P werift path —
+  any meeting big enough to escalate to LiveKit (i.e. most real multiuser
+  rooms) had no audio subscription at all. `WaAudio` now subscribes on
+  `RoomEvent.TrackSubscribed` and feeds each remote participant's audio into
+  `SttStream`, sharing the existing `MAX_STT_STREAMS` cap with the P2P
+  peers. LiveKit's `AudioStream` already hands back decoded 16kHz PCM, so
+  `SttStream` gained a `raw` mode (`pushPcm()`) that writes straight to the
+  worker socket, skipping the Ogg-mux/ffmpeg detour the P2P path needs to
+  decode Opus. Consuming `AudioStream` uses an explicit `reader.cancel()` in
+  a `finally` block, not a bare `for await...break` — see
+  `docs/field-notes.md`'s LiveKit section for why that distinction matters
+  (a throwaway diagnostic during #8 already found breaking early doesn't
+  stop the native side from queuing frames). Verified live against a
+  7-person LiveKit meeting: real transcripts attributed to the correct
+  speakers via LiveKit participant identity.
+- **Three more STT bugs found live in the same pass:**
+  - `ensureWorker()`'s 15s startup-timeout path rejected the shared
+    worker-ready promise but never reset it — one slow cold model-load
+    permanently wedged STT for the rest of the daemon's life. Now kills the
+    stalled process on timeout (so the `exit` handler resets state) and the
+    window is 30s.
+  - `--detach` redirects stdout to `daemon.log` (a plain file), but the STT
+    console handler unconditionally wrote the interactive `\r\x1b[K`
+    in-place-redraw sequence — in a file that just piles up as literal `[K`
+    garble, and every final utterance was logged twice. Now gated on
+    `process.stdout.isTTY`: a real terminal keeps the redraw UX, detached
+    mode logs one clean, timestamped line per finalized utterance.
+  - Every silence gap sent a `final` event even when the buffer never had
+    real speech in it, spamming the log with blank `SCRIBE[name]: ` lines.
+    The worker now only sends a final when there's actual text.
+  - whisper-tiny occasionally loops on a short phrase for an entire
+    utterance (a known small-model hallucination failure mode) — added a
+    guard that detects a 1-6 word phrase repeating 4+ times in a row and
+    truncates the runaway tail. **A real live call caught the first version
+    of this guard not actually working for a single-word loop** (a
+    `fucking` × 150+ hallucination sailed straight through) — the
+    backreference regex it used let its own capture group swallow extra
+    repeats of the word into the "phrase," so the match (and thus the
+    "truncation" point) ballooned across the whole string instead of
+    stopping early. Rewritten as explicit position-scanning, which doesn't
+    have that ambiguity; re-verified against all previously-seen real
+    examples, including the one that slipped through.
+  - **Only the first two subscribed participants were ever transcribed.**
+    Slots were first-come-first-served and held until the track went away,
+    so a muted participant who happened to subscribe first squatted a slot
+    while whoever was actually talking got `stt skipped`. The cap existed
+    because the worker ran a whisper pass every 400ms on *any* non-empty
+    buffer, silence included, all serialized behind one GPU lock. The worker
+    now discards all-quiet buffers without calling whisper (100ms-window RMS
+    against the existing quiet threshold, keeping a 0.2s lead-in), so idle
+    open mics are nearly free, and the default cap is 8
+    (`WA_STT_MAX_STREAMS` to override).
+  - **A participant already in the room when the listener connected could be
+    silently skipped.** WA can send two LiveKit invitations back to back;
+    two overlapping `room.connect()` calls share one identity, so the server
+    kicks the older one, orphaning its STT streams, and the survivor then
+    skipped those tracks as "already listening". Connects are now serialized
+    (a burst collapses to the latest invitation), the track handlers attach
+    *before* `connect()` with a sweep of already-subscribed tracks after it,
+    and a stream whose audio ends removes its own entry. Found with a
+    multi-agent bench, not a human call — see `docs/livekit.md`.
+  - People who joined the space *after* the listener were labelled by raw
+    space-user id for the whole session (`SCRIBE[open-space_33]`) —
+    `addSpaceUserMessage` / `updateSpaceUserMessage` weren't handled, only
+    the initial member snapshot.
+  - The worker now sends a `ready` hello on connect, so `SttStream`'s
+    "no data within 3s" startup check no longer reconnects every silent
+    stream once for no reason. The daemon also logs who it is transcribing
+    (`stt: transcribing <id> — N active`, `stopped`, `audio ended`) and which
+    room each LiveKit invitation is for.
 - **Fixed a `.slice()`-vs-`.subarray()` bug that made every LiveKit-published
   clip longer than one frame into a repeating ~50Hz buzz** instead of its
   real content — every 20ms chunk's data pointer was silently resolving to

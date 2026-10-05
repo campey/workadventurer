@@ -18,8 +18,10 @@
 // serverUrl}` — the only connection material needed, no separate token
 // minting — and later `livekitDisconnectMessage{}` when it de-escalates or
 // we leave. That's a single connection to the room, not one per peer; `play()`
-// routes to it automatically when active. Scoped to connect + publish for
-// now — subscribing to others' LiveKit audio (e.g. for STT) is a follow-up.
+// routes to it automatically when active. In listen mode (`--stt`) we also
+// subscribe to remote participants' audio and feed it to SttStream, same as
+// the P2P path — LiveKit's AudioStream hands us already-decoded PCM, so no
+// Ogg/ffmpeg detour is needed there.
 
 import { EventEmitter } from "node:events";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -34,8 +36,11 @@ import {
 } from "werift";
 import {
   Room,
+  RoomEvent,
   AudioSource,
+  AudioStream,
   LocalAudioTrack,
+  RemoteAudioTrack,
   AudioFrame,
   TrackPublishOptions,
   TrackSource,
@@ -78,7 +83,25 @@ const OPUS = new RTCRtpCodecParameters({
 });
 
 const rnd32 = () => Math.floor(Math.random() * 0xffffffff) >>> 0;
-const MAX_STT_STREAMS = 2; // hard cap: each is a real ffmpeg process + worker socket
+
+// The invitation token is a JWT whose `video.room` claim names the room — which
+// is how you tell a proximity bubble's room from an area meeting's.
+function livekitRoomName(token) {
+  try {
+    return JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString()).video?.room ?? "?";
+  } catch {
+    return "?";
+  }
+}
+
+// LiveKit identities are WA space-user ids (long URLs) — the tail is readable.
+const participantLabel = (p) => (p?.identity ? p.identity.split("/").pop() : "unknown");
+// Safety cap on concurrent STT streams (each is a worker socket, and on the
+// P2P path a real ffmpeg process). Slots are first-come-first-served and held
+// until the track goes away, so it must be comfortably above a normal call's
+// size — the worker skips whisper on silent buffers, so idle open mics are
+// nearly free. Override with WA_STT_MAX_STREAMS.
+const MAX_STT_STREAMS = Number(process.env.WA_STT_MAX_STREAMS) || 8;
 
 // TEMP diagnostic (werift<->werift media investigation): SDP_DEBUG=<dir> dumps
 // every offer/answer to <dir>/<seq>-<connectionId>-<label>.sdp. The seq counter
@@ -138,6 +161,9 @@ export class WaAudio extends EventEmitter {
     this._silencePath = null; // cached short silence clip for the connect-time prime
     this._livekit = null; // { room, source, track } while a LiveKit-escalated meeting is active (#8)
     this._livekitConnecting = null; // Promise while _connectLiveKit() is in flight (#8 connect race)
+    this._livekitQueue = Promise.resolve(); // serializes connects (see _connectLiveKit)
+    this._livekitLatestInvite = null;
+    this._livekitStt = new Map(); // track.sid -> { stt } for listen-mode LiveKit subscriptions
 
     // Load ICE servers as early as possible, not gated on "spaceJoined" —
     // `_joinSpace` sends `addSpaceFilterMessage` well before that event
@@ -169,6 +195,14 @@ export class WaAudio extends EventEmitter {
   get remoteCount() {
     if (this._livekit) return this._livekit.room.remoteParticipants.size;
     return this.peers.size;
+  }
+
+  // Active SttStreams across both transports — one shared cap (MAX_STT_STREAMS)
+  // regardless of which transport is delivering the audio.
+  _activeSttCount() {
+    return (
+      [...this.peers.values()].filter((p) => p.stt).length + this._livekitStt.size
+    );
   }
 
   // Never rejects — `_iceReady` (constructor) is awaited unconditionally by
@@ -227,6 +261,7 @@ export class WaAudio extends EventEmitter {
         // switchMessage/finalizeSwitchMessage, which are informational
         // strategy announcements and aren't guaranteed to arrive in any
         // particular order relative to this (#8).
+        this.emit("log", `LiveKit invitation for room ${livekitRoomName(payload.token)} (space ${spaceName})`);
         this._connectLiveKit(payload).catch((e) =>
           this.emit("log", `LiveKit connect failed: ${e.message}`)
         );
@@ -251,24 +286,56 @@ export class WaAudio extends EventEmitter {
   // a chime fired right after joining such an area could hit `connected ===
   // false` and wrongly report nobody there to hear it, even though the
   // connect was already under way and would have succeeded moments later.
-  async _connectLiveKit({ token, serverUrl }) {
-    await this._disconnectLiveKit();
-
-    const connecting = this._doConnectLiveKit(token, serverUrl);
-    this._livekitConnecting = connecting;
-    try {
-      await connecting;
-    } finally {
-      if (this._livekitConnecting === connecting) this._livekitConnecting = null;
-    }
+  //
+  // Connects are serialized, and a burst collapses to "latest invitation
+  // wins". WA can send two invitations back to back; two overlapping
+  // room.connect() calls share one identity, so the server kicks the older
+  // connection (duplicate identity) — and whatever that connection had set
+  // up (STT streams) is silently orphaned.
+  _connectLiveKit(invite) {
+    const latest = (this._livekitLatestInvite = { ...invite, served: false });
+    const run = async () => {
+      if (latest.served || this._livekitLatestInvite !== latest) return; // superseded or already handled
+      latest.served = true;
+      await this._disconnectLiveKit();
+      await this._doConnectLiveKit(latest.token, latest.serverUrl);
+    };
+    const queued = this._livekitQueue.then(run, run);
+    this._livekitQueue = queued.catch(() => {});
+    this._livekitConnecting = queued;
+    const clear = () => {
+      if (this._livekitConnecting === queued) this._livekitConnecting = null;
+    };
+    queued.then(clear, clear);
+    return queued;
   }
 
   async _doConnectLiveKit(token, serverUrl) {
     const room = new Room();
+    if (this.listen) {
+      // Attach before connect(): with autoSubscribe, tracks of participants
+      // already in the room are subscribed as part of connecting, and an
+      // event fired before its handler exists is lost for good — that left
+      // whoever had been in the room longest silently untranscribed.
+      room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => this._onLiveKitTrack(track, participant));
+      room.on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => this._offLiveKitTrack(track, participant));
+      room.on(RoomEvent.TrackSubscriptionFailed, (sid, participant, reason) =>
+        this.emit("log", `stt: subscribing to ${participantLabel(participant)} (${sid}) failed: ${reason ?? "unknown"}`)
+      );
+    }
     await room.connect(serverUrl, token, {
-      autoSubscribe: false, // subscribe (e.g. for STT) is an explicit follow-up, not this pass
+      autoSubscribe: this.listen, // only listen mode (--stt) needs others' audio
       dynacast: false,
     });
+    if (this.listen) {
+      // Sweep anything that finished subscribing before we were looking.
+      // _onLiveKitTrack is idempotent per track.
+      for (const p of room.remoteParticipants.values()) {
+        for (const pub of p.trackPublications.values()) {
+          if (pub.track) this._onLiveKitTrack(pub.track, p);
+        }
+      }
+    }
 
     // queueSize (ms) is AudioSource's own internal jitter buffer, drained by
     // its own real-time pacer — default 1000ms. play() bursts an entire
@@ -294,7 +361,75 @@ export class WaAudio extends EventEmitter {
     await Promise.race([this._livekitConnecting.catch(() => {}), sleep(timeoutMs)]);
   }
 
+  // Subscribed remote audio track on the LiveKit room (listen mode only) —
+  // mirrors the P2P onTrack STT hookup, but LiveKit's AudioStream already
+  // hands us decoded PCM so SttStream skips straight to `raw` mode.
+  _onLiveKitTrack(track, participant) {
+    if (!(track instanceof RemoteAudioTrack)) return;
+    const existing = this._livekitStt.get(track.sid);
+    if (existing?.track === track) return; // already listening on this very track
+    if (existing) {
+      // Same sid, different track object — a leftover from a connection that
+      // was replaced. Don't let it shadow the live one.
+      this._livekitStt.delete(track.sid);
+      existing.stt.close();
+    }
+    if (this._activeSttCount() >= MAX_STT_STREAMS) {
+      this.emit("log", `stt skipped ${participantLabel(participant)} (${track.sid}) — ${MAX_STT_STREAMS} already active`);
+      return;
+    }
+    const remoteUserId = participant?.identity ?? track.sid;
+    const stt = new SttStream({ raw: true });
+    stt.on("log", (m) => this.emit("log", `[${track.sid}] stt: ${m}`));
+    stt.on("error", (e) => this.emit("log", `[${track.sid}] stt error: ${e.message}`));
+    stt.on("partial", (m) => this.emit("heard", { connectionId: track.sid, remoteUserId, ...m, final: false }));
+    stt.on("final", (m) => this.emit("heard", { connectionId: track.sid, remoteUserId, ...m, final: true }));
+    this._livekitStt.set(track.sid, { stt, track });
+    this.emit("log", `stt: transcribing ${participantLabel(participant)} (${track.sid}) — ${this._livekitStt.size} active`);
+
+    (async () => {
+      const stream = new AudioStream(track, { sampleRate: 16000, numChannels: 1 });
+      // A plain `for await...break` does NOT stop the native side from
+      // continuing to push frames into an unconsumed queue — confirmed live,
+      // reliably crashed the daemon within a minute (CPU 300%+, RSS 1GB+).
+      // Must use an explicit reader + explicit cancel(), every exit path,
+      // via `finally` (see docs/field-notes.md's LiveKit section).
+      const reader = stream.getReader();
+      try {
+        while (true) {
+          const { value: frame, done } = await reader.read();
+          if (done || this._livekitStt.get(track.sid)?.stt !== stt) break; // ended, or torn down/replaced mid-iteration
+          stt.pushPcm(Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength));
+        }
+      } catch (e) {
+        this.emit("log", `[${track.sid}] livekit audio stream error: ${e.message}`);
+      } finally {
+        try { await reader.cancel(); } catch {}
+        // If the audio ended on its own (server dropped the connection, no
+        // TrackUnsubscribed ever came), don't leave a dead entry behind that
+        // would shadow this track's replacement and hold a cap slot.
+        if (this._livekitStt.get(track.sid)?.stt === stt) {
+          this._livekitStt.delete(track.sid);
+          stt.close();
+          this.emit("log", `stt: audio ended for ${participantLabel(participant)} (${track.sid}) — ${this._livekitStt.size} active`);
+        }
+      }
+    })();
+  }
+
+  _offLiveKitTrack(track, participant) {
+    const entry = this._livekitStt.get(track.sid);
+    if (!entry) return;
+    this._livekitStt.delete(track.sid);
+    entry.stt.close();
+    this.emit("log", `stt: stopped ${participantLabel(participant)} (${track.sid}) — ${this._livekitStt.size} active`);
+  }
+
   async _disconnectLiveKit() {
+    // Cleared even when no room was ever stored: a connect that threw after
+    // subscribing some tracks would otherwise leak their streams.
+    for (const { stt } of this._livekitStt.values()) stt.close();
+    this._livekitStt.clear();
     if (!this._livekit) return;
     const { room, track } = this._livekit;
     this._livekit = null;
@@ -398,8 +533,7 @@ export class WaAudio extends EventEmitter {
         if (remoteTrack.kind !== "audio") return;
         const mine = this.peers.get(connectionId);
         if (!mine || mine.stt) return; // already listening on this connection
-        const active = [...this.peers.values()].filter((p) => p.stt).length;
-        if (active >= MAX_STT_STREAMS) {
+        if (this._activeSttCount() >= MAX_STT_STREAMS) {
           this.emit("log", `[${connectionId}] stt skipped — ${MAX_STT_STREAMS} already active`);
           return;
         }

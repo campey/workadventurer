@@ -275,8 +275,8 @@ Moved to its own doc, since it kept growing: **`docs/livekit.md`**. Covers
 the transport model (escalation is by mesh size, not area type — a wrong
 assumption about that cost real debugging time, see PR #45 vs. #46 there),
 the publish path and its two live-found bugs (`.slice()`-vs-`.subarray()`
-data corruption, the connect-race guard), and the subscribe path's known
-gotcha for whoever builds it next.
+data corruption, the connect-race guard), and the subscribe path (STT over
+LiveKit, PR #44) including the reader-cleanup gotcha that shaped it.
 
 (PR #46, found while chasing the same LiveKit-shaped report as #45, turned
 out to be pure WEBRTC, not LiveKit — its full writeup lives above, in this
@@ -288,6 +288,10 @@ The `_navTo` tight-loop spin mentioned in earlier versions of this section
 is *not* LiveKit-specific — it lives in `src/wa-client.mjs` and is covered
 under `### Peer-connection lifecycle leak — issue #29` above, since that's
 where its symptom overlap (crowded-area crashes) actually matters.
+
+(STT-over-LiveKit — the subscribe path this section used to call "still
+pending" — landed in PR #44; see `docs/livekit.md`'s "Receive (subscribe)"
+section for the writeup, not here, now that LiveKit content lives there.)
 
 ---
 

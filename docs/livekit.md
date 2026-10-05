@@ -135,7 +135,11 @@ test proves the bug against the exact peer-connection config `WaAudio`
 uses, the other proves the fix, both against a real captured production
 payload rather than a synthetic approximation.
 
-## Receive (subscribe) — not yet built
+## Receive (subscribe, PR #44) — STT over LiveKit
+
+**The gotcha below was found first, then briefly re-broken by this PR's own
+first draft, then fixed again** — worth reading in that order since it's an
+easy mistake to repeat, not just historical trivia:
 
 A throwaway diagnostic that set `autoSubscribe: true` and read a few
 `RemoteTrack`s via `AudioStream` (to check whether the room routes media to
@@ -146,14 +150,112 @@ a `for await` loop early was not enough to stop the native side from
 continuing to push frames into an unconsumed queue. With that explicit
 cancel it worked cleanly (confirmed receiving real, non-silent human
 audio — 301 frames, RMS in the hundreds-to-thousands range). The
-diagnostic itself was never shipped (reverted after confirming it), but
-whoever builds the real subscribe path should call `reader.cancel()`
-explicitly, every time, not rely on early-break cleanup.
+diagnostic itself was never shipped, but its conclusion was meant for
+whoever built the real subscribe path: call `reader.cancel()` explicitly,
+every time, not rely on early-break cleanup.
 
-Once built, this would let STT work over LiveKit too — and should actually
-be *simpler* than the current WEBRTC route, since `AudioStream` hands you
-PCM directly instead of Opus RTP that needs muxing to Ogg and
-ffmpeg-decoding.
+**The real subscribe path's first draft got this wrong anyway** — a plain
+`for await (const frame of stream) { ...; break; }`, the exact pattern the
+note above warns against — and it wasn't caught during implementation, only
+later while re-reading this doc during a docs-reconciliation pass on the
+already-"finished" PR. Fixed to match the prescription.
+
+**Re-confirmed live, 2026-10-05**, against a real populated meeting (5-6
+participants, several minutes of continuous multi-speaker transcription):
+daemon CPU stayed in the teens–20s%, the STT worker's CPU spiked into the
+80-90s% only during active inference bursts (expected — that's the model
+doing work, not a leak) and settled back down between them, RSS for both
+processes stayed well under 150MB throughout. No sign of the 300%+
+CPU / 1GB+ RSS blowup the original diagnostic hit. The `reader.cancel()`
+fix holds under real sustained load.
+
+**What actually landed:** `_doConnectLiveKit` passes `autoSubscribe:
+this.listen` (only listen mode needs others' audio) and, in listen mode,
+wires `RoomEvent.TrackSubscribed`/`TrackUnsubscribed` to feed each remote
+participant's audio into a `SttStream`, sharing the P2P path's
+`MAX_STT_STREAMS` cap. `AudioStream` hands back already-decoded 16kHz PCM —
+simpler than the WEBRTC route as predicted below — so `SttStream` gained a
+`raw: true` mode (`pushPcm()`) that writes straight to the worker socket,
+skipping the Ogg-mux/ffmpeg stage the P2P path needs to decode Opus.
+Verified live against a 7-person LiveKit meeting: real transcripts,
+correctly attributed to speakers via LiveKit `participant.identity`.
+
+Four more bugs surfaced live while testing this, none LiveKit-specific —
+full writeups in `docs/field-notes.md`'s STT section: `ensureWorker()`'s
+startup-timeout leak (permanently wedged STT after one slow model load),
+`--detach` mode logging raw ANSI redraw sequences into `daemon.log` (a
+plain file), empty-text `final` events spamming blank log lines, and
+whisper-tiny's repetition-loop hallucination on ambiguous audio.
+
+### Multi-agent bench (2026-10-05)
+
+A human-only call can't test multi-speaker behaviour on demand, so this was
+tested with headless avatars instead — and it found four bugs the human calls
+never did. Recipe, so it can be repeated:
+
+- **Listener in its own checkout.** The worker socket path is relative to the
+  checkout (`.wa-stt.sock`), and a second daemon spawning a worker there
+  unlinks and replaces the first one's socket. Use a throwaway
+  `git worktree add --detach .claude/worktrees/<name> origin/<branch>` for the
+  listener (remove it afterwards).
+- **Speakers**: N avatars, each `WA_NAME=<bench>-sN WA_DAEMON_PORT=<unique>
+  node src/wa-daemon.mjs` (no `WA_STT`), the listener the same with `WA_STT=1`.
+  Walk them into the meeting area; five or more participants forces LiveKit.
+- **Known text**: `wa sound claude_intro --port <P>` — baseline transcript
+  `Hey, I'm Claude, and I can now chat to you here. What should we do next?`.
+  An open-but-silent mic is `ffmpeg -f lavfi -i anullsrc=r=48000:cl=mono -t 60
+  silence.wav` played the same way (frames flow, no speech).
+- Agents only cover the server/SFU/worker side, not real browsers' timing.
+
+**Measured** (listener on an M-series Mac; `ps` %cpu, so smoothed):
+
+| scenario | daemon CPU | STT worker CPU |
+|---|---|---|
+| 4 subscribed, silent, no frames | 9% mean | 3% mean |
+| 3 open-but-silent mics streaming frames | 7.5% mean | 2.6% mean |
+| 4 speakers at once, 4.2s clip each | 8–14% mean | 12–22% mean, 40–80% peak |
+| one human talking continuously (live call) | n/a | ~85% |
+
+Idle streams are close to free once the worker skips silent buffers; all four
+simultaneous speakers were transcribed correctly and attributed to the right
+avatar, with finals landing 2–3s after the audio ended. The real limit is how
+many people talk *at once for a long time*: every tick re-transcribes the whole
+in-progress utterance (up to the 20s cap) behind one GPU lock, which is why one
+continuous talker already costs most of a core while four 4-second clips peaked
+lower. Sustained crosstalk from many people is **not measured**.
+
+**Bugs found by the bench** (each reproduced, fixed, and covered by a test where
+it could be):
+
+- *Overlapping connects.* Two LiveKit invitations back to back ran two
+  `room.connect()` calls under one identity; the server kicked the older one and
+  its STT streams died silently while their map entries lived on and blocked the
+  replacements. `_connectLiveKit` is now serialized with latest-invitation-wins
+  (`test/wa-livekit-connect-serialize.test.mjs` fails on the old code).
+- *Handler attached after `connect()`*, so a participant already in the room
+  could be missed; now attached before, with a sweep of already-subscribed
+  tracks after.
+- *Late joiners labelled by raw id* (`open-space_33`): only the initial member
+  snapshot was read, never `addSpaceUserMessage`.
+- *Silent streams reconnected for no reason* by `SttStream`'s "no data within
+  3s" startup check, now that silence emits nothing; the worker says `ready`.
+- Pre-existing and **not fixed**: `scripts/stt-selfcheck.mjs` fails on a cold
+  worker because it streams immediately and `push()` silently drops packets until
+  the pipeline exists (warm the worker first).
+
+**Transport changes held up.** When a participant left and the meeting fell
+below the escalation threshold, the server sent the LiveKit disconnect, the
+agents fell back to P2P peers, and when they returned it re-escalated with
+streams recreated, including the new participant. Transcription *during* the
+P2P phase of that cycle wasn't checked.
+
+**Test avatars form proximity bubbles if clustered.** Agents standing within
+roughly 50–70px of each other joined a proximity-group space (`…#619#…`) on top
+of the area meeting — visible to people in the room as bubbles inside the area —
+and left it once spread ≳80px apart. Keep test avatars ≥ ~90px apart. Not
+established: whether that extra space is what produced the double invitation
+(the one run that logged room names saw a single invitation, for the fire-pit
+room); the daemon now logs the room per invitation so it will show.
 
 ## Status
 
@@ -165,9 +267,13 @@ ffmpeg-decoding.
   done, both live-verified**, including rejoining the reporter's own live
   session and having them confirm hearing a chime played through the
   fixed path.
-- **Subscribe, and robust switch-back-to-WEBRTC if a meeting shrinks below
-  the threshold mid-session: not yet built.** Explicit, scoped-out
-  follow-ups.
+- **Subscribe / STT over LiveKit (PR #44): done, live-verified** — the
+  `reader.cancel()` cleanup fix (no CPU/RSS blowup over several minutes in a
+  real call), and, via the multi-agent bench above, four simultaneous speakers
+  plus a late joiner transcribed and correctly attributed. Not measured:
+  sustained crosstalk from many people. Server-driven switch back to WEBRTC and
+  re-escalation held up in the bench; STT during the P2P phase of that cycle,
+  and the daemon making any switching decision of its own, were not checked.
 
 ## Related, but not LiveKit-specific
 
