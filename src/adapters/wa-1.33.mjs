@@ -1,6 +1,8 @@
-// Baseline adapter: WorkAdventure prod (play.workadventu.re, build v1.33.8 as
-// of this pin). Every value here is what src/wa-client.mjs / src/wa-audio.mjs
-// used inline before the version-adapter seam. FROZEN — do not change for
+// Baseline adapter: the original verified WorkAdventure prod build (v1.33.8 as of
+// this pin). Prod moved to v1.34.0 on or before 2026-10-05 — that is wa-1.34 now
+// (issue #55); this stays as the 1.33 line and the base wa-1.34 and wa-master
+// spread. Every value here is what src/wa-client.mjs / src/wa-audio.mjs used
+// inline before the version-adapter seam. FROZEN — do not change for
 // staging/master work; see
 // docs/superpowers/specs/2026-09-10-wa-version-adapters-design.md.
 
