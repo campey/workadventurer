@@ -83,7 +83,12 @@ const OPUS = new RTCRtpCodecParameters({
 });
 
 const rnd32 = () => Math.floor(Math.random() * 0xffffffff) >>> 0;
-const MAX_STT_STREAMS = 2; // hard cap: each is a real ffmpeg process + worker socket
+// Safety cap on concurrent STT streams (each is a worker socket, and on the
+// P2P path a real ffmpeg process). Slots are first-come-first-served and held
+// until the track goes away, so it must be comfortably above a normal call's
+// size — the worker skips whisper on silent buffers, so idle open mics are
+// nearly free. Override with WA_STT_MAX_STREAMS.
+const MAX_STT_STREAMS = Number(process.env.WA_STT_MAX_STREAMS) || 8;
 
 // TEMP diagnostic (werift<->werift media investigation): SDP_DEBUG=<dir> dumps
 // every offer/answer to <dir>/<seq>-<connectionId>-<label>.sdp. The seq counter

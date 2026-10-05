@@ -108,6 +108,21 @@ class MicSession:
     def duration_s(self):
         return len(self.buf) / SAMPLE_RATE
 
+    def has_speech(self):
+        """True if any 100ms window of the buffer is above the quiet threshold."""
+        win = SAMPLE_RATE // 10
+        n = len(self.buf) // win
+        if n == 0:
+            return bool(len(self.buf)) and float(np.sqrt(np.mean(self.buf**2))) >= SILENCE_RMS
+        windows = self.buf[: n * win].reshape(n, win)
+        return bool((np.sqrt(np.mean(windows**2, axis=1)) >= SILENCE_RMS).any())
+
+    def discard_quiet(self):
+        """Drop an all-quiet buffer, keeping a short lead-in so a speech onset
+        landing right after this tick isn't clipped."""
+        self.buf = self.buf[-int(0.2 * SAMPLE_RATE):]
+        self.last_partial_text = None
+
     def transcribe_current(self):
         if len(self.buf) < SAMPLE_RATE * 0.2:  # <200ms — not worth a call
             return None
@@ -149,6 +164,13 @@ async def handle_conn(reader, writer, transcribe):
             if debug:
                 log(f"[{peer}] loop wake t={time.time():.3f} buflen={len(session.buf)}")
             if len(session.buf) == 0:
+                continue
+            # An open mic with nobody talking is the common case in a big
+            # call. Without this, every idle stream still costs a whisper
+            # pass per tick (all serialized behind one GPU lock), which is
+            # the real reason the daemon had to cap concurrent streams.
+            if not session.has_speech():
+                session.discard_quiet()
                 continue
             force = session.duration_s() >= MAX_UTTERANCE_S
             silent = session.trailing_is_silent()
