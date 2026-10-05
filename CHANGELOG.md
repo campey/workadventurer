@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The four `wa-1.34` behaviours #70 inherited on faith are now verified live
+  (issue #71).** They were run against v1.34.0 with two
+  headless avatars and a human: chat in both directions (exact text, correct
+  sender), `wa greet` (walks over, ends facing the target), thought and speech
+  bubbles (accepted, and a human saw both render), and invite-over (a human
+  invited the avatar; it accepted and walked over). The adapter's `unexercised`
+  list is now empty (this is not an audit of every CLI command — `wa quiet`,
+  `wa wait-emote` etc. weren't separately run). Not added: a selfcheck step for these — they need a second
+  participant, which an unattended run doesn't have.
 - **`wa-1.34` adapter for prod WorkAdventure v1.34.0 (issue #55).** Prod moved
   from `v1.33.8` to `v1.34.0` and hard-rejected every client's 1.33 hash
   (`errorScreen NEW_VERSION`); #68 restored connections with a stopgap hash on
