@@ -11,6 +11,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import app.workadventurer.app.session.Command
+import app.workadventurer.app.session.Connection
 import app.workadventurer.app.ui.notificationText
 import app.workadventurer.protocol.RoomConfig
 import app.workadventurer.protocol.Wa133
@@ -55,7 +56,17 @@ class PresenceService : Service() {
                 session.dispatch(Command.Join(cfg))
                 observer?.cancel()
                 observer = scope.launch {
-                    session.state.collect { s -> post(notificationText(s)) }
+                    session.state.collect { s ->
+                        if (s.connection is Connection.Failed) {
+                            // A join that failed for good isn't "presence": stop the foreground service (and its
+                            // microphone-type notification) now. The reason stays visible in the app's status line.
+                            deactivate()
+                            ServiceCompat.stopForeground(this@PresenceService, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                            stopSelf()
+                        } else {
+                            post(notificationText(s))
+                        }
+                    }
                 }
             }
             ACTION_LEAVE -> {

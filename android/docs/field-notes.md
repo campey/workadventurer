@@ -49,6 +49,37 @@ for "list stayed current" is the user's report, not a measurement.**
   state rendered as `Connecting…` (now `Not in a room`). Both now live in the
   pure, tested `notificationText()`.
 
+## G1 — whole-branch review (fresh reviewer): what it found and what changed
+
+No Critical findings; the protocol layer and the five plan "focus" cases held up.
+Four Important findings were real and are fixed, each with a test that failed
+first (suite now 44 tests, 0 failures):
+
+- **Leave/re-Join leaked a coroutine** that kept mirroring the *old* connection
+  into the session state, so after Leave the UI could show "Not in a room" with
+  players listed, or a new room could show the previous room's players.
+  `WaSession` now runs each connection inside its own `coroutineScope`.
+- **Leave raced the connect loop across threads.** A late write from a cancelled
+  run could turn `Disconnected` back into `Reconnecting`. Every state write and
+  connection adoption is now gated by a generation counter under a lock.
+- **A failed first join left the socket open and the microphone foreground
+  service running.** `connect()` now closes itself on any failure (including
+  being cancelled by a Leave, which also closes a small ghost-socket window), and
+  the service stops itself on `Failed`. The service half is platform glue and is
+  **not verified live**.
+- **A silent server hung "Connecting…" forever** (the plan's own "never hang"
+  case). There is now a 20 s join timeout.
+- **Connections that join and drop immediately reconnected every second**, each
+  with a fresh anonymous login: hammering prod and flickering an avatar in a shared
+  room. Backoff now resets only after a connection has stayed up 30 s.
+
+Still **open** (deferred minors, in the ledger): a first-attempt transport
+failure is final while a login failure retries; mid-session server errors and
+reconnect reasons are dropped silently and nothing logs `PusherConnection.log`
+(so "did a silent reconnect happen?" still can't be answered on a phone; add logcat
+output before the next soak); `Wa133` is named "frozen 1.33" but holds the 1.34
+hash; the reconnect countdown text never counts down.
+
 ## G1 — emulator
 
 Emulator: Pixel-class AVD `Medium_Phone_API_35` (Android 15), debug APK, 2026-10-05.

@@ -145,6 +145,31 @@ class PusherConnectionTest {
     }
 
     @Test
+    fun failedJoinClosesTheSocketInsteadOfLeavingItOpen() = runBlocking<Unit> {
+        val fake = Fake(
+            onOpen = { ws -> ws.send(s2c(ServerToClientMessage(errorScreenMessage = ErrorScreenMessage(title = "Nope", details = "full")))) },
+            onFrame = { _, _ -> },
+        )
+        server(fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s))
+            assertFailsWith<JoinFailed> { withTimeout(5_000) { conn.connect() } }
+            // Without an explicit close the socket (and its avatar) would stay in the room, kept alive by pings.
+            withTimeout(5_000) { conn.closed.await() }
+        }
+    }
+
+    @Test
+    fun silentServerTimesOutInsteadOfHanging() = runBlocking<Unit> {
+        val fake = Fake(onOpen = { _ -> }, onFrame = { _, _ -> }) // accepts the upgrade, never says anything
+        server(fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), joinTimeoutMs = 300)
+            val e = assertFailsWith<JoinFailed> { withTimeout(5_000) { conn.connect() } }
+            assertTrue(e.message!!.contains("timed out"), e.message)
+            withTimeout(5_000) { conn.closed.await() }
+        }
+    }
+
+    @Test
     fun closeBeforeJoinFailsConnectInsteadOfHanging() = runBlocking {
         val fake = Fake(onOpen = { ws -> ws.close(1008, "bad version") }, onFrame = { _, _ -> })
         server(fake).use { s ->

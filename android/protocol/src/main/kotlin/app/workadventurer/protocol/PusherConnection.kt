@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -42,6 +43,7 @@ open class PusherConnection(
     private val cfg: RoomConfig,
     val state: RoomState = RoomState(),
     private val keepAliveMs: Long = 5_000,
+    private val joinTimeoutMs: Long = 20_000,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val seq = AtomicLong(1)
@@ -58,26 +60,37 @@ open class PusherConnection(
 
     /** login -> areas -> spawn -> websocket; returns after roomJoinedMessage, throws [JoinFailed]. */
     open suspend fun connect() {
-        val login = anonymLogin(http, cfg)
-        _log.tryEmit("anonymLogin ok (uuid ${login.userUuid})")
-        val areas = loadAreas(http, cfg)
-        state.areas = areas
-        spawn = pickSpawn(areas)
-        state.setMyPosition(spawn.x, spawn.y)
-        _log.tryEmit("loaded ${areas.size} map areas; spawn ${spawn.x},${spawn.y}${spawn.area?.let { " in \"$it\"" } ?: ""}")
+        // Any failure here (rejection, timeout, cancellation by a Leave) must not leave a half-open socket
+        // behind: an open socket keeps an avatar in the room and, with pings, stays alive indefinitely.
+        try {
+            val login = anonymLogin(http, cfg)
+            _log.tryEmit("anonymLogin ok (uuid ${login.userUuid})")
+            val areas = loadAreas(http, cfg)
+            state.areas = areas
+            spawn = pickSpawn(areas)
+            state.setMyPosition(spawn.x, spawn.y)
+            _log.tryEmit("loaded ${areas.size} map areas; spawn ${spawn.x},${spawn.y}${spawn.area?.let { " in \"$it\"" } ?: ""}")
 
-        val req = Request.Builder()
-            .url(wsUrl(cfg, UUID.randomUUID().toString().take(12)))
-            .header("Sec-WebSocket-Protocol", login.authToken) // JWT rides as the subprotocol
-            .header("Origin", "https://play.workadventu.re")
-            .build()
-        ws = http.newWebSocket(req, listener)
-        joined.await()
+            val req = Request.Builder()
+                .url(wsUrl(cfg, UUID.randomUUID().toString().take(12)))
+                .header("Sec-WebSocket-Protocol", login.authToken) // JWT rides as the subprotocol
+                .header("Origin", "https://play.workadventu.re")
+                .build()
+            ws = http.newWebSocket(req, listener)
+            // A server that accepts the upgrade but never answers would otherwise hang us on "Connecting…".
+            withTimeoutOrNull(joinTimeoutMs) { joined.await() }
+                ?: throw JoinFailed("timed out waiting for roomJoinedMessage")
+        } catch (t: Throwable) {
+            close()
+            throw t
+        }
     }
 
+    /** Idempotent. Completes [closed] right away rather than waiting for the server to echo the close. */
     open fun close() {
         keepAlive?.cancel()
         ws?.close(1000, "bye")
+        _closed.complete(Closed(1000, "closed by client"))
         scope.cancel()
     }
 
