@@ -15,12 +15,7 @@ export default {
   // A SET of accepted apiVersionHash values: a patch release can shift the hash
   // with no behaviour change — append here, never fork a new adapter file.
   // Index 0 is what wa-client.mjs actually sends; newest first.
-  // 23c8eb8c (v1.34.0) is a STOPGAP, issue #55: prod moved to v1.34.0 and
-  // hard-rejects the 1.33 hashes (errorScreen NEW_VERSION). Computed with
-  // `node scripts/vendor-proto.mjs --check v1.34.0` and verified to connect,
-  // but every behaviour below is still 1.33's and nobody has diffed 1.34's
-  // proto against proto/wa-1.33/ — a real wa-1.34 adapter is the follow-up.
-  apiVersionHashes: ["23c8eb8c", "05489a87", "bfd20fc4"], // v1.34.0 (stopgap), v1.33.8, v1.33.5
+  apiVersionHashes: ["05489a87", "bfd20fc4"], // v1.33.8, v1.33.5
   protoPath: "proto/wa-1.33/messages.proto",
   defaultWokaId: "506a3a64-47a9-4587-b19b-2d1eb13f9790",
   endpoints: { anonymLogin: "/anonymLogin", map: "/map", wokaList: "/woka/list" },

@@ -3,19 +3,21 @@
 // docs/superpowers/specs/2026-09-10-wa-version-adapters-design.md.
 
 import wa133 from "./wa-1.33.mjs";
+import wa134 from "./wa-1.34.mjs";
 import waMaster from "./wa-master.mjs";
 
 export const ADAPTERS = {
   "wa-1.33": wa133,
+  "wa-1.34": wa134,
   "wa-master": waMaster,
 };
 
 // Released adapters, oldest first; last is "newest released".
-const RELEASED = [wa133];
+const RELEASED = [wa133, wa134];
 
 // Fallback when the probe can't reach or parse the server.
 const HOST_ALLOWLIST = {
-  "play.workadventu.re": "wa-1.33",
+  "play.workadventu.re": "wa-1.34",
 };
 
 /** Pull a version marker out of a WorkAdventure landing page. */
@@ -70,7 +72,9 @@ export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion
     const newest = RELEASED[RELEASED.length - 1];
     return {
       adapter: newest,
-      why: `probed ${probe.raw} — no ${key} adapter, using ${newest.id} behaviours`,
+      why:
+        `probed ${probe.raw} — no ${key} adapter, using ${newest.id} behaviours; ` +
+        `the server may reject its hash (NEW_VERSION) — see "When prod bumps" in docs/field-notes.md`,
       warn: true,
     };
   }

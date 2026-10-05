@@ -341,7 +341,7 @@ daemon in the past.
 `## Version targets` for selection logic. Field notes:
 
 - **Prod is one server.** `play.workadventu.re` hosts afrolabs, lean-iterator,
-  tcm, … all on the tagged release (`v1.33.5` → `wa-1.33`).
+  tcm, … all on the tagged release (`v1.34.0` → `wa-1.34`; was `v1.33.x` → `wa-1.33` until 2026-10-05).
 - **Staging is rolling `master`**, untagged — `play.staging.workadventu.re`.
   Its commit sha *moves between sessions* (`7c5ff99b` → `7d628838` → …), and
   each move can shift the `apiVersionHash`. `wa-master` warns on sha drift;
@@ -397,6 +397,38 @@ Rapid-fire invites (several in a few seconds) hit issue #29.
 - The `workadventure` subagent drives repeated live scenarios (join, walk to
   a player, invite, monitor RSS/HTTP). Watch its RSS trace — a steady climb
   past ~300 MB or an HTTP timeout means #29 is biting; `pkill -9` and restart.
+
+### When prod bumps
+
+Prod moved from `v1.33.8` to `v1.34.0` without notice (2026-10-05) and every
+client stopped connecting: the server answers a stale `apiVersionHash` with
+`errorScreen NEW_VERSION`, and the resolver, finding no adapter for the new
+minor, falls back to the old one *and its hash*. Issue #55. The procedure that
+worked, in order:
+
+1. `node scripts/vendor-proto.mjs --check vX.Y.Z` — prints the new hash. Appending
+   it to the old adapter's `apiVersionHashes` is a fast stopgap that gets people
+   connected (that's what #68 did), but it files the new release under the old
+   adapter and proves nothing about compatibility.
+2. `node scripts/vendor-proto.mjs vX.Y.Z wa-X.Y` — vendors `proto/wa-X.Y/` and its
+   `SOURCE`.
+3. `node scripts/proto-diff.mjs proto/wa-<old>/messages.proto proto/wa-X.Y/messages.proto`
+   — structural wire diff. It flags removals/renumbers/retypes that `src/`
+   references (`[USED by src/]`, exit 1). For 1.33.8 → 1.34.0 there were none:
+   no field renumbered, retyped or renamed, 51 additive changes, and the only
+   removals (recording queries, `userMessageReadMessage`, the admin/ban messages)
+   aren't used by this client. A plain text `diff` of the protos is mostly comments
+   and misleads.
+4. Add `src/adapters/wa-X.Y.mjs` (spread the previous adapter, override hash and
+   `protoPath`), register it in `index.mjs` as the newest release and as the
+   `play.workadventu.re` allowlist target. `test/adapters.test.mjs` fails if an
+   adapter's hash set drifts from its vendored `SOURCE`, or if the allowlist isn't
+   on the newest release.
+5. `node bin/wa.mjs selfcheck --target production` against the live server.
+
+**What this process cannot see:** a behaviour change behind an unchanged message
+shape. The adapter's `verified` record states what was exercised live and what
+wasn't; treat `unexercised` as inherited on faith.
 
 ---
 

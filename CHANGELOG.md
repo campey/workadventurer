@@ -8,6 +8,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`wa-1.34` adapter for prod WorkAdventure v1.34.0 (issue #55).** Prod moved
+  from `v1.33.8` to `v1.34.0` and hard-rejected every client's 1.33 hash
+  (`errorScreen NEW_VERSION`); #68 restored connections with a stopgap hash on
+  the 1.33 adapter. This replaces it with a real adapter: vendored
+  `proto/wa-1.34/`, its own hash set, registered as the newest release and the
+  `play.workadventu.re` allowlist target, with the 1.33 adapter back to its own
+  hashes. The 1.33.8 → 1.34.0 proto diff has no renumbered, retyped or renamed
+  fields and no removal the client references. New `scripts/proto-diff.mjs`
+  does that comparison structurally and flags `[USED by src/]` removals, and
+  adapter tests now fail if a hash set drifts from its vendored proto or the prod
+  allowlist isn't on the newest release. An unknown newer minor still falls back to
+  the newest adapter, but the warning now says to expect `NEW_VERSION`. Runbook:
+  `docs/field-notes.md` "When prod bumps". Verified live with
+  `wa selfcheck --target production` (resolved `wa-1.34`; connect, move, speech
+  bubble, area-meeting join pass); invitations, chat send, greet and thought
+  bubbles are not exercised (recorded in the adapter's `verified`).
 - **Space chat — send/receive text chat over WA's `SpaceMessage` (issue
   #48).** Works identically whether the client's current "Space" is an
   ambient proximity bubble or a meeting-room area — same `_joinSpace()`
