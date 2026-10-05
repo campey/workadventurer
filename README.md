@@ -50,7 +50,7 @@ wa leave                          # disconnect and stop the daemon
 
 | Command | Does |
 |---|---|
-| `wa join [<room-url>] [--detach] [--stt]` | join the room (runs the daemon); `--stt` joins as a listener (transcribes peer audio to the console instead of publishing a mic) |
+| `wa join [<room-url>] [--detach] [--stt]` | join the room (runs the daemon); `--stt` joins as a listener (transcribes peer audio to the console, a thought bubble and Space chat instead of publishing a mic) |
 | `wa leave` | leave and stop the daemon |
 | `wa status [--json]` | position, area, follow state, visible players |
 | `wa to <player>` | walk next to a player, no follow |
@@ -479,7 +479,17 @@ interactive terminal the daemon redraws the provisional line in place and
 locks it in with a newline on `final`; under `--detach` (stdout is
 `daemon.log`, a plain file — cursor control doesn't mean anything there) it
 instead logs one clean, timestamped line per finalized utterance and drops
-partials. `/state` doesn't expose transcripts yet (console-only).
+partials. `/state` doesn't expose transcripts yet.
+
+**Into the room (issue #41):** the same `heard` stream also goes out in-world
+via `src/stt-room-output.mjs`. Each partial is shown as a **thought bubble**
+over the avatar (`Name: text`, replaced in place as it's corrected); on `final`
+the bubble clears and one `Name: text` line is sent to **Space chat**
+(`sendChatMessage`, to every Space joined). Space chat is append-only (no
+edit/replace) and the displayed sender name is fixed per connection, so the
+speaker label is part of the text, e.g. `:David: hello`. The bubble is on by
+default for now; a separate switch is a later follow-up. Finals only land once
+the worker flushes on a silence gap or the stream closes.
 
 Requires `ffmpeg` and `python3` + `mlx_whisper` on `PATH` (the tiny model
 downloads once, then runs well under real-time on an M-series Mac). Verify the
