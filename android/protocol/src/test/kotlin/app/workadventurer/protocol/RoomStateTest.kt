@@ -1,5 +1,6 @@
 package app.workadventurer.protocol
 
+import app.workadventurer.nav.Facing
 import app.workadventurer.proto.GroupDeleteMessage
 import app.workadventurer.proto.GroupUpdateMessage
 import app.workadventurer.proto.PositionMessage
@@ -86,5 +87,28 @@ class RoomStateTest {
         s.areas = listOf(Area("a", "A", 0, 0, 100, 100, emptySet(), false, false), Area("b", "B", 500, 500, 10, 10, emptySet(), false, false))
         s.setMyPosition(50, 50)
         assertEquals(listOf("A"), s.currentAreas().map { it.name })
+    }
+
+    @Test
+    fun poseFlowFollowsMovesRoundsForTheWireAndFeedsCurrentAreas() {
+        val s = RoomState()
+        s.areas = listOf(
+            Area("a", "A", 0, 0, 100, 100, emptySet(), false, false),
+            Area("b", "B", 500, 500, 10, 10, emptySet(), false, false),
+        )
+        s.setMyPose(50.4, 50.6, Facing.LEFT)
+        assertEquals(Pose(50.4, 50.6, Facing.LEFT), s.myPose.value)
+        assertEquals(50 to 51, s.myPosition())
+        assertEquals(listOf("A"), s.currentAreas().map { it.name })
+        s.setMyPose(505.0, 505.0, Facing.UP)
+        assertEquals(listOf("B"), s.currentAreas().map { it.name })
+    }
+
+    @Test
+    fun setMyPositionKeepsTheFacing() {
+        val s = RoomState()
+        s.setMyPose(1.0, 2.0, Facing.LEFT)
+        s.setMyPosition(10, 20)
+        assertEquals(Pose(10.0, 20.0, Facing.LEFT), s.myPose.value)
     }
 }

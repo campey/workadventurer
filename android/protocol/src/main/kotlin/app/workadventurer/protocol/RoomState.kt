@@ -1,11 +1,13 @@
 package app.workadventurer.protocol
 
+import app.workadventurer.nav.Facing
 import app.workadventurer.proto.PositionMessage
 import app.workadventurer.proto.SubMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlin.math.roundToInt
 
 data class Player(
     val userId: Int,
@@ -16,22 +18,29 @@ data class Player(
     val direction: PositionMessage.Direction,
 )
 
+/** Our own avatar: position in (fractional) map pixels, rounded only when it goes on the wire. */
+data class Pose(val x: Double, val y: Double, val facing: Facing)
+
 /** Reduces server sub-messages into observable room state. Mirrors WorkAdventureClient._handleSub. */
 class RoomState {
     private val _players = MutableStateFlow<Map<Int, Player>>(emptyMap())
     private val _myUserId = MutableStateFlow<Int?>(null)
     private val _groupId = MutableStateFlow<Int?>(null)
-    @Volatile private var pos = 0 to 0
+    private val _pose = MutableStateFlow(Pose(0.0, 0.0, Facing.DOWN))
 
     val players: StateFlow<Map<Int, Player>> = _players.asStateFlow()
     val myUserId: StateFlow<Int?> = _myUserId.asStateFlow()
     val groupId: StateFlow<Int?> = _groupId.asStateFlow()
+    val myPose: StateFlow<Pose> = _pose.asStateFlow()
     @Volatile var areas: List<Area> = emptyList()
 
     fun setMyUserId(id: Int) { _myUserId.value = id }
-    fun setMyPosition(x: Int, y: Int) { pos = x to y }
-    fun myPosition(): Pair<Int, Int> = pos
-    fun currentAreas(): List<Area> = areas.filter { it.contains(pos.first, pos.second) }
+    fun setMyPose(x: Double, y: Double, facing: Facing) { _pose.value = Pose(x, y, facing) }
+    fun setMyPosition(x: Int, y: Int) { _pose.update { it.copy(x = x.toDouble(), y = y.toDouble()) } }
+
+    /** The pose rounded to whole pixels, as it goes on the wire. */
+    fun myPosition(): Pair<Int, Int> = _pose.value.let { it.x.roundToInt() to it.y.roundToInt() }
+    fun currentAreas(): List<Area> = myPosition().let { (px, py) -> areas.filter { it.contains(px, py) } }
 
     fun applySub(sub: SubMessage) {
         sub.userJoinedMessage?.let { u ->
