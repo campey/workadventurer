@@ -70,6 +70,13 @@ phone, then with the screen locked, then across four bubble leave/enter rounds. 
   which is the second `webRtcStart` (`initiator=false`) we answered.
   Result: **audio started about 21 s after entering a bubble.** M4 (the phone as offerer) removes that wait; it is needed
   for usable voice, not optional.
+- **The offerer role fixes the wait (Task 11, measured).** With the phone offering when told `initiator=true`: start at
+  23:30:35.189, `offered` at 23:30:36.435 (1.25 s, mostly the engine's 1.5 s warm-up and ICE gathering), and the user
+  reported the audio connecting "much quicker", against about 21 s before. The offerer creates the `simplepeer` data channel
+  and a receive-only audio transceiver (no microphone until M3). An on-device loopback test (our offerer and our answerer
+  negotiating in one process) reaches "connected" 3 runs out of 3. One browser signal right after the offer was logged as
+  "unparseable or unsupported" and ignored (probably `renegotiate`/`transceiverRequest`, harmless here); worth logging its
+  `type` next time.
 - Clean teardown every round: `left space`, `left bubble`, then the peer's `webRtcDisconnect`. App memory did not grow
   across the rounds (PSS about 151 MB before, about 96 MB after).
 - libwebrtc build findings (see the unit and instrumented tests): the factory needs video codecs registered (software
