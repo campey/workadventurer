@@ -28,6 +28,7 @@ internal class WebRtcPeerLink(
     private val firstCandidate = CompletableDeferred<Unit>()
     private val settled = CompletableDeferred<Unit>()
     private val keepAlive = mutableListOf<Any>() // data channel references: libwebrtc drops channels nobody holds
+    private val connected = CompletableDeferred<Unit>()
 
     private fun checkSettled() { if (candidates.get() > 0 && complete) settled.complete(Unit) }
 
@@ -37,7 +38,9 @@ internal class WebRtcPeerLink(
         }).apply { sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN },
         object : PeerConnection.Observer {
             override fun onSignalingChange(s: PeerConnection.SignalingState) {}
-            override fun onIceConnectionChange(s: PeerConnection.IceConnectionState) {}
+            override fun onIceConnectionChange(s: PeerConnection.IceConnectionState) {
+                if (s == PeerConnection.IceConnectionState.CONNECTED || s == PeerConnection.IceConnectionState.COMPLETED) connected.complete(Unit)
+            }
             override fun onIceConnectionReceivingChange(b: Boolean) {}
             override fun onIceGatheringChange(s: PeerConnection.IceGatheringState) {
                 if (s == PeerConnection.IceGatheringState.COMPLETE) { complete = true; checkSettled() }
@@ -80,7 +83,47 @@ internal class WebRtcPeerLink(
         pc.setLocalDescription(SetObserver(localSet), answer)
         localSet.await()
 
-        // Non-trickle: the answer must carry its candidates. Wait for the first, then let the others settle.
+        return localDescriptionWithCandidates()
+    }
+
+    /**
+     * We are the offerer. A simple-peer browser only reports "connected" once a data channel opens, and the initiator is the
+     * side that creates it, so create `simplepeer` here; audio is receive-only until M3 adds the microphone.
+     */
+    override suspend fun createOffer(): String? {
+        val channel = pc.createDataChannel("simplepeer", DataChannel.Init())
+        synchronized(keepAlive) { if (channel != null) keepAlive += channel }
+        pc.addTransceiver(
+            livekit.org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
+            livekit.org.webrtc.RtpTransceiver.RtpTransceiverInit(livekit.org.webrtc.RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
+        )
+        val created = CompletableDeferred<SessionDescription>()
+        pc.createOffer(object : SdpObserver {
+            override fun onCreateSuccess(d: SessionDescription) { created.complete(d) }
+            override fun onSetSuccess() {}
+            override fun onCreateFailure(e: String) { created.completeExceptionally(IllegalStateException("offer: $e")) }
+            override fun onSetFailure(e: String) {}
+        }, MediaConstraints())
+        val localSet = CompletableDeferred<Unit>()
+        pc.setLocalDescription(SetObserver(localSet), created.await())
+        localSet.await()
+        return localDescriptionWithCandidates()
+    }
+
+    override fun acceptAnswer(answerSdp: String) {
+        pc.setRemoteDescription(object : SdpObserver {
+            override fun onCreateSuccess(d: SessionDescription) {}
+            override fun onSetSuccess() {}
+            override fun onCreateFailure(e: String) {}
+            override fun onSetFailure(e: String) { println("WaVoice[$connectionId] setRemote(answer) failed: $e") }
+        }, SessionDescription(SessionDescription.Type.ANSWER, answerSdp))
+    }
+
+    /** True once ICE reports the connection is up (used by the on-device loopback test). */
+    internal suspend fun awaitConnected(timeoutMs: Long): Boolean = withTimeoutOrNull(timeoutMs) { connected.await() } != null
+
+    // Non-trickle: the SDP must carry its candidates. Wait for the first, then let the others settle.
+    private suspend fun localDescriptionWithCandidates(): String? {
         withTimeoutOrNull(GATHER_TIMEOUT_MS) { firstCandidate.await() }
         withTimeoutOrNull(SETTLE_MS) { settled.await() }
         val sdp = pc.localDescription?.description ?: return null

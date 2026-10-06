@@ -7,6 +7,13 @@ import kotlinx.coroutines.flow.Flow
 interface PeerLink {
     /** The answer SDP for [offerSdp], or null if it can't be used (for example zero ICE candidates). */
     suspend fun acceptOffer(offerSdp: String): String?
+
+    /** We are the offerer: the offer SDP to send, or null if it can't be used (for example zero ICE candidates). */
+    suspend fun createOffer(): String?
+
+    /** The remote peer's answer to the offer we created. */
+    fun acceptAnswer(answerSdp: String)
+
     fun addRemoteCandidate(candidate: PeerSignal.Candidate)
     fun close()
 }
@@ -16,7 +23,7 @@ fun interface SignalSink { fun send(spaceName: String, peerSpaceUserId: String, 
 
 /**
  * One WebRTC link per server-assigned connection id (a 3-person bubble is a mesh). Events are handled one at a time, in
- * order. Answerer only until M4: a start with `initiator = true` is logged and ignored.
+ * order. The server assigns the role per connection: `initiator = true` means we send the offer, otherwise we answer.
  */
 class MeshSession(
     private val links: PeerLinkFactory,
@@ -39,16 +46,18 @@ class MeshSession(
     private suspend fun handle(e: VoiceEvent) {
         when (e) {
             is VoiceEvent.Start -> {
-                if (e.initiator) { log("[${e.connectionId}] we are asked to initiate: not supported yet, ignoring"); return }
                 if (e.connectionId in closedIds) return
-                link(e.spaceName, e.peerSpaceUserId, e.connectionId)
+                if (e.initiator) offer(e) else link(e.spaceName, e.peerSpaceUserId, e.connectionId)
             }
             is VoiceEvent.Signal -> {
                 if (e.connectionId in closedIds) { log("[${e.connectionId}] signal for a closed connection, ignored"); return }
                 when (val s = SimplePeerSignal.parse(e.signal)) {
                     is PeerSignal.Offer -> answer(e, s)
                     is PeerSignal.Candidate -> synchronized(active) { active[e.connectionId] }?.link?.addRemoteCandidate(s)
-                    is PeerSignal.Answer -> log("[${e.connectionId}] unexpected answer (we never offer yet), ignored")
+                    is PeerSignal.Answer -> {
+                        val l = synchronized(active) { active[e.connectionId] }?.link
+                        if (l == null) log("[${e.connectionId}] answer for an unknown connection, ignored") else l.acceptAnswer(s.sdp)
+                    }
                     null -> log("[${e.connectionId}] unparseable or unsupported signal, ignored")
                 }
             }
@@ -62,6 +71,18 @@ class MeshSession(
         val l = links.create(id)
         synchronized(active) { active[id] = Entry(space, peer, l) }
         return l
+    }
+
+    private suspend fun offer(e: VoiceEvent.Start) {
+        val isNew = synchronized(active) { e.connectionId !in active }
+        val l = link(e.spaceName, e.peerSpaceUserId, e.connectionId)
+        if (!isNew) return // a duplicate start: the offer is already out
+        val sdp = try { l.createOffer() } catch (c: CancellationException) { throw c } catch (t: Throwable) {
+            log("[${e.connectionId}] offer failed: ${t.message}"); null
+        }
+        if (sdp == null) { log("[${e.connectionId}] no usable offer, tearing down"); drop(e.connectionId); return }
+        sink.send(e.spaceName, e.peerSpaceUserId, e.connectionId, SimplePeerSignal.offer(sdp))
+        log("[${e.connectionId}] offered")
     }
 
     private suspend fun answer(e: VoiceEvent.Signal, offer: PeerSignal.Offer) {

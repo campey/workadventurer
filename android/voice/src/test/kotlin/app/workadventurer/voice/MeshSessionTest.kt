@@ -12,8 +12,12 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MeshSessionTest {
-    private class FakeLink(val id: String, var answer: String? = "ANSWER-SDP") : PeerLink {
+    private class FakeLink(val id: String, var answer: String? = "ANSWER-SDP", var offer: String? = "OFFER-SDP") : PeerLink {
         val offers = mutableListOf<String>()
+        val answersAccepted = mutableListOf<String>()
+        var offersCreated = 0
+        override suspend fun createOffer(): String? { offersCreated++; return offer }
+        override fun acceptAnswer(answerSdp: String) { answersAccepted += answerSdp }
         val candidates = mutableListOf<PeerSignal.Candidate>()
         var closed = false
         override suspend fun acceptOffer(offerSdp: String): String? { offers += offerSdp; return answer }
@@ -26,8 +30,9 @@ class MeshSessionTest {
         val sent = mutableListOf<List<String>>()
         val logs = mutableListOf<String>()
         var nextAnswer: String? = "ANSWER-SDP"
+        var nextOffer: String? = "OFFER-SDP"
         val mesh = MeshSession(
-            links = { id -> FakeLink(id, nextAnswer).also { made[id] = it } },
+            links = { id -> FakeLink(id, nextAnswer, nextOffer).also { made[id] = it } },
             sink = { space, peer, conn, signal -> sent += listOf(space, peer, conn, signal) },
             log = { logs += it },
         )
@@ -62,11 +67,38 @@ class MeshSessionTest {
         assertEquals(1, creates); job.cancel()
     }
 
+    // We are the existing member the server asked to offer: send a simple-peer offer, then accept the browser's answer.
     @Test
-    fun anInitiatorStartIsLoggedAsUnsupportedAndCreatesNothing() = runTest {
+    fun anInitiatorStartCreatesALinkSendsAnOfferAndAcceptsTheAnswer() = runTest {
         val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
         r.events.emit(VoiceEvent.Start("sp", "sp_9", "c1", initiator = true)); runCurrent()
-        assertTrue(r.made.isEmpty()); assertTrue(r.logs.any { "initiate" in it }); job.cancel()
+        assertEquals(1, r.made.getValue("c1").offersCreated)
+        assertEquals(listOf("sp", "sp_9", "c1", """{"type":"offer","sdp":"OFFER-SDP"}"""), r.sent.single())
+        r.events.emit(VoiceEvent.Signal("sp", "sp_9", "c1", """{"type":"answer","sdp":"BROWSER-ANSWER"}""")); runCurrent()
+        assertEquals(listOf("BROWSER-ANSWER"), r.made.getValue("c1").answersAccepted)
+        assertEquals(setOf("c1"), r.mesh.activeConnections); job.cancel()
+    }
+
+    @Test
+    fun anOfferWithNoUsableCandidatesClosesTheLinkAndSendsNothing() = runTest {
+        val r = Rig(); r.nextOffer = null
+        val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        r.events.emit(VoiceEvent.Start("sp", "sp_9", "c1", initiator = true)); runCurrent()
+        assertTrue(r.made.getValue("c1").closed); assertTrue(r.sent.isEmpty()); assertTrue(r.mesh.activeConnections.isEmpty()); job.cancel()
+    }
+
+    @Test
+    fun aDuplicateInitiatorStartDoesNotOfferTwice() = runTest {
+        val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        r.events.emit(VoiceEvent.Start("sp", "sp_9", "c1", initiator = true)); r.events.emit(VoiceEvent.Start("sp", "sp_9", "c1", initiator = true)); runCurrent()
+        assertEquals(1, r.made.getValue("c1").offersCreated); assertEquals(1, r.sent.size); job.cancel()
+    }
+
+    @Test
+    fun anAnswerForAnUnknownConnectionIsIgnored() = runTest {
+        val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        r.events.emit(VoiceEvent.Signal("sp", "sp_9", "ghost", """{"type":"answer","sdp":"X"}""")); runCurrent()
+        assertTrue(r.made.isEmpty()); assertTrue(r.sent.isEmpty()); job.cancel()
     }
 
     // Review Focus 2
@@ -122,6 +154,8 @@ class MeshSessionTest {
         r.events.emit(VoiceEvent.Signal("sp", "sp_9", "c1", """{"type":"candidate","candidate":{"candidate":"candidate:1","sdpMid":"1","sdpMLineIndex":1}}""")); runCurrent()
         assertEquals(listOf(PeerSignal.Candidate("candidate:1", "1", 1)), r.made.getValue("c1").candidates)
         val boom = MeshSession({ object : PeerLink {
+            override suspend fun createOffer(): String? = null
+            override fun acceptAnswer(answerSdp: String) {}
             override suspend fun acceptOffer(offerSdp: String): String? = throw IllegalStateException("libwebrtc said no")
             override fun addRemoteCandidate(candidate: PeerSignal.Candidate) {}
             override fun close() {} } }, { _, _, _, _ -> }, {})

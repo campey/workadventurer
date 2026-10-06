@@ -35,4 +35,6 @@ object SimplePeerSignal {
     }
 
     fun answer(sdp: String): String = buildJsonObject { put("type", "answer"); put("sdp", sdp) }.toString()
+
+    fun offer(sdp: String): String = buildJsonObject { put("type", "offer"); put("sdp", sdp) }.toString()
 }

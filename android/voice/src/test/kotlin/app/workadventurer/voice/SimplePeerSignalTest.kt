@@ -30,6 +30,13 @@ class SimplePeerSignalTest {
     }
 
     @Test
+    fun anOfferSerialisesInSimplePeersShape() {
+        val json = SimplePeerSignal.offer("v=0\r\ns=-\r\n")
+        assertEquals(PeerSignal.Offer("v=0\r\ns=-\r\n"), SimplePeerSignal.parse(json))
+        assertEquals(true, json.contains("\"type\":\"offer\""))
+    }
+
+    @Test
     fun anAnswerSerialisesInSimplePeersShape() {
         val json = SimplePeerSignal.answer("v=0\r\ns=-\r\n")
         assertEquals(PeerSignal.Answer("v=0\r\ns=-\r\n"), SimplePeerSignal.parse(json))
