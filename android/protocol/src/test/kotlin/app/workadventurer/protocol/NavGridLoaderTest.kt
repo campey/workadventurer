@@ -20,6 +20,7 @@ class NavGridLoaderTest {
 
     private class Site(val server: MockWebServer, val tmjRequests: AtomicInteger) {
         @Volatile var tmjOk = true
+        @Volatile var body: String? = null // replaces the served map when set
         val base get() = server.url("/").toString().trimEnd('/')
         fun wam(withMapUrl: Boolean = true) =
             if (withMapUrl) """{"mapUrl":"$base/the.tmj","entities":{},"areas":[]}""" else """{"entities":{}}"""
@@ -33,7 +34,7 @@ class NavGridLoaderTest {
             override fun dispatch(request: RecordedRequest): MockResponse = when {
                 request.path == "/the.tmj" -> {
                     count.incrementAndGet()
-                    if (site.tmjOk) MockResponse().setBody(tmj) else MockResponse().setResponseCode(500)
+                    if (site.tmjOk) MockResponse().setBody(site.body ?: tmj) else MockResponse().setResponseCode(500)
                 }
                 else -> MockResponse().setResponseCode(404)
             }
@@ -111,6 +112,23 @@ class NavGridLoaderTest {
                 val later = { System.currentTimeMillis() + 25L * 3_600_000 }
                 val g = loadNavGrid(OkHttpClient(), s.wam(), dir, nowMs = later)
                 assertNotNull(g, "should fall back to the stale cache")
+                assertEquals(2, s.tmjRequests.get())
+            }
+        } finally { dir.deleteRecursively() }
+    }
+
+    // A 200 whose body isn't a usable map (an HTML error page, a truncated download) must not be cached: it would be
+    // served as "no grid" for 24 h even after the server recovered.
+    @Test
+    fun aSuccessfulResponseThatIsNotAMapIsNotCached() = runTest {
+        val dir = tempDir()
+        val s = site(tmj)
+        s.body = "<html>502 bad gateway</html>"
+        try {
+            s.server.use {
+                assertNull(loadNavGrid(OkHttpClient(), s.wam(), dir))
+                s.body = null // the server recovers
+                assertNotNull(loadNavGrid(OkHttpClient(), s.wam(), dir), "the bad body was cached and served again")
                 assertEquals(2, s.tmjRequests.get())
             }
         } finally { dir.deleteRecursively() }

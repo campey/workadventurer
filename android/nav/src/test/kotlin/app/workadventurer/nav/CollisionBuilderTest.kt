@@ -112,4 +112,11 @@ class CollisionBuilderTest {
         )!!
         assertEquals(listOf(0), g.blockedIndices().toList())
     }
+
+    // A hostile or corrupt map must not be able to ask for gigabytes (or overflow width*height into a negative size).
+    @Test
+    fun anAbsurdlyLargeMapGivesNullInsteadOfAllocatingIt() {
+        assertNull(CollisionBuilder.build("{}", """{"width":100000,"height":100000,"tilewidth":32,"layers":[]}"""))
+        assertNull(CollisionBuilder.build("{}", """{"width":65536,"height":65536,"tilewidth":32,"layers":[]}""")) // w*h overflows Int
+    }
 }

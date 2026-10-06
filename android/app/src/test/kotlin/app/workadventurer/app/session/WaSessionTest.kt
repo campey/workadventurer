@@ -516,4 +516,30 @@ class WaSessionTest {
         }
         assertEquals(Activity.Idle, session.state.value.activity, "was still chasing after 40 s")
     }
+
+    // The socket has closed but the session hasn't processed it yet (state still says Connected): a walk started in
+    // that window ran on a dead connection and showed "Walking to" straight through the reconnect.
+    @Test
+    fun aWalkIsNotStartedOnAConnectionThatHasAlreadyClosed() = runTest {
+        val (session, conn) = connected(adaX = 5_000)
+        conn().fakeClosed.complete(Closed(1006, "net")) // no runCurrent: the run hasn't noticed yet
+        session.dispatch(Command.WalkToPlayer(1))
+        assertEquals(Activity.Idle, session.state.value.activity)
+        runCurrent()
+        assertTrue(conn().moves.isEmpty())
+    }
+
+    // The area's centre is a table (blocked) and the map grid only arrives after the walk has started. The goal used
+    // to be snapped once, at dispatch, with no grid, so it stayed on the blocked tile: the walk then sat at
+    // "Walking to" until its 120 s timeout.
+    @Test
+    fun walkToAreaWhoseCentreIsBlockedStillFinishesWhenTheGridArrivesMidWalk() = runTest {
+        val (session, conn) = connected()
+        val blocked = BooleanArray(100).also { it[1 * 20 + 7] = true } // tile (7,1) holds the point (250,50)
+        session.dispatch(Command.WalkToArea("fire")); runCurrent()
+        advanceTimeBy(200); runCurrent()
+        conn().fakeGrid.value = NavGrid(20, 5, 32, blocked)
+        advanceTimeBy(20_000); runCurrent()
+        assertEquals(Activity.Idle, session.state.value.activity, "still walking 20 s later")
+    }
 }

@@ -38,8 +38,8 @@ sealed interface Command {
     data class InvitePlayer(val userId: Int) : Command
 
     /** Answer yes to an invitation we received, then walk to whoever sent it. */
-    data class AcceptInvite(val senderUuid: String) : Command
-    data class DeclineInvite(val senderUuid: String) : Command
+    data class AcceptInvite(val senderUuid: String) : Command { override fun toString() = "AcceptInvite" } // uuid is an email
+    data class DeclineInvite(val senderUuid: String) : Command { override fun toString() = "DeclineInvite" }
 }
 
 sealed interface Connection {
@@ -230,12 +230,17 @@ class WaSession(
     private fun startMovement(build: (PusherConnection) -> Plan?) {
         val c = conn ?: return
         if (_state.value.connection != Connection.Connected) return
+        // The socket can have closed before the run has noticed and moved us to Reconnecting.
+        if (c.closed.isCompleted) return
         val plan = build(c) ?: return
-        moveJob?.cancel()
+        val replaced = moveJob
+        replaced?.cancel()
         val id = ++moveSeq
         val gen = generation
         _state.update { it.copy(activity = plan.activity) }
         moveJob = scope.launch {
+            // Let the replaced movement finish its final stop first, so its stale pose can't land after our first step.
+            replaced?.join()
             try {
                 plan.run(Navigator({ c.grid.value }, c, nowMs))
             } finally {

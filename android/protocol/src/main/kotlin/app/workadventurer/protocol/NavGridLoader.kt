@@ -30,8 +30,26 @@ suspend fun loadNavGrid(
     try {
         val mapUrl = Json.parseToJsonElement(wamJson).jsonObject["mapUrl"]?.jsonPrimitive?.contentOrNull
             ?: return@withContext null
-        val tmj = tmjText(http, mapUrl, cacheDir, nowMs, ttlMs) ?: return@withContext null
-        CollisionBuilder.build(wamJson, tmj)
+        val file = cacheDir?.let { File(it, sha1(mapUrl) + ".tmj") }
+        val cached = file?.takeIf { it.isFile }
+        if (cached != null && nowMs() - cached.lastModified() < ttlMs) {
+            CollisionBuilder.build(wamJson, cached.readText())?.let { return@withContext it }
+        }
+        val fresh = download(http, mapUrl)
+        val grid = fresh?.let { CollisionBuilder.build(wamJson, it) }
+        if (grid != null) {
+            // Cache only a body that really built into a grid: an HTML error page served with a 200 would otherwise
+            // be replayed as "no grid" for the whole TTL.
+            if (file != null) runCatching {
+                file.parentFile.mkdirs()
+                val tmp = File(file.parentFile, file.name + ".part")
+                tmp.writeText(fresh)
+                tmp.renameTo(file)
+            }
+            return@withContext grid
+        }
+        // a stale map beats no map
+        cached?.let { CollisionBuilder.build(wamJson, it.readText()) }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -39,30 +57,18 @@ suspend fun loadNavGrid(
     }
 }
 
-private fun tmjText(http: OkHttpClient, url: String, cacheDir: File?, nowMs: () -> Long, ttlMs: Long): String? {
-    val file = cacheDir?.let { File(it, sha1(url) + ".tmj") }
-    val cached = file?.takeIf { it.isFile }
-    if (cached != null && nowMs() - cached.lastModified() < ttlMs) return cached.readText()
+private const val DOWNLOAD_TIMEOUT_S = 60L
 
-    val fresh = try {
-        http.newCall(Request.Builder().url(url).build()).execute().use {
-            if (it.isSuccessful) it.body?.string() else null
-        }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        null
+private fun download(http: OkHttpClient, url: String): String? = try {
+    // A hung server must not pin this blocking call forever (closing the connection can't interrupt it otherwise).
+    val client = http.newBuilder().callTimeout(DOWNLOAD_TIMEOUT_S, java.util.concurrent.TimeUnit.SECONDS).build()
+    client.newCall(Request.Builder().url(url).build()).execute().use {
+        if (it.isSuccessful) it.body?.string() else null
     }
-    if (fresh != null) {
-        if (file != null) runCatching {
-            file.parentFile.mkdirs()
-            val tmp = File(file.parentFile, file.name + ".part")
-            tmp.writeText(fresh)
-            tmp.renameTo(file)
-        }
-        return fresh
-    }
-    return cached?.readText() // a stale map beats no map
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    null
 }
 
 private fun sha1(s: String) = MessageDigest.getInstance("SHA-1").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }

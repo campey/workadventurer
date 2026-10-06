@@ -479,6 +479,29 @@ class PusherConnectionTest {
         }
     }
 
+    // The keepalive repeats our position; mid-walk it must say we're still moving, or peers see the walking animation
+    // stop every few seconds.
+    @Test
+    fun theKeepAliveDoesNotClaimWeStoppedWhileWeAreStillWalking() = runBlocking<Unit> {
+        val fake = joiningFake()
+        server(fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 50)
+            withTimeout(5_000) { conn.connect() }
+            conn.move(10.0, 10.0, Facing.RIGHT, true)
+            delay(400)
+            val sent = mutableListOf<ClientToServerMessage>()
+            fake.received.drainTo(sent)
+            val moves = sent.mapNotNull { it.userMovesMessage }
+            assertTrue(moves.size > 2, "expected keepalives, got ${moves.size}")
+            assertTrue(moves.all { it.position!!.moving }, "a keepalive said moving=false mid-walk")
+            conn.move(10.0, 10.0, Facing.RIGHT, false)
+            delay(300)
+            sent.clear(); fake.received.drainTo(sent)
+            assertEquals(false, sent.mapNotNull { it.userMovesMessage }.last().position!!.moving)
+            conn.close()
+        }
+    }
+
     // The older locate's cleanup used to remove whatever was stored under the uuid, i.e. the NEWER locate's entry, so
     // the server's reply for it was dropped (seen as an accepted invite whose walk silently never started).
     @Test

@@ -8,7 +8,10 @@ data class Invite(
     val senderUserId: Int?,
     /** The sender's room, as the server reports it (used to locate them when they're outside our viewport). */
     val playUri: String,
-)
+) {
+    // senderUuid is the account email for logged-in players: keep it out of anything that stringifies an invite.
+    override fun toString() = "Invite(senderName=$senderName, senderUserId=$senderUserId, playUri=$playUri)"
+}
 
 /** What happened to an invite *we* sent. */
 sealed interface InviteOutcome {

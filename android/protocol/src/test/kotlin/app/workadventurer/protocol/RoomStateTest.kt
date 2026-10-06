@@ -111,4 +111,16 @@ class RoomStateTest {
         s.setMyPosition(10, 20)
         assertEquals(Pose(10.0, 20.0, Facing.LEFT), s.myPose.value)
     }
+
+    // The uuid is the ACCOUNT EMAIL for logged-in players. A future `Log.i(..., player)` or an exception message that
+    // stringifies one of these must not leak it.
+    @Test
+    fun theUuidNeverAppearsWhenPlayersAndInvitesAreStringified() {
+        val email = "someone@example.com"
+        val p = Player(1, "Ada", email, 1, 2, PositionMessage.Direction.DOWN)
+        val i = Invite(email, "Ada", 1, "https://play/room")
+        assertEquals(false, p.toString().contains(email), p.toString())
+        assertEquals(false, i.toString().contains(email), i.toString())
+        assertEquals(true, p.toString().contains("Ada"))
+    }
 }

@@ -15,6 +15,7 @@ import app.workadventurer.proto.PositionMessage
 import app.workadventurer.proto.ServerToClientMessage
 import app.workadventurer.proto.UserMovesMessage
 import app.workadventurer.proto.ViewportMessage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -78,7 +79,11 @@ open class PusherConnection(
 
     override fun position(): Pt = state.myPose.value.let { Pt(it.x, it.y) }
 
+    /** What our last position message said, so the keepalive doesn't announce a stop in the middle of a walk. */
+    @Volatile private var lastMoving = false
+
     override fun move(x: Double, y: Double, facing: Facing, moving: Boolean) {
+        lastMoving = moving
         state.setMyPose(x, y, facing)
         send(ClientToServerMessage(userMovesMessage = UserMovesMessage(position = positionMessage(moving), viewport = viewport())))
     }
@@ -159,7 +164,15 @@ open class PusherConnection(
             // arrives (or forever, if it fails) movement is straight-line.
             wam?.let { text ->
                 scope.launch {
-                    val g = loadNavGrid(http, text, cacheDir)
+                    // Anything the loader throws (even an Error from a pathological map) must leave us straight-line,
+                    // not crash the app: nothing else is watching this coroutine.
+                    val g = try {
+                        loadNavGrid(http, text, cacheDir)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        null
+                    }
                     if (g == null) {
                         _log.tryEmit("nav grid unavailable; movement stays straight-line")
                     } else {
@@ -304,7 +317,7 @@ open class PusherConnection(
         keepAlive = scope.launch {
             while (true) {
                 delay(keepAliveMs)
-                send(ClientToServerMessage(userMovesMessage = UserMovesMessage(position = positionMessage(false), viewport = viewport())))
+                send(ClientToServerMessage(userMovesMessage = UserMovesMessage(position = positionMessage(lastMoving), viewport = viewport())))
             }
         }
     }

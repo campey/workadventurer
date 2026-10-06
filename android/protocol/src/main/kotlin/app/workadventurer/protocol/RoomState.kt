@@ -16,7 +16,10 @@ data class Player(
     val x: Int,
     val y: Int,
     val direction: PositionMessage.Direction,
-)
+) {
+    // uuid is the account email for logged-in players: keep it out of anything that stringifies a player.
+    override fun toString() = "Player(userId=$userId, name=$name, x=$x, y=$y, direction=$direction)"
+}
 
 /** Our own avatar: position in (fractional) map pixels, rounded only when it goes on the wire. */
 data class Pose(val x: Double, val y: Double, val facing: Facing)

@@ -30,6 +30,7 @@ private fun JsonElement?.dbl() = prim()?.doubleOrNull
 object CollisionBuilder {
     private const val GID_MASK = 0x1fffffffL // strips Tiled's flip flags in the high bits
     private val SMALL_PROP = Regex("(stool|chair)")
+    private const val MAX_CELLS = 4_000_000L // real rooms are ~10^4-10^5 cells; this only stops a corrupt or hostile map
 
     /** The grid, or null if the `.tmj` isn't JSON or has no usable `width`/`height`/`tilewidth`. */
     fun build(wamJson: String, tmjJson: String): NavGrid? {
@@ -38,6 +39,7 @@ object CollisionBuilder {
         val h = tmj["height"].int() ?: return null
         val tile = tmj["tilewidth"].int() ?: return null
         if (w <= 0 || h <= 0 || tile <= 0) return null
+        if (w.toLong() * h > MAX_CELLS) return null // also guards w*h overflowing Int
         val cells = w * h
 
         val blocked = BooleanArray(cells)
