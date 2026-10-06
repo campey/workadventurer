@@ -183,6 +183,9 @@ class PresenceService : Service() {
                 NotificationChannel(CHANNEL_ID, "Presence", NotificationManager.IMPORTANCE_LOW),
             )
         }
+        // Earlier builds used other channel ids (one with a ringtone); a channel's sound can't be changed once created.
+        nm.deleteNotificationChannel(OLD_INVITE_CHANNEL_ID)
+        nm.deleteNotificationChannel(RINGING_INVITE_CHANNEL_ID)
         if (nm.getNotificationChannel(INVITE_CHANNEL_ID) == null) {
             nm.createNotificationChannel(
                 NotificationChannel(INVITE_CHANNEL_ID, "Invitations", NotificationManager.IMPORTANCE_HIGH),
@@ -199,7 +202,9 @@ class PresenceService : Service() {
         const val EXTRA_ROOM = "room"
         const val EXTRA_NOTIFICATION_ID = "notificationId"
         private const val CHANNEL_ID = "presence"
-        private const val INVITE_CHANNEL_ID = "invitations"
+        private const val INVITE_CHANNEL_ID = "invitations-v3"
+        private const val OLD_INVITE_CHANNEL_ID = "invitations"
+        private const val RINGING_INVITE_CHANNEL_ID = "invitations-ring"
         private const val NOTIF_ID = PRESENCE_NOTIFICATION_ID
     }
 }
