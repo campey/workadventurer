@@ -4,6 +4,7 @@ import app.workadventurer.nav.Facing
 import app.workadventurer.nav.MovementSink
 import app.workadventurer.nav.NavGrid
 import app.workadventurer.nav.Pt
+import app.workadventurer.proto.AnswerMessage
 import app.workadventurer.proto.AskPositionMessage
 import app.workadventurer.proto.AvailabilityStatus
 import app.workadventurer.proto.ClientToServerMessage
@@ -12,6 +13,7 @@ import app.workadventurer.proto.MeetingInvitationRequestMessage
 import app.workadventurer.proto.MeetingInvitationResponseMessage
 import app.workadventurer.proto.PingMessage
 import app.workadventurer.proto.PositionMessage
+import app.workadventurer.proto.QueryMessage
 import app.workadventurer.proto.ServerToClientMessage
 import app.workadventurer.proto.UserMovesMessage
 import app.workadventurer.proto.ViewportMessage
@@ -31,6 +33,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -42,6 +45,7 @@ import okio.ByteString.Companion.toByteString
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 class JoinFailed(message: String) : Exception(message)
@@ -105,6 +109,24 @@ open class PusherConnection(
             accept = accept, requestSenderUserUuid = senderUuid,
         )))
         state.removeInvite(senderUuid)
+    }
+
+    private val pendingQueries = ConcurrentHashMap<Int, CompletableDeferred<AnswerMessage>>()
+    private val queryIds = AtomicInteger(1)
+
+    /** Send a query and wait for the answer that carries its id. */
+    open suspend fun query(timeoutMs: Long = 10_000, build: (id: Int) -> QueryMessage): AnswerMessage {
+        val id = queryIds.getAndIncrement()
+        val answer = CompletableDeferred<AnswerMessage>()
+        pendingQueries[id] = answer
+        try {
+            send(ClientToServerMessage(queryMessage = build(id)))
+            val a = withTimeout(timeoutMs) { answer.await() }
+            a.error?.let { throw QueryFailed(it.message) }
+            return a
+        } finally {
+            pendingQueries.remove(id, answer)
+        }
     }
 
     private val pendingLocates = ConcurrentHashMap<String, CompletableDeferred<Pt>>()
@@ -306,6 +328,7 @@ open class PusherConnection(
             if (p != null) pendingLocates.remove(loc.userUuid)?.complete(Pt(p.x.toDouble(), p.y.toDouble()))
             return
         }
+        m.answerMessage?.let { pendingQueries.remove(it.id)?.complete(it); return }
         m.errorScreenMessage?.let { fail("server error screen: ${it.title} / ${it.details}"); return }
         if (m.invalidCharacterTextureMessage != null) { fail("invalid character texture"); return }
         if (m.tokenExpiredMessage != null) { fail("token expired"); return }

@@ -2,8 +2,26 @@ package app.workadventurer.protocol
 
 import app.workadventurer.nav.Facing
 import app.workadventurer.nav.Pt
+import app.workadventurer.proto.AnswerMessage
 import app.workadventurer.proto.AskPositionMessage
 import app.workadventurer.proto.BatchMessage
+import app.workadventurer.proto.ErrorMessage
+import app.workadventurer.proto.FilterType
+import app.workadventurer.proto.IceServer
+import app.workadventurer.proto.IceServersAnswer
+import app.workadventurer.proto.IceServersQuery
+import app.workadventurer.proto.JoinSpaceAnswer
+import app.workadventurer.proto.JoinSpaceQuery
+import app.workadventurer.proto.JoinSpaceRequestMessage
+import app.workadventurer.proto.LeaveSpaceRequestMessage
+import app.workadventurer.proto.MuteAudioPrivateMessage
+import app.workadventurer.proto.PrivateEventPusherToFront
+import app.workadventurer.proto.PrivateSpaceEvent
+import app.workadventurer.proto.QueryMessage
+import app.workadventurer.proto.SpaceUser
+import app.workadventurer.proto.WebRtcDisconnectMessage
+import app.workadventurer.proto.WebRtcSignal
+import app.workadventurer.proto.WebRtcStartMessage
 import app.workadventurer.proto.ClientToServerMessage
 import app.workadventurer.proto.ErrorScreenMessage
 import app.workadventurer.proto.LocatePositionMessage
@@ -42,6 +60,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -531,6 +550,60 @@ class PusherConnectionTest {
             older.cancelAndJoin()
             release.countDown()
             assertEquals(Pt(10.0, 20.0), newer.await())
+            conn.close()
+        }
+    }
+
+    @Test
+    fun aQueryResolvesWithTheAnswerThatCarriesItsId() = runBlocking<Unit> {
+        val live = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q ->
+                ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, joinSpaceAnswer = JoinSpaceAnswer(spaceUserId = "sp_${q.id}")))))
+            }
+        }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            val a = conn.query { id -> QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(spaceName = "a")) }
+            val b = conn.query { id -> QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(spaceName = "b")) }
+            assertNotEquals(a.id, b.id)
+            assertEquals("sp_${a.id}", a.joinSpaceAnswer!!.spaceUserId)
+            conn.close()
+        }
+    }
+
+    @Test
+    fun aServerErrorAnswerFailsTheQuery() = runBlocking<Unit> {
+        val live = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q -> ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, error = ErrorMessage(message = "nope"))))) }
+        }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            val e = assertFailsWith<QueryFailed> { conn.query { id -> QueryMessage(id = id, iceServersQuery = IceServersQuery()) } }
+            assertEquals("nope", e.message)
+            conn.close()
+        }
+    }
+
+    // Review Focus 6: a query nobody answers times out, and its late answer must not disturb the next query.
+    @Test
+    fun anUnansweredQueryTimesOutAndALateAnswerIsHarmless() = runBlocking<Unit> {
+        val seen = AtomicInteger()
+        val live = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q ->
+                if (seen.incrementAndGet() > 1) ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, joinSpaceAnswer = JoinSpaceAnswer(spaceUserId = "ok")))))
+                else Thread { Thread.sleep(500); ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, joinSpaceAnswer = JoinSpaceAnswer(spaceUserId = "late"))))) }.start()
+            }
+        }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> {
+                conn.query(timeoutMs = 200) { id -> QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(spaceName = "x")) }
+            }
+            delay(700) // the late answer for the first query arrives now
+            assertEquals("ok", conn.query { id -> QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(spaceName = "y")) }.joinSpaceAnswer!!.spaceUserId)
             conn.close()
         }
     }
