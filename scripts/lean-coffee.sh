@@ -27,8 +27,9 @@ fi
 step "restarting daemon on $ROOM"
 pkill -f wa-daemon.mjs 2>/dev/null || true
 sleep 1
-rm -f ~/.workadventurer/daemon.json "${TMPDIR:-/tmp}/wa-daemon.json" ~/.workadventurer/daemon.log
-WA_DEBUG=1 WA_ROOM="$ROOM" nohup node src/wa-daemon.mjs >~/.workadventurer/daemon.log 2>&1 &
+LOG=~/.workadventurer/daemon-${WA_DAEMON_PORT:-8787}.log
+rm -f ~/.workadventurer/daemon-${WA_DAEMON_PORT:-8787}.json "${TMPDIR:-/tmp}/daemon-${WA_DAEMON_PORT:-8787}.json" "$LOG"
+WA_DEBUG=1 WA_ROOM="$ROOM" nohup node src/wa-daemon.mjs >"$LOG" 2>&1 &
 echo "  daemon pid $!"
 
 for _ in $(seq 1 20); do node bin/wa.mjs status >/dev/null 2>&1 && break; sleep 1; done
@@ -43,10 +44,10 @@ step "waiting for the area meeting to connect  [watching the daemon log]"
 t0=$SECONDS
 ok=
 for _ in $(seq 1 40); do
-  if grep -q "pc connected" ~/.workadventurer/daemon.log; then
+  if grep -q "pc connected" "$LOG"; then
     ok=1; echo "  connected after $((SECONDS - t0))s"; break
   fi
-  grep -qE "unresponsive|uncaughtException" ~/.workadventurer/daemon.log && break
+  grep -qE "unresponsive|uncaughtException" "$LOG" && break
   sleep 1
 done
 [ -n "$ok" ] || echo "  !! no 'pc connected' after $((SECONDS - t0))s — meeting didn't connect (issue #17?)"
@@ -54,7 +55,7 @@ done
 step "status"
 node bin/wa.mjs status
 echo
-grep -E "meeting area|joined space|webRtc|pc connected|area (enter|leave)" ~/.workadventurer/daemon.log || true
+grep -E "meeting area|joined space|webRtc|pc connected|area (enter|leave)" "$LOG" || true
 
 play() {   # play a clip and wait for the daemon's result line in the log
   local out rc
@@ -62,7 +63,7 @@ play() {   # play a clip and wait for the daemon's result line in the log
   [ "$rc" -eq 0 ] || { echo "  !! $out"; return; }
   local marker; marker=$(basename "$1")
   for _ in $(seq 1 30); do
-    line=$(grep "sound \"$1\":\|sound \"$1\" failed" ~/.workadventurer/daemon.log | tail -1)
+    line=$(grep "sound \"$1\":\|sound \"$1\" failed" "$LOG" | tail -1)
     [ -n "$line" ] && { echo "  ${line#* }"; return; }
     sleep 1
   done
@@ -77,5 +78,5 @@ cat <<EOF
   node bin/wa.mjs status              # where am I, who's in the meeting
   node bin/wa.mjs goto <x> <y>        # walk out (leaves the meeting)
   pkill -f wa-daemon.mjs              # stop
-tail -f ~/.workadventurer/daemon.log  # watch the wire (WA_DEBUG on)
+tail -f "$LOG"  # watch the wire (WA_DEBUG on)
 EOF

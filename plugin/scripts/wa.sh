@@ -5,7 +5,12 @@
 
 case " $* " in
   *" --if-running "*)
-    [ -f "${TMPDIR:-/tmp}/wa-daemon.json" ] || [ -f "$HOME/.workadventurer/daemon.json" ] || exit 0
+    # Per-port advertisements (daemon-<port>.json, #65); any one means "maybe running".
+    found=
+    for f in "${TMPDIR:-/tmp}"/daemon-*.json "$HOME"/.workadventurer/daemon-*.json; do
+      [ -f "$f" ] && { found=1; break; }
+    done
+    [ -n "$found" ] || exit 0
     ;;
 esac
 

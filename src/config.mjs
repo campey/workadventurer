@@ -70,6 +70,20 @@ export function resolveConfig(flags = {}) {
   return merged;
 }
 
+/**
+ * The port only if the user actually chose one (flag, WA_DAEMON_PORT, or the
+ * config file) — null when it would just be the built-in default. The CLI uses
+ * this to decide between "address that port" and "discover the running daemon".
+ */
+export function explicitPort(flags = {}, env = process.env) {
+  const candidates = [flags.port, fromEnv(env).port, fromFile().port];
+  for (const c of candidates) {
+    const n = Number(c);
+    if (n) return n;
+  }
+  return null;
+}
+
 /** The subset that should be handed to a spawned daemon as environment. */
 export function configToEnv(cfg) {
   return {

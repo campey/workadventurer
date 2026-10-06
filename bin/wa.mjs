@@ -8,15 +8,12 @@ import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { resolveConfig, configToEnv } from "../src/config.mjs";
+import { resolveConfig, configToEnv, explicitPort } from "../src/config.mjs";
+import { createRegistry, AmbiguousDaemonError } from "../src/daemon-registry.mjs";
 
 const DAEMON = fileURLToPath(new URL("../src/wa-daemon.mjs", import.meta.url));
-const INFO_FILES = [
-  path.join(os.tmpdir(), "wa-daemon.json"),
-  path.join(os.homedir(), ".workadventurer", "daemon.json"),
-];
+const registry = createRegistry();
 
 const USAGE = `wa — WorkAdventure presence control
 
@@ -69,24 +66,33 @@ const cfg = resolveConfig({ port: flags.port, roomUrl: flags.room, name: flags.n
 const die = (msg, code = 1) => { process.stderr.write(`wa: ${msg}\n`); process.exit(code); };
 const note = (msg) => { if (!flags.json) process.stderr.write(`wa: ${msg}\n`); };
 
-function readInfoPort() {
-  for (const f of INFO_FILES) {
-    try {
-      const p = Number(JSON.parse(fs.readFileSync(f, "utf8")).port);
-      if (p) return p;
-    } catch {}
+// Which daemon a command addresses (#65): an explicit port (--port,
+// WA_DAEMON_PORT, config file) always wins; otherwise the one running daemon;
+// otherwise the default port. Several running daemons is an error, not a guess.
+// `join` never discovers — it starts (or checks) the daemon for its own port.
+// Lazy, so commands that don't talk to a daemon (selfcheck) never hit it.
+let _port;
+function port() {
+  if (_port) return _port;
+  try {
+    _port = registry.resolvePort({
+      explicit: explicitPort({ port: flags.port }) ?? (cmd === "join" ? cfg.port : null),
+      fallback: cfg.port,
+    });
+  } catch (e) {
+    if (!(e instanceof AmbiguousDaemonError)) throw e;
+    if (flags["if-running"]) { note(e.message); process.exit(0); } // hook path: never break a session
+    die(e.message);
   }
-  return null;
+  return _port;
 }
-
-const PORT = Number(flags.port) || readInfoPort() || cfg.port;
-const base = `http://127.0.0.1:${PORT}`;
+const base = () => `http://127.0.0.1:${port()}`;
 
 async function api(method, route, body, { timeoutMs = 8000 } = {}) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const res = await fetch(base + route, {
+    const res = await fetch(base() + route, {
       method,
       signal: ac.signal,
       headers: body ? { "content-type": "application/json" } : undefined,
@@ -113,14 +119,14 @@ async function daemonReachable() {
   }
 }
 
-export const DAEMON_LOG = path.join(os.homedir(), ".workadventurer", "daemon.log");
-
 function spawnDaemon({ detached, roomUrl }) {
   const env = { ...process.env, ...configToEnv(cfg) };
   if (roomUrl) env.WA_ROOM = roomUrl;
   if (detached) {
-    fs.mkdirSync(path.dirname(DAEMON_LOG), { recursive: true });
-    const out = fs.openSync(DAEMON_LOG, "a");
+    const logFile = registry.logPath(cfg.port);
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    const out = fs.openSync(logFile, "a");
+    note(`daemon log: ${logFile}`);
     const child = spawn(process.execPath, [DAEMON], { detached: true, stdio: ["ignore", out, out], env });
     child.unref();
     return null;

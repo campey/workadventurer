@@ -68,7 +68,15 @@ wa leave                          # disconnect and stop the daemon
 `--if-running` makes any command a silent no-op when no daemon is up (used by
 the plugin hooks). Config precedence: flags > env (`WA_ROOM`, `WA_NAME`,
 `WA_DAEMON_PORT`, …) > `~/.config/workadventurer/config.json` > built-in
-defaults. The detached daemon logs to `~/.workadventurer/daemon.log`.
+defaults. The detached daemon logs to `~/.workadventurer/daemon-<port>.log`
+(one log per port, so parallel daemons don't interleave).
+
+**Several daemons.** Each advertises itself as `daemon-<port>.json`. A command
+that addresses a running daemon uses, in order: an explicit port (`--port`,
+`WA_DAEMON_PORT`, or the config file); else the one running daemon; else the
+default `8787`. With more than one running and no explicit port the CLI refuses
+and lists them — pass `--port` to choose. `wa join` never discovers; it uses its
+own port.
 
 ## Claude Code plugin
 
@@ -122,7 +130,8 @@ named player (default `David`), walk over, greet, follow.
 
 The `wa` CLI is a thin client of this. `src/wa-daemon.mjs` serves it on
 `http://127.0.0.1:8787` (`WA_DAEMON_PORT` to change); it advertises itself at
-`$TMPDIR/wa-daemon.json` and `~/.workadventurer/daemon.json`.
+`$TMPDIR/daemon-<port>.json` and `~/.workadventurer/daemon-<port>.json` (one
+file per port; a daemon only removes its own).
 
 | Call | Effect |
 |---|---|
@@ -477,7 +486,7 @@ utterance — only if there's actual text; silence alone doesn't emit an empty
 it loops a short phrase for the length of the whole utterance. In an
 interactive terminal the daemon redraws the provisional line in place and
 locks it in with a newline on `final`; under `--detach` (stdout is
-`daemon.log`, a plain file — cursor control doesn't mean anything there) it
+`daemon-<port>.log`, a plain file — cursor control doesn't mean anything there) it
 instead logs one clean, timestamped line per finalized utterance and drops
 partials. `/state` doesn't expose transcripts yet.
 

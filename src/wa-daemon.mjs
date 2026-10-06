@@ -27,18 +27,17 @@
 // Also: when another player invites the avatar over (WorkAdventure's "invite
 // to discussion" on the woka), it auto-accepts and walks to them — no request.
 //
-// Advertises itself at $TMPDIR/wa-daemon.json and ~/.workadventurer/daemon.json.
+// Advertises itself as daemon-<port>.json in $TMPDIR and ~/.workadventurer/ (#65).
 
 import http from "node:http";
-import os from "node:os";
 import fs from "node:fs";
-import path from "node:path";
 import { WorkAdventureClient } from "./wa-client.mjs";
 import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
 import { resolveClip } from "./resolve-clip.mjs";
 import { makeSttRoomOutput } from "./stt-room-output.mjs";
 import { stopWorker } from "./wa-stt.mjs";
+import { createRegistry } from "./daemon-registry.mjs";
 import { createReconnector } from "./reconnect.mjs";
 import { ServerRejectedError } from "./server-rejected.mjs";
 
@@ -46,10 +45,8 @@ const cfg = resolveConfig();
 const PORT = cfg.port;
 const QUIET_EXCLUDE = /board\s*room|podium|audience/i;
 
-const INFO_FILES = [
-  path.join(os.tmpdir(), "wa-daemon.json"),
-  path.join(os.homedir(), ".workadventurer", "daemon.json"),
-];
+// One advertisement per port; we only ever remove our own (#65).
+const registry = createRegistry();
 
 const ts = () => new Date().toISOString().slice(11, 19);
 const log = (...a) => {
@@ -572,7 +569,7 @@ const server = http.createServer(async (req, res) => {
 
 function shutdown(code) {
   deliberateShutdown = true;
-  for (const f of INFO_FILES) { try { fs.unlinkSync(f); } catch {} }
+  registry.withdraw(PORT);
   try { server.close(); } catch {}
   try { wa?.close(); } catch {}
   disposeLiveKitRuntime().catch(() => {}); // no-op unless a LiveKit room was ever created (#8)
@@ -587,7 +584,7 @@ process.on("unhandledRejection", (e) => log("unhandledRejection:", e?.stack || S
 
 server.on("error", (e) => {
   if (e.code === "EADDRINUSE") {
-    log(`port ${PORT} in use — a daemon is probably already running (see ${INFO_FILES[0]})`);
+    log(`port ${PORT} in use — a daemon is probably already running (try \`wa status --port ${PORT}\`)`);
     process.exit(3);
   }
   throw e;
@@ -612,20 +609,6 @@ attachAudio(wa);
 log(`joined as userId ${wa.myUserId}; spawn (${wa.pos.x | 0},${wa.pos.y | 0})`);
 
 server.listen(PORT, "127.0.0.1", () => {
-  const info = JSON.stringify({
-    pid: process.pid,
-    port: PORT,
-    room: wa.cfg.roomUrl,
-    name: cfg.name,
-    startedAt: new Date().toISOString(),
-  });
-  for (const f of INFO_FILES) {
-    try {
-      fs.mkdirSync(path.dirname(f), { recursive: true });
-      fs.writeFileSync(f, info);
-    } catch (e) {
-      log(`could not write ${f}: ${e.message}`);
-    }
-  }
+  registry.advertise({ port: PORT, room: wa.cfg.roomUrl, name: cfg.name });
   log(`control API on http://127.0.0.1:${PORT}`);
 });

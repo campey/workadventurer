@@ -244,6 +244,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Parallel daemons no longer share discovery files or a log (issue #65).**
+  Every daemon wrote the same `daemon.json` / `wa-daemon.json` and every
+  detached daemon logged to one `daemon.log`, so a bare `wa status`/`wa leave`
+  addressed whichever daemon started last, an exiting daemon deleted a
+  survivor's advertisement, and `wa join --port N` could report "already
+  joined" for a different daemon. Now: `daemon-<port>.json` / `daemon-<port>.log`
+  (`src/daemon-registry.mjs`); a daemon removes only its own file; advertisements
+  with a dead pid are pruned (a `kill -9`'d daemon used to leave a stale one).
+  The CLI uses an explicit port if given, else the single running daemon, else
+  the default — and with several running it refuses and lists them rather than
+  guessing. `wa join` never discovers. **Behaviour change:** scripts that read
+  `~/.workadventurer/daemon.log` / `daemon.json` must use the per-port names.
 - **The STT worker no longer outlives its daemon (issue #57).** `stopWorker()`
   had no callers, and a `kill -9`'d daemon can't clean up anyway, so
   `stt_worker.py` orphans piled up (one lived 5+ days). The worker is now
