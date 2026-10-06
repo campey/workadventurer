@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 kotlin { jvmToolchain(17) }
@@ -22,8 +23,11 @@ android {
 
 dependencies {
     api(libs.webrtc)
+    api(project(":protocol"))
     implementation(libs.coroutines.core)
+    implementation(libs.serialization.json)
     testImplementation(libs.kotlin.test)
+    testImplementation(libs.coroutines.test)
     androidTestImplementation(libs.kotlin.test)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.junit)
