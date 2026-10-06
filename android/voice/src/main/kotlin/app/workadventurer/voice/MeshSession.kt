@@ -38,19 +38,27 @@ class MeshSession(
     val activeConnections: Set<String> get() = synchronized(active) { active.keys.toSet() }
 
     suspend fun run(events: Flow<VoiceEvent>) {
-        events.collect { e ->
-            try { handle(e) } catch (c: CancellationException) { throw c } catch (t: Throwable) { log("voice event failed: ${t.message}") }
+        try {
+            events.collect { e ->
+                try { handle(e) } catch (c: CancellationException) { throw c } catch (t: Throwable) { log("voice event failed: ${t.message}") }
+            }
+        } finally {
+            // On this coroutine, after any in-flight negotiation has returned: a teardown racing from another thread could
+            // dispose a PeerConnection that native code is still using, or miss a link inserted a moment later.
+            closeAll()
         }
     }
+
+    private fun isClosed(id: String) = synchronized(closedIds) { id in closedIds }
 
     private suspend fun handle(e: VoiceEvent) {
         when (e) {
             is VoiceEvent.Start -> {
-                if (e.connectionId in closedIds) return
+                if (isClosed(e.connectionId)) return
                 if (e.initiator) offer(e) else link(e.spaceName, e.peerSpaceUserId, e.connectionId)
             }
             is VoiceEvent.Signal -> {
-                if (e.connectionId in closedIds) { log("[${e.connectionId}] signal for a closed connection, ignored"); return }
+                if (isClosed(e.connectionId)) { log("[${e.connectionId}] signal for a closed connection, ignored"); return }
                 when (val s = SimplePeerSignal.parse(e.signal)) {
                     is PeerSignal.Offer -> answer(e, s)
                     is PeerSignal.Candidate -> synchronized(active) { active[e.connectionId] }?.link?.addRemoteCandidate(s)
@@ -68,6 +76,9 @@ class MeshSession(
 
     private suspend fun link(space: String, peer: String, id: String): PeerLink {
         synchronized(active) { active[id] }?.let { return it.link }
+        // The server restarts a connection with a NEW id when ours didn't come up in time: retire the old link for this peer.
+        val stale = synchronized(active) { active.filter { (_, v) -> v.spaceName == space && v.peer == peer }.keys.toList() }
+        stale.forEach { log("[$it] superseded by [$id] for the same peer"); drop(it) }
         val l = links.create(id)
         synchronized(active) { active[id] = Entry(space, peer, l) }
         return l

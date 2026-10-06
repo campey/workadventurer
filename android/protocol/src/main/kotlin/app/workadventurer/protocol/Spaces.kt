@@ -3,6 +3,12 @@ package app.workadventurer.protocol
 /** The server answered a query with an error. */
 class QueryFailed(message: String) : Exception(message)
 
+/**
+ * The server didn't answer in time. Deliberately NOT a CancellationException (which kotlinx's withTimeout throws): code that
+ * rethrows cancellation, as it must, would otherwise let a slow server silently cancel its own caller.
+ */
+class QueryTimeout(message: String) : Exception(message)
+
 /** What the wa-1.33/1.34 adapter asks to sync when the server doesn't say. */
 val DEFAULT_SPACE_PROPS = listOf("cameraState", "microphoneState", "screenSharingState")
 
@@ -10,7 +16,7 @@ val DEFAULT_SPACE_PROPS = listOf("cameraState", "microphoneState", "screenSharin
 sealed interface VoiceEvent {
     val spaceName: String
 
-    /** [initiator] true means we must send the offer (not supported until M4). */
+    /** [initiator] true means we must send the offer; false means we answer. */
     data class Start(override val spaceName: String, val peerSpaceUserId: String, val connectionId: String, val initiator: Boolean) : VoiceEvent
     data class Signal(override val spaceName: String, val peerSpaceUserId: String, val connectionId: String, val signal: String) : VoiceEvent
     data class Disconnect(override val spaceName: String, val peerSpaceUserId: String) : VoiceEvent

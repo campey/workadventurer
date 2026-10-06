@@ -30,6 +30,7 @@ import app.workadventurer.proto.ViewportMessage
 import app.workadventurer.proto.WebRtcSignal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -46,7 +47,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -134,7 +134,7 @@ open class PusherConnection(
         pendingQueries[id] = answer
         try {
             send(ClientToServerMessage(queryMessage = build(id)))
-            val a = withTimeout(timeoutMs) { answer.await() }
+            val a = withTimeoutOrNull(timeoutMs) { answer.await() } ?: throw QueryTimeout("no answer to query $id within $timeoutMs ms")
             a.error?.let { throw QueryFailed(it.message) }
             return a
         } finally {
@@ -154,8 +154,8 @@ open class PusherConnection(
         )))
     }
 
-    open suspend fun iceServers(): List<IceServerInfo> = try {
-        query { id -> QueryMessage(id = id, iceServersQuery = IceServersQuery()) }
+    open suspend fun iceServers(timeoutMs: Long = 10_000): List<IceServerInfo> = try {
+        query(timeoutMs) { id -> QueryMessage(id = id, iceServersQuery = IceServersQuery()) }
             .iceServersAnswer?.iceServers.orEmpty()
             .map { IceServerInfo(it.urls, it.username, it.credential) }
             .ifEmpty { FALLBACK_ICE }
@@ -183,7 +183,7 @@ open class PusherConnection(
     private val spaceMutex = Mutex()
 
     private fun joinSpace(spaceName: String, props: List<String>) {
-        scope.launch {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { // UNDISPATCHED: take the mutex in arrival order, so a leave can never overtake a join
             spaceMutex.withLock {
                 if (state.spaces.value.containsKey(spaceName)) return@launch // already a member
                 try {
@@ -207,7 +207,7 @@ open class PusherConnection(
     }
 
     private fun leaveSpace(spaceName: String) {
-        scope.launch {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             spaceMutex.withLock {
                 if (!state.spaces.value.containsKey(spaceName)) return@launch // never joined
                 state.removeSpace(spaceName)

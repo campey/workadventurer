@@ -14,23 +14,15 @@ import livekit.org.webrtc.SdpObserver
 import livekit.org.webrtc.SessionDescription
 import java.util.concurrent.atomic.AtomicInteger
 
-/** The answering side of one simple-peer connection. Remote audio plays through the audio device module on its own. */
+/** One simple-peer connection, as answerer or offerer. Remote audio plays through the audio device module on its own. */
 internal class WebRtcPeerLink(
     factory: PeerConnectionFactory,
     private val connectionId: String,
     iceServers: List<IceServerInfo>,
 ) : PeerLink {
-    // libwebrtc can report gathering COMPLETE *before* the first candidate is delivered (seen on the S25: COMPLETE, then one
-    // host candidate, no srflx), so "complete" alone says nothing. We wait for a first candidate, then give the rest (the
-    // STUN-reflexive one) a bounded moment to settle.
-    private val candidates = AtomicInteger(0)
-    @Volatile private var complete = false
-    private val firstCandidate = CompletableDeferred<Unit>()
-    private val settled = CompletableDeferred<Unit>()
+    private val gate = CandidateGate() // when a non-trickle SDP has its candidates; see CandidateGate
     private val keepAlive = mutableListOf<Any>() // data channel references: libwebrtc drops channels nobody holds
     private val connected = CompletableDeferred<Unit>()
-
-    private fun checkSettled() { if (candidates.get() > 0 && complete) settled.complete(Unit) }
 
     private val pc: PeerConnection = factory.createPeerConnection(
         PeerConnection.RTCConfiguration(iceServers.map {
@@ -43,11 +35,9 @@ internal class WebRtcPeerLink(
             }
             override fun onIceConnectionReceivingChange(b: Boolean) {}
             override fun onIceGatheringChange(s: PeerConnection.IceGatheringState) {
-                if (s == PeerConnection.IceGatheringState.COMPLETE) { complete = true; checkSettled() }
+                if (s == PeerConnection.IceGatheringState.COMPLETE) gate.onComplete()
             }
-            override fun onIceCandidate(c: IceCandidate) {
-                candidates.incrementAndGet(); firstCandidate.complete(Unit); checkSettled()
-            }
+            override fun onIceCandidate(c: IceCandidate) { gate.onCandidate() }
             override fun onIceCandidatesRemoved(c: Array<out IceCandidate>) {}
             override fun onAddStream(s: MediaStream) {}
             override fun onRemoveStream(s: MediaStream) {}
@@ -69,6 +59,12 @@ internal class WebRtcPeerLink(
         val remoteSet = CompletableDeferred<Unit>()
         pc.setRemoteDescription(SetObserver(remoteSet), SessionDescription(SessionDescription.Type.OFFER, offerSdp))
         remoteSet.await()
+
+        // A browser offer always carries a video section. We keep it (the answer's m-line order must match) but never show
+        // video, so make it inactive: left recvonly, a peer with its camera on would stream video to a backgrounded phone.
+        pc.transceivers
+            .filter { it.mediaType == livekit.org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO }
+            .forEach { it.direction = livekit.org.webrtc.RtpTransceiver.RtpTransceiverDirection.INACTIVE }
 
         val created = CompletableDeferred<SessionDescription>()
         pc.createAnswer(object : SdpObserver {
@@ -124,8 +120,7 @@ internal class WebRtcPeerLink(
 
     // Non-trickle: the SDP must carry its candidates. Wait for the first, then let the others settle.
     private suspend fun localDescriptionWithCandidates(): String? {
-        withTimeoutOrNull(GATHER_TIMEOUT_MS) { firstCandidate.await() }
-        withTimeoutOrNull(SETTLE_MS) { settled.await() }
+        gate.await(GATHER_TIMEOUT_MS, SETTLE_MS)
         val sdp = pc.localDescription?.description ?: return null
         return sdp.takeIf { "a=candidate" in it } // zero candidates is a dead connection: the caller tears down
     }

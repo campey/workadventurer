@@ -24,9 +24,11 @@ class AnswerRealBrowserOfferTest {
             println("ANSWER-SDP-BEGIN\n$answer\nANSWER-SDP-END")
             assertTrue(Regex("m=audio [1-9]").containsMatchIn(answer), "audio section not accepted")
             assertTrue("opus/48000" in answer)
-            // libwebrtc answers the video section (recvonly, we never send video) rather than rejecting it; what matters is that
-            // answering it neither crashes nor fails the whole connection, as it did in werift.
-            assertTrue("m=video" in answer, "no video section in the answer: the m-line order must match the offer")
+            // libwebrtc keeps the video section (the m-line order must match the offer) but we never show video, so it must be
+            // INACTIVE: a recvonly answer would have a browser peer with its camera on stream video to a backgrounded phone.
+            val video = answer.split(Regex("(?m)^(?=m=)")).firstOrNull { it.startsWith("m=video") }
+            assertNotNull(video, "no video section in the answer: the m-line order must match the offer")
+            assertTrue("a=inactive" in video, "the video section must be inactive, was: ${video.lines().filter { it.startsWith("a=") && it.contains("only") || it.startsWith("a=send") || it.startsWith("a=inactive") }}")
             assertTrue(Regex("m=application [1-9]").containsMatchIn(answer), "data channel not accepted")
             assertTrue("a=candidate" in answer, "answer has no ICE candidates")
             link.close()

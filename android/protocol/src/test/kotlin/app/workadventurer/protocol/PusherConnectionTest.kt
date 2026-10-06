@@ -599,11 +599,24 @@ class PusherConnectionTest {
         server(live.fake).use { s ->
             val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
             withTimeout(5_000) { conn.connect() }
-            assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> {
+            assertFailsWith<QueryTimeout> { // a plain exception, NOT a CancellationException (see the next test)
                 conn.query(timeoutMs = 200) { id -> QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(spaceName = "x")) }
             }
             delay(700) // the late answer for the first query arrives now
             assertEquals("ok", conn.query { id -> QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(spaceName = "y")) }.joinSpaceAnswer!!.spaceUserId)
+            conn.close()
+        }
+    }
+
+    // Final review, Critical: a timed-out query used to surface as a CancellationException, which iceServers() rethrew, so the
+    // voice host's ICE-servers task was silently cancelled and every later voice event was dropped until the next reconnect.
+    @Test
+    fun anIceServersQueryTheServerNeverAnswersFallsBackToStunInsteadOfCancelling() = runBlocking<Unit> {
+        val live = LiveFake() // never answers queries
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertEquals(listOf(IceServerInfo(listOf("stun:stun.l.google.com:19302"), null, null)), conn.iceServers(timeoutMs = 200))
             conn.close()
         }
     }
@@ -683,6 +696,35 @@ class PusherConnectionTest {
             assertTrue(left.await(3, TimeUnit.SECONDS), "leaveSpaceQuery never sent")
             val sent = generateSequence { live.fake.received.poll(300, TimeUnit.MILLISECONDS) }.toList()
             assertEquals("sp", sent.mapNotNull { it.removeSpaceFilterMessage }.single().spaceFilterMessage!!.spaceName)
+            conn.close()
+        }
+    }
+
+    // Final review (raised to Important: once the mic exists this would mean speaking into a bubble we were told to leave): a
+    // leave that arrives right behind a still-pending join must run AFTER it, not get overtaken and no-op.
+    @Test
+    fun aLeaveRightBehindASlowJoinLeavesTheSpaceAfterJoiningIt() = runBlocking<Unit> {
+        val live = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q ->
+                if (q.joinSpaceQuery != null) Thread {
+                    Thread.sleep(300)
+                    ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, joinSpaceAnswer = JoinSpaceAnswer(spaceUserId = "sp_7")))))
+                }.start()
+            }
+        }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp")))
+            live.push(ServerToClientMessage(leaveSpaceRequestMessage = LeaveSpaceRequestMessage(spaceName = "sp")))
+            val sent = mutableListOf<ClientToServerMessage>()
+            withTimeout(5_000) {
+                while (sent.none { it.removeSpaceFilterMessage != null }) { live.fake.received.poll(100, TimeUnit.MILLISECONDS)?.let { sent += it } }
+            }
+            val add = sent.indexOfFirst { it.addSpaceFilterMessage != null }
+            val remove = sent.indexOfFirst { it.removeSpaceFilterMessage != null }
+            assertTrue(add in 0 until remove, "the space must be watched, then unwatched (add=$add, remove=$remove)")
+            assertTrue(conn.state.spaces.value.isEmpty(), "still a member of a space we were told to leave")
             conn.close()
         }
     }

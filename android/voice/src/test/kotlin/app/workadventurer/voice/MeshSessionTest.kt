@@ -165,6 +165,38 @@ class MeshSessionTest {
         assertTrue(boom.activeConnections.isEmpty()); job.cancel(); j2.cancel()
     }
 
+    // Final review, Important: the server's restart path sends a NEW connection id for a peer we already have a link to; the old
+    // link must not linger (it holds a PeerConnection and ICE ports, and could play audio twice).
+    @Test
+    fun aFreshConnectionIdForTheSamePeerRetiresTheOldLink() = runTest {
+        val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        r.events.emit(VoiceEvent.Start("sp", "sp_9", "c1", initiator = true)); runCurrent()
+        r.events.emit(VoiceEvent.Start("sp", "sp_9", "c2", initiator = false)); runCurrent()
+        assertTrue(r.made.getValue("c1").closed)
+        assertEquals(false, r.made.getValue("c2").closed)
+        assertEquals(setOf("c2"), r.mesh.activeConnections)
+        // and the retired id stays dead
+        r.events.emit(VoiceEvent.Signal("sp", "sp_9", "c1", """{"type":"answer","sdp":"LATE"}""")); runCurrent()
+        assertTrue(r.made.getValue("c1").answersAccepted.isEmpty()); job.cancel()
+    }
+
+    @Test
+    fun aDifferentPeerInTheSameSpaceKeepsItsLink() = runTest {
+        val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        r.events.emit(VoiceEvent.Start("sp", "sp_9", "c1", initiator = false)); r.events.emit(VoiceEvent.Start("sp", "sp_8", "c2", initiator = false)); runCurrent()
+        assertEquals(setOf("c1", "c2"), r.mesh.activeConnections); job.cancel()
+    }
+
+    // Final review, Important: cancelling the mesh (leave, socket drop) must close its links itself, on its own coroutine,
+    // instead of leaving a racing teardown on another thread.
+    @Test
+    fun cancellingTheMeshClosesEveryLink() = runTest {
+        val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        r.events.emit(offer("c1")); r.events.emit(offer("c2", "sp_8")); runCurrent()
+        job.cancel(); runCurrent()
+        assertTrue(r.made.values.all { it.closed }); assertTrue(r.mesh.activeConnections.isEmpty())
+    }
+
     @Test
     fun closeAllClosesEverything() = runTest {
         val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
