@@ -12,6 +12,59 @@ anything here that contradicts it means the spec gets revised first.
 - The Gradle wrapper was generated from a one-off Gradle 8.10.2 download (avoids
   `brew install gradle`, which pulls a from-source `openjdk` on macOS 14).
 
+## G2 — movement (2026-10-05 / 06)
+
+**Verdict: walk-to works well on a real phone; two things the live runs changed (below). Invite is implemented and
+unit-tested but its live check against a browser peer is still open.**
+
+Measured:
+- **Runtime collision builder matches the Node bake exactly.** `wa-cli collision --baked …` rebuilds each map from the
+  live `.wam` + `.tmj`: afrolabs 913 = 913 blocked tiles, lean-iterator 2961 = 2961, no differences either way.
+  wa-village: Kotlin 3390 vs the committed bake's 3426; a *fresh* Node bake today also gives 3390 and then matches
+  Kotlin exactly, so the committed `map/tcm/…/collision.json` (2026-09-10) is simply stale (36 tiles).
+- **Kotlin A\* equals Node's, path for path** on 74 generated cases (exact equality), including the 6 unreachable ones.
+- **Grid load is off the critical path:** join → `Connected` in about 4 s; the `.tmj` (1.5 MB) takes ~4.4 s more on a
+  cold first run and ~0.2 s once cached on disk (logcat, real phone).
+- **One continuous 32-minute connection on the phone** (09:24:31 → 09:56:56, foreground service up, screen on and then
+  off) with **no reconnect or disconnect event** in the new logcat output (`adb logcat -s WaConn:I WaSession:I`).
+  This answers the open G1 question "did a silent reconnect happen?" for that run, and extends G1's 6½-minute soak.
+- Mac-side CLI run (follow, since removed) tracked a moving browser avatar across ~2,000 px; all 18 sampled positions
+  were on free tiles.
+
+Reported by the user (not measured): walk-to "seems to work really well" on the phone.
+
+Findings that changed the build:
+- **"Follow" was the wrong feature and was removed.** WorkAdventure's follow is a mutually negotiated request made once
+  in a bubble (`FollowRequest` / `FollowConfirmation` / `FollowAbort`), not a client loop that keeps walking toward a
+  player. "Walk to" is the only thing you can do to a player at a distance. The Node CLI's `wa follow` has the same
+  mislabelling. Real follow is issue #76; the Android UI redesign (users panel, a screen per user) is #77.
+- **Walk-to didn't always get close enough to bubble up.** WorkAdventure v1.34.0 defaults (read from
+  `back/src/Enum/EnvironmentVariableValidator.ts`): `MINIMUM_DISTANCE = 64` px to form a bubble,
+  `GROUP_RADIUS = 48` px to join one. We stopped 40–88 px away. Now: stand 40 px in front, stop within 8 px (ends
+  32–48 px away), re-plan every 500 ms (it was 2 s, so a player who walked away was chased from where they were up to
+  2 s earlier). A failing test reproduced it first (stopped 76 px away). The numbers are the documented defaults, not
+  measured on prod.
+- **"Couldn't join: …" vanished within 6 ms** (phone log: `Failed` → `Disconnected` 6 ms apart): the service stops
+  itself after a failed join, and its `onDestroy` then reset the session. Fixed with a tested rule
+  (`shouldLeaveWhenServiceStops`).
+- **The player list only shows nearby players.** The server streams only players inside the viewport around us
+  (about ±1,920 × ±1,080 px); after walking ~1,600 px away the list dropped from 3 players to 0. For "who's around"
+  that's right, for "who's in the room" it isn't. The protocol has `AskPosition{userIdentifier, playUri, LOCATE|MOVE}`
+  → `LocatePosition` to find a player outside the viewport; the Android client now uses it when accepting an invite from
+  someone we can't see (not yet verified on the wire). Folded into #77.
+- **Smoothed paths can graze a wall corner** (as in the Node client): the smoothing guarantees line-of-sight between
+  tile *centres*, not geometric clearance. Measured at 1.2 px inside a wall tile in the unit geometry; the test now
+  asserts "never more than 12 px into a wall". Cosmetic: movement is client-authoritative.
+- **A first-attempt transport failure is final** (reviewer finding, seen live): one Mac-side join died with
+  `closed before join: -1 EOFException` (a one-off network drop; an immediate retry worked). The CLI has no retry and
+  the app treats a first-attempt socket failure as `Failed`.
+- Lag when following (user report) was **not** diagnosed before follow was removed. Walking speed in WorkAdventure is
+  `WOKA_SPEED` 9 × 20 = 180 px/s (running 2.5× = 450 px/s) per `play/src/front/Phaser/Player/Player.ts` and the docs;
+  the removed loop moved at 300 px/s, so at walking pace the lag was latency, not top speed.
+
+Still open for G2: the invite live check (you invite me / I invite you / far-away sender via `AskPosition`), the
+lock-screen-while-walking run, the Leave-notification and microphone-denied checks on the phone.
+
 ## G1 — real phone (Galaxy S25 Ultra `SM-S938B`, Android 16 / One UI), 2026-10-05
 
 **Verdict: passed with caveats. Presence survived a locked-screen run on a real
