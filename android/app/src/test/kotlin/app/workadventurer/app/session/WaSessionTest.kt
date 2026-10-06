@@ -53,6 +53,8 @@ class WaSessionTest {
             state.setMyPose(x, y, facing)
             moves += Triple(x, y, moving)
         }
+        val micCalls = mutableListOf<Boolean>()
+        override fun setMicOn(on: Boolean) { micCalls += on }
         override fun close() { closeCalls++; fakeClosed.complete(Closed(1000, "bye")) }
         override fun sendInvite(receiverUuid: String, receiverUserId: Int?) { invitesSent += receiverUuid to receiverUserId }
         override fun respondToInvite(senderUuid: String, accept: Boolean) {
@@ -552,7 +554,7 @@ class WaSessionTest {
         val started = mutableListOf<PusherConnection>(); var closed = 0
         var conn: FakeConn? = null
         val session = WaSession(backgroundScope, { c -> FakeConn(c) { }.also { conn = it } }, nowMs = { testScheduler.currentTime },
-            voiceHost = { c -> started += c; AutoCloseable { closed++ } })
+            voiceHost = { c -> started += c; FakeVoice { closed++ } })
         session.dispatch(Command.Join(cfg)); runCurrent()
         assertEquals(1, started.size); assertEquals(0, closed)
         conn!!.fakeClosed.complete(Closed(1006, "net")); runCurrent()
@@ -563,7 +565,7 @@ class WaSessionTest {
     fun leaveClosesTheVoiceHostAndAReconnectStartsAFreshOne() = runTest {
         var starts = 0; var closes = 0
         val session = WaSession(backgroundScope, { c -> FakeConn(c) { } }, nowMs = { testScheduler.currentTime },
-            voiceHost = { starts++; AutoCloseable { closes++ } })
+            voiceHost = { starts++; FakeVoice { closes++ } })
         session.dispatch(Command.Join(cfg)); runCurrent()
         session.dispatch(Command.Leave); runCurrent()
         assertEquals(1, closes)
@@ -577,5 +579,69 @@ class WaSessionTest {
             voiceHost = { error("libwebrtc missing") })
         session.dispatch(Command.Join(cfg)); runCurrent()
         assertEquals(Connection.Connected, session.state.value.connection)
+    }
+
+    private class FakeVoice(val onClose: () -> Unit = {}) : VoiceHandle {
+        val muteCalls = mutableListOf<Boolean>()
+        override fun setMuted(muted: Boolean) { muteCalls += muted }
+        override fun close() { onClose() }
+    }
+
+    @Test
+    fun aFreshSessionIsMutedAndTheVoiceStartsMuted() = runTest {
+        val voices = mutableListOf<FakeVoice>(); var conn: FakeConn? = null
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { }.also { conn = it } }, nowMs = { testScheduler.currentTime },
+            voiceHost = { FakeVoice().also { voices += it } })
+        assertTrue(session.state.value.muted)
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertTrue(session.state.value.muted)
+        assertEquals(listOf(true), voices[0].muteCalls)
+        assertEquals(listOf(false), conn!!.micCalls) // mic off on the connection too
+    }
+
+    @Test
+    fun unmutingTurnsTheMicOnForTheConnectionAndTheVoiceAndMutingTurnsItOff() = runTest {
+        val voices = mutableListOf<FakeVoice>(); var conn: FakeConn? = null
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { }.also { conn = it } }, nowMs = { testScheduler.currentTime },
+            voiceHost = { FakeVoice().also { voices += it } })
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        session.dispatch(Command.SetMuted(false)); runCurrent()
+        assertEquals(false, session.state.value.muted)
+        assertEquals(false, voices[0].muteCalls.last()); assertEquals(true, conn!!.micCalls.last())
+        session.dispatch(Command.SetMuted(true)); runCurrent()
+        assertEquals(true, session.state.value.muted)
+        assertEquals(true, voices[0].muteCalls.last()); assertEquals(false, conn!!.micCalls.last())
+    }
+
+    // Review Focus 3
+    @Test
+    fun theMuteChoiceSurvivesAReconnectAndALeaveResetsIt() = runTest {
+        val voices = mutableListOf<FakeVoice>(); val conns = mutableListOf<FakeConn>()
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { }.also { conns += it } }, nowMs = { testScheduler.currentTime },
+            voiceHost = { FakeVoice().also { voices += it } })
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        session.dispatch(Command.SetMuted(false)); runCurrent()
+        conns[0].fakeClosed.complete(Closed(1006, "net")); runCurrent()
+        advanceTimeBy(1_001); runCurrent()
+        assertEquals(2, conns.size)
+        assertEquals(false, session.state.value.muted)
+        assertEquals(false, voices[1].muteCalls.last(), "the new voice handle must be unmuted")
+        assertEquals(true, conns[1].micCalls.last())
+        session.dispatch(Command.Leave); runCurrent()
+        assertTrue(session.state.value.muted)
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(true, voices.last().muteCalls.last(), "a fresh join starts muted")
+    }
+
+    // Review Focus 5
+    @Test
+    fun unmutingBeforeConnectedIsHarmlessAndNeverCarriesIntoAJoin() = runTest {
+        val voices = mutableListOf<FakeVoice>()
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { } }, nowMs = { testScheduler.currentTime },
+            voiceHost = { FakeVoice().also { voices += it } })
+        session.dispatch(Command.SetMuted(false)); runCurrent() // not joined: nothing to apply it to, and no crash
+        assertTrue(voices.isEmpty())
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(true, voices[0].muteCalls.last(), "an unmute pressed before joining must not carry into the join: it starts muted")
     }
 }

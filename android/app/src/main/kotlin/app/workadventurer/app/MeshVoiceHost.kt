@@ -3,6 +3,7 @@ package app.workadventurer.app
 import android.content.Context
 import android.media.AudioManager
 import android.util.Log
+import app.workadventurer.app.session.VoiceHandle
 import app.workadventurer.protocol.PusherConnection
 import app.workadventurer.protocol.VoiceEvent
 import app.workadventurer.voice.MeshSession
@@ -31,8 +32,15 @@ import kotlinx.coroutines.withContext
  *   has returned, never from another thread while native code may still be using it;
  * - nothing thrown in here may leave the job uncaught (that would crash the app) or leave the audio mode changed.
  */
-class MeshVoiceHost(private val context: Context) : (PusherConnection) -> AutoCloseable {
-    override fun invoke(conn: PusherConnection): AutoCloseable {
+class MeshVoiceHost(private val context: Context) : (PusherConnection) -> VoiceHandle {
+    /** Holds the mute choice from the first moment, so one pressed before the engine exists is applied when it does. */
+    private class Handle(private val onClose: () -> Unit) : VoiceHandle {
+        @Volatile var currentlyMuted = true
+        override fun setMuted(muted: Boolean) { currentlyMuted = muted } // wired to the engine in Task 4
+        override fun close() = onClose()
+    }
+
+    override fun invoke(conn: PusherConnection): VoiceHandle {
         val scope = CoroutineScope(
             SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, t -> Log.e("WaVoice", "voice stopped: ${t.message}") },
         )
@@ -69,6 +77,6 @@ class MeshVoiceHost(private val context: Context) : (PusherConnection) -> AutoCl
                 }
             }
         }
-        return AutoCloseable { scope.cancel() }
+        return Handle { scope.cancel() }
     }
 }
