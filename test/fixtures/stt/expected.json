@@ -1,0 +1,17 @@
+{
+  "speech_fox.wav": "The quick brown fox jumps over the lazy dog.",
+  "speech_firepit.wav": "Let's meet at the fire pit after lunch and talk about the new map.",
+  "speech_okay.wav": "Okay.",
+  "speech_quiet.wav": "The meeting starts at three o'clock.",
+  "speech_claude_intro.wav": "Hey, I am Claude, and I can now chat to you here. What should we do next?",
+  "speech_in_noise.wav": "Let's meet at the fire pit after lunch and talk about the new map.",
+  "speech_fragment.wav": "Let's meet at the",
+  "speech_whisper.wav": "The quick brown fox jumps over the lazy dog.",
+  "silence_3s.wav": "",
+  "noise_low.wav": "",
+  "noise_brown.wav": "",
+  "noise_white_hiss.wav": "",
+  "noise_click.wav": "",
+  "hum_120hz.wav": "",
+  "tone_440hz.wav": ""
+}

@@ -379,7 +379,7 @@ export class WaAudio extends EventEmitter {
       return;
     }
     const remoteUserId = participant?.identity ?? track.sid;
-    const stt = new SttStream({ raw: true });
+    const stt = new SttStream({ raw: true, label: participantLabel(participant) });
     stt.on("log", (m) => this.emit("log", `[${track.sid}] stt: ${m}`));
     stt.on("error", (e) => this.emit("log", `[${track.sid}] stt error: ${e.message}`));
     stt.on("partial", (m) => this.emit("heard", { connectionId: track.sid, remoteUserId, ...m, final: false }));
@@ -537,7 +537,7 @@ export class WaAudio extends EventEmitter {
           this.emit("log", `[${connectionId}] stt skipped — ${MAX_STT_STREAMS} already active`);
           return;
         }
-        const stt = new SttStream();
+        const stt = new SttStream({ label: String(connectionId).slice(0, 8) });
         stt.on("log", (m) => this.emit("log", `[${connectionId}] stt: ${m}`));
         stt.on("error", (e) => this.emit("log", `[${connectionId}] stt error: ${e.message}`));
         stt.on("partial", (m) => this.emit("heard", { connectionId, remoteUserId, ...m, final: false }));
