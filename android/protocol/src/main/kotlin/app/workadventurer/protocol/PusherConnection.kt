@@ -85,6 +85,7 @@ open class PusherConnection(
 
     /** "Invite to discussion": ask [receiverUuid] to come over. The outcome arrives in [RoomState.inviteOutcome]. */
     open fun sendInvite(receiverUuid: String, receiverUserId: Int?) {
+        _log.tryEmit("inviting $receiverUuid (user id $receiverUserId)")
         send(ClientToServerMessage(meetingInvitationRequestMessage = MeetingInvitationRequestMessage(
             receiverUserUuid = receiverUuid, receiverUserId = receiverUserId,
         )))
@@ -92,6 +93,7 @@ open class PusherConnection(
 
     /** Accept or decline an invitation from [senderUuid]; either way it is no longer pending. */
     open fun respondToInvite(senderUuid: String, accept: Boolean) {
+        _log.tryEmit("answering invitation from $senderUuid: ${if (accept) "accept" else "decline"}")
         send(ClientToServerMessage(meetingInvitationResponseMessage = MeetingInvitationResponseMessage(
             accept = accept, requestSenderUserUuid = senderUuid,
         )))
@@ -262,12 +264,21 @@ open class PusherConnection(
             _log.tryEmit("invited by ${it.senderName}")
             return
         }
-        if (m.meetingInvitationRequestClosedMessage != null) { state.clearInvites(); return }
+        if (m.meetingInvitationRequestClosedMessage != null) {
+            _log.tryEmit("invitation closed by the server (${state.pendingInvites.value.size} pending cleared)")
+            state.clearInvites()
+            return
+        }
         m.meetingInvitationResponseReceivedMessage?.let {
+            _log.tryEmit("${it.responderName} ${if (it.accepted) "accepted" else "declined"} our invitation")
             state.setInviteOutcome(if (it.accepted) InviteOutcome.Accepted(it.responderName) else InviteOutcome.Declined(it.responderName))
             return
         }
-        if (m.meetingInvitationRequestTooHighMessage != null) { state.setInviteOutcome(InviteOutcome.TooMany); return }
+        if (m.meetingInvitationRequestTooHighMessage != null) {
+            _log.tryEmit("invitation refused: too many invitations")
+            state.setInviteOutcome(InviteOutcome.TooMany)
+            return
+        }
         m.locatePositionMessage?.let { loc ->
             val p = loc.position
             if (p != null) pendingLocates.remove(loc.userUuid)?.complete(Pt(p.x.toDouble(), p.y.toDouble()))
