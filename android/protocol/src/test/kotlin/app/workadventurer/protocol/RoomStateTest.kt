@@ -1,5 +1,6 @@
 package app.workadventurer.protocol
 
+import app.workadventurer.nav.Facing
 import app.workadventurer.proto.GroupDeleteMessage
 import app.workadventurer.proto.GroupUpdateMessage
 import app.workadventurer.proto.PositionMessage
@@ -86,5 +87,40 @@ class RoomStateTest {
         s.areas = listOf(Area("a", "A", 0, 0, 100, 100, emptySet(), false, false), Area("b", "B", 500, 500, 10, 10, emptySet(), false, false))
         s.setMyPosition(50, 50)
         assertEquals(listOf("A"), s.currentAreas().map { it.name })
+    }
+
+    @Test
+    fun poseFlowFollowsMovesRoundsForTheWireAndFeedsCurrentAreas() {
+        val s = RoomState()
+        s.areas = listOf(
+            Area("a", "A", 0, 0, 100, 100, emptySet(), false, false),
+            Area("b", "B", 500, 500, 10, 10, emptySet(), false, false),
+        )
+        s.setMyPose(50.4, 50.6, Facing.LEFT)
+        assertEquals(Pose(50.4, 50.6, Facing.LEFT), s.myPose.value)
+        assertEquals(50 to 51, s.myPosition())
+        assertEquals(listOf("A"), s.currentAreas().map { it.name })
+        s.setMyPose(505.0, 505.0, Facing.UP)
+        assertEquals(listOf("B"), s.currentAreas().map { it.name })
+    }
+
+    @Test
+    fun setMyPositionKeepsTheFacing() {
+        val s = RoomState()
+        s.setMyPose(1.0, 2.0, Facing.LEFT)
+        s.setMyPosition(10, 20)
+        assertEquals(Pose(10.0, 20.0, Facing.LEFT), s.myPose.value)
+    }
+
+    // The uuid is the ACCOUNT EMAIL for logged-in players. A future `Log.i(..., player)` or an exception message that
+    // stringifies one of these must not leak it.
+    @Test
+    fun theUuidNeverAppearsWhenPlayersAndInvitesAreStringified() {
+        val email = "someone@example.com"
+        val p = Player(1, "Ada", email, 1, 2, PositionMessage.Direction.DOWN)
+        val i = Invite(email, "Ada", 1, "https://play/room")
+        assertEquals(false, p.toString().contains(email), p.toString())
+        assertEquals(false, i.toString().contains(email), i.toString())
+        assertEquals(true, p.toString().contains("Ada"))
     }
 }

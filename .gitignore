@@ -31,3 +31,6 @@ test/fixtures/stt-real/
 
 # Claude Code worktrees (EnterWorktree)
 .claude/worktrees/
+
+# STT worker sockets (per daemon pid, #57)
+.wa-stt.*sock

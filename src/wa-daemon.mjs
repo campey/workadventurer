@@ -27,26 +27,26 @@
 // Also: when another player invites the avatar over (WorkAdventure's "invite
 // to discussion" on the woka), it auto-accepts and walks to them — no request.
 //
-// Advertises itself at $TMPDIR/wa-daemon.json and ~/.workadventurer/daemon.json.
+// Advertises itself as daemon-<port>.json in $TMPDIR and ~/.workadventurer/ (#65).
 
 import http from "node:http";
-import os from "node:os";
 import fs from "node:fs";
-import path from "node:path";
 import { WorkAdventureClient } from "./wa-client.mjs";
 import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
 import { resolveClip } from "./resolve-clip.mjs";
 import { makeSttRoomOutput } from "./stt-room-output.mjs";
+import { stopWorker } from "./wa-stt.mjs";
+import { createRegistry } from "./daemon-registry.mjs";
+import { createReconnector } from "./reconnect.mjs";
+import { ServerRejectedError } from "./server-rejected.mjs";
 
 const cfg = resolveConfig();
 const PORT = cfg.port;
 const QUIET_EXCLUDE = /board\s*room|podium|audience/i;
 
-const INFO_FILES = [
-  path.join(os.tmpdir(), "wa-daemon.json"),
-  path.join(os.homedir(), ".workadventurer", "daemon.json"),
-];
+// One advertisement per port; we only ever remove our own (#65).
+const registry = createRegistry();
 
 const ts = () => new Date().toISOString().slice(11, 19);
 const log = (...a) => {
@@ -60,7 +60,6 @@ let wa;
 let audio; // WaAudio, bound to the current client
 let follow = null; // { name, userId, controller, paused }
 let deliberateShutdown = false;
-let reconnecting = false;
 
 let sttLineOpen = false; // a provisional partial line is currently on the terminal, unterminated
 
@@ -151,9 +150,17 @@ function wireClient(client) {
       walkToPlayer(sender, 90_000).then((r) => log("invite walk:", JSON.stringify(r)))
     );
   });
-  client.on("close", (c) => {
-    log("socket closed", c.code, c.reason || "");
+  client.on("close", (c) => log("socket closed", c.code, c.reason || ""));
+}
+
+// Reconnect-on-close belongs to the LIVE client only. Attempt clients made by
+// the reconnector are wired with wireClient() alone: a rejected attempt closes
+// its socket, and when that triggered a reconnect it started a new chain per
+// attempt (~2^N connections — #56).
+function watchLive(client) {
+  client.on("close", () => {
     if (deliberateShutdown) return shutdown(0);
+    if (client !== wa) return; // a stale client's close isn't a drop of the live one
     attemptReconnect().catch((e) => {
       log("reconnect gave up:", e.message);
       shutdown(1);
@@ -362,7 +369,7 @@ function state() {
         }
       : null,
     connected: wa.ws?.readyState === 1,
-    reconnecting,
+    reconnecting: reconnector.active,
     myUserId: wa.myUserId,
     pos: { x: Math.round(wa.pos.x), y: Math.round(wa.pos.y) },
     facing: ["up", "right", "down", "left"][wa.pos.direction] ?? null,
@@ -395,46 +402,44 @@ function state() {
   };
 }
 
-async function attemptReconnect() {
-  reconnecting = true;
-  const prevFollow = follow ? { name: follow.name, paused: follow.paused } : null;
-  const delays = [2000, 5000, 10000, 20000, 30000];
-  for (let i = 0; i < delays.length; i++) {
-    await new Promise((r) => setTimeout(r, delays[i]));
-    log(`reconnect attempt ${i + 1}/${delays.length}…`);
-    const client = new WorkAdventureClient({
-      name: cfg.name,
-      roomUrl: cfg.roomUrl,
-      pusherUrl: cfg.pusherUrl,
-      target: cfg.target,
-      version: cfg.version,
-      wokaId: cfg.wokaId,
-      // A listen-mode ("scribe") instance doesn't publish audio by default —
-      // client.micOn is the single source of truth every mic-announce path
-      // respects (#10). See wa-audio.mjs for the rest of that invariant.
-      micOn: !cfg.stt,
-    });
+const newClient = () =>
+  new WorkAdventureClient({
+    name: cfg.name,
+    roomUrl: cfg.roomUrl,
+    pusherUrl: cfg.pusherUrl,
+    target: cfg.target,
+    version: cfg.version,
+    wokaId: cfg.wokaId,
+    // A listen-mode ("scribe") instance doesn't publish audio by default —
+    // client.micOn is the single source of truth every mic-announce path
+    // respects (#10). See wa-audio.mjs for the rest of that invariant.
+    micOn: !cfg.stt,
+  });
+
+const reconnector = createReconnector({
+  makeClient: () => {
+    const client = newClient();
     wireClient(client);
-    try {
-      await client.connect();
-      wa = client;
-      attachAudio(wa);
-      reconnecting = false;
-      log(`reconnected as userId ${wa.myUserId}`);
-      follow = null;
-      if (prevFollow && !prevFollow.paused) {
-        startFollow(prevFollow.name).then((r) => log("post-reconnect follow:", JSON.stringify(r)));
-      } else if (prevFollow) {
-        follow = { name: prevFollow.name, userId: -1, controller: new AbortController(), paused: true };
-      }
-      return;
-    } catch (e) {
-      log(`  attempt ${i + 1} failed: ${e.message}`);
-      try { client.close(); } catch {}
+    return client;
+  },
+  onConnected: (client) => {
+    const prevFollow = follow ? { name: follow.name, paused: follow.paused } : null;
+    wa = client;
+    watchLive(client);
+    attachAudio(wa);
+    log(`reconnected as userId ${wa.myUserId}`);
+    follow = null;
+    if (prevFollow && !prevFollow.paused) {
+      startFollow(prevFollow.name).then((r) => log("post-reconnect follow:", JSON.stringify(r)));
+    } else if (prevFollow) {
+      follow = { name: prevFollow.name, userId: -1, controller: new AbortController(), paused: true };
     }
-  }
-  throw new Error("exhausted reconnect attempts");
-}
+  },
+  log,
+  isStopped: () => deliberateShutdown,
+});
+
+const attemptReconnect = () => reconnector.start();
 
 const readBody = (req) =>
   new Promise((resolve) => {
@@ -564,10 +569,11 @@ const server = http.createServer(async (req, res) => {
 
 function shutdown(code) {
   deliberateShutdown = true;
-  for (const f of INFO_FILES) { try { fs.unlinkSync(f); } catch {} }
+  registry.withdraw(PORT);
   try { server.close(); } catch {}
   try { wa?.close(); } catch {}
   disposeLiveKitRuntime().catch(() => {}); // no-op unless a LiveKit room was ever created (#8)
+  stopWorker().catch(() => {}); // SIGTERM to the STT worker, if one was started (#57); stdin EOF covers a hard exit
   setTimeout(() => process.exit(code), 150);
 }
 process.on("SIGINT", () => shutdown(0));
@@ -578,43 +584,31 @@ process.on("unhandledRejection", (e) => log("unhandledRejection:", e?.stack || S
 
 server.on("error", (e) => {
   if (e.code === "EADDRINUSE") {
-    log(`port ${PORT} in use — a daemon is probably already running (see ${INFO_FILES[0]})`);
+    log(`port ${PORT} in use — a daemon is probably already running (try \`wa status --port ${PORT}\`)`);
     process.exit(3);
   }
   throw e;
 });
 
 log(`connecting to WorkAdventure as "${cfg.name}"…`);
-wa = new WorkAdventureClient({
-  name: cfg.name,
-  roomUrl: cfg.roomUrl,
-  pusherUrl: cfg.pusherUrl,
-  target: cfg.target,
-  version: cfg.version,
-  wokaId: cfg.wokaId,
-  // See the reconnect-path comment above: micOn is single-source-of-truth.
-  micOn: !cfg.stt,
-});
+wa = newClient();
 wireClient(wa);
-await wa.connect();
+try {
+  await wa.connect();
+} catch (e) {
+  // Nothing to keep alive yet and the control API isn't up: say why and exit
+  // non-zero rather than limping on via uncaughtException (#56).
+  log(e instanceof ServerRejectedError && !e.retryable
+    ? `${e.message} — the server refuses this client; not retrying`
+    : `initial connect failed: ${e.message}`);
+  shutdown(1);
+  await new Promise(() => {}); // shutdown() exits the process after cleanup
+}
+watchLive(wa);
 attachAudio(wa);
 log(`joined as userId ${wa.myUserId}; spawn (${wa.pos.x | 0},${wa.pos.y | 0})`);
 
 server.listen(PORT, "127.0.0.1", () => {
-  const info = JSON.stringify({
-    pid: process.pid,
-    port: PORT,
-    room: wa.cfg.roomUrl,
-    name: cfg.name,
-    startedAt: new Date().toISOString(),
-  });
-  for (const f of INFO_FILES) {
-    try {
-      fs.mkdirSync(path.dirname(f), { recursive: true });
-      fs.writeFileSync(f, info);
-    } catch (e) {
-      log(`could not write ${f}: ${e.message}`);
-    }
-  }
+  registry.advertise({ port: PORT, room: wa.cfg.roomUrl, name: cfg.name });
   log(`control API on http://127.0.0.1:${PORT}`);
 });

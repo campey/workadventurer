@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 
 PLAYER="${1:-:David}"
 SCRIPT="${2:-/Users/campey/Code/huggingsesame/claude_pregen_script.json}"
-LOG=~/.workadventurer/daemon.log
+LOG=~/.workadventurer/daemon-${WA_DAEMON_PORT:-8787}.log
 
 # Cue emotes (WA sends the literal emoji): 👍 next · 👏 jump to outro ·
 # ❤️ jump to the "purpose" clip (followup_5, index 6).

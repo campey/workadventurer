@@ -251,6 +251,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Parallel daemons no longer share discovery files or a log (issue #65).**
+  Every daemon wrote the same `daemon.json` / `wa-daemon.json` and every
+  detached daemon logged to one `daemon.log`, so a bare `wa status`/`wa leave`
+  addressed whichever daemon started last, an exiting daemon deleted a
+  survivor's advertisement, and `wa join --port N` could report "already
+  joined" for a different daemon. Now: `daemon-<port>.json` / `daemon-<port>.log`
+  (`src/daemon-registry.mjs`); a daemon removes only its own file; advertisements
+  with a dead pid are pruned (a `kill -9`'d daemon used to leave a stale one).
+  The CLI uses an explicit port if given, else the single running daemon, else
+  the default — and with several running it refuses and lists them rather than
+  guessing. `wa join` never discovers. **Behaviour change:** scripts that read
+  `~/.workadventurer/daemon.log` / `daemon.json` must use the per-port names.
+- **The STT worker no longer outlives its daemon (issue #57).** `stopWorker()`
+  had no callers, and a `kill -9`'d daemon can't clean up anyway, so
+  `stt_worker.py` orphans piled up (one lived 5+ days). The worker is now
+  spawned with a piped stdin and exits on EOF — the OS closes it however the
+  daemon dies — and removes its socket; `shutdown()` also SIGTERMs it, and
+  `stopWorker()` resolves only once it has exited. Each daemon gets its own
+  socket (`.wa-stt.<pid>.sock`), so two daemons no longer unlink and orphan
+  each other's worker. Logic in `src/stt-worker-proc.mjs`. Verified against
+  the real MLX worker: graceful stop exits 0, a SIGKILLed parent takes the
+  worker down within 2 s. (First live attempt failed — the worker's exit-time
+  log hit `BrokenPipeError` on the dead parent's stderr and killed its own
+  watcher thread; exit first, don't log.)
+- **A rejected connect no longer storms (issue #56).** Every reconnect attempt's
+  client was wired with the reconnect-on-close handler, so each attempt the
+  server rejected (it closes the socket) started another concurrent chain —
+  attempts grew ~2^N (1187 connections and 1605 logins in 100 s against a fake
+  pusher; ~41% CPU, 348 MB RSS at 2 min). Now `src/reconnect.mjs` runs exactly
+  one chain and only the live client triggers it. Also: the server's
+  `errorScreenMessage` is a typed `ServerRejectedError` (`code`, `retryable`)
+  with a readable message instead of `[object Object]`; `NEW_VERSION` (or a
+  `timeToRetry` ≥ 1 h) is fatal — no retry, clear message, exit 1, for both the
+  initial connect and an established daemon (a failed initial connect used to
+  die as an uncaught exception and leave a daemon with no control API);
+  `scripts/selfcheck.mjs` now reports a rejected hash as
+  `apiVersionHash accepted: FAIL` instead of a timeout. Repro tooling:
+  `scripts/fake-pusher.mjs`.
 - **Area-meeting join/leave is debounced.** `_handleAreaMeeting` fired
   `_joinSpace` / `_leaveSpace` on every `livekitRoomProperty` boundary crossing;
   walking through an area-dense map (staging `wa-village`) churned WebRTC peers

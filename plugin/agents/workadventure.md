@@ -15,7 +15,8 @@ yourself.
 2. `wa status` — if it prints state, a presence is already running; go to the request.
    If it says "not joined", run `wa join --detach` first (add `--follow <name>`
    if the request is about following someone). If `wa join` fails, read
-   `~/.workadventurer/daemon.log` and report the error.
+   the daemon log (`wa join --detach` prints its path; `~/.workadventurer/daemon-<port>.log`)
+   and report the error. If `wa` says several daemons are running, pass `--port`.
 
 ## Commands
 

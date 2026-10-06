@@ -36,6 +36,8 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     notice = notice.value,
                     onJoin = ::requestJoin,
+                    // Movement goes straight to the session; only Join/Leave go through the foreground service.
+                    onCommand = { session.dispatch(it) },
                     onLeave = {
                         notice.value = null
                         startService(Intent(this, PresenceService::class.java).setAction(PresenceService.ACTION_LEAVE))

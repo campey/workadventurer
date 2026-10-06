@@ -1,6 +1,6 @@
 #!/bin/sh
-# Runs scripts/stt-eval.mjs once per worker config, in parallel (each with its
-# own worker socket), writing <outdir>/<name>.txt and .json (issue #61).
+# Runs scripts/stt-eval.mjs once per worker config, in parallel (each process gets its
+# own per-pid worker socket), writing <outdir>/<name>.txt and .json (issue #61).
 #
 #   scripts/stt-eval-matrix.sh <outdir> <repeat> name1='ENV=1 ENV2=x' name2='...' ...
 #
@@ -11,7 +11,7 @@ mkdir -p "$out"
 root=$(cd "$(dirname "$0")/.." && pwd)
 for spec in "$@"; do
   name=${spec%%=*}; envs=${spec#*=}
-  ( env $envs STT_SOCKET="/tmp/wa-stt-eval-$name.sock" \
+  ( env $envs \
       node "$root/scripts/stt-eval.mjs" --repeat "$repeat" --json "$out/$name.json" > "$out/$name.txt" 2>&1 || true ) &
 done
 wait

@@ -1,8 +1,11 @@
 package app.workadventurer.app.ui
 
+import app.workadventurer.app.session.Activity
 import app.workadventurer.app.session.Connection
+import app.workadventurer.app.session.InviteStatus
 import app.workadventurer.app.session.SessionState
 import app.workadventurer.proto.PositionMessage
+import app.workadventurer.protocol.Invite
 import app.workadventurer.protocol.Player
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -29,6 +32,24 @@ class PresenceFormatTest {
         assertEquals("Connecting…", notificationText(state(Connection.Connecting)))
         assertEquals("Reconnecting (attempt 1) in 1s", notificationText(state(Connection.Reconnecting(1, 1_000))))
         assertEquals("Couldn't join: nope", notificationText(state(Connection.Failed("nope"))))
+    }
+
+    @Test fun activityTextDescribesWhatTheAvatarIsDoing() {
+        assertEquals(null, activityText(Activity.Idle))
+        assertEquals("Walking to Fire pit", activityText(Activity.WalkingTo("Fire pit")))
+    }
+
+    @Test fun inviteStatusTextSaysWhatHappenedToTheInviteWeSent() {
+        assertEquals(null, inviteStatusText(null))
+        assertEquals("Invited Ada…", inviteStatusText(InviteStatus.Sent("Ada")))
+        assertEquals("Ada accepted your invitation", inviteStatusText(InviteStatus.Accepted("Ada")))
+        assertEquals("Ada declined your invitation", inviteStatusText(InviteStatus.Declined("Ada")))
+        assertEquals("Too many invitations; try again in a moment", inviteStatusText(InviteStatus.TooMany))
+    }
+
+    @Test fun inviteTextNamesTheSenderAndSurvivesAnEmptyName() {
+        assertEquals("Bob invited you over", inviteText(Invite("u", "Bob", null, "p")))
+        assertEquals("Someone invited you over", inviteText(Invite("u", "  ", null, "p")))
     }
 
     @Test fun playerLabelHandlesEmptyName() {

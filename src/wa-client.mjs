@@ -15,6 +15,7 @@ import path from "node:path";
 import WebSocket from "ws";
 import protobuf from "protobufjs";
 import { MapNav } from "./map-nav.mjs";
+import { ServerRejectedError } from "./server-rejected.mjs";
 import { resolveAdapter } from "./adapters/index.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -539,7 +540,7 @@ export class WorkAdventureClient extends EventEmitter {
     }
     if (obj.errorScreenMessage) {
       this.emit("log", `errorScreen: ${JSON.stringify(obj.errorScreenMessage)}`);
-      this.emit("error", new Error(`server error screen: ${obj.errorScreenMessage.title ?? ""} / ${obj.errorScreenMessage.details ?? obj.errorScreenMessage.subtitle ?? ""}`));
+      this.emit("error", ServerRejectedError.fromMessage(obj.errorScreenMessage));
       return;
     }
     if (obj.errorMessage) { this.emit("log", `errorMessage: ${obj.errorMessage.message}`); return; }
