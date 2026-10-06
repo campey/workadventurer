@@ -546,4 +546,36 @@ class WaSessionTest {
         advanceTimeBy(20_000); runCurrent()
         assertEquals(Activity.Idle, session.state.value.activity, "still walking 20 s later")
     }
+
+    @Test
+    fun theVoiceHostStartsOnceConnectedAndIsClosedWhenTheConnectionDrops() = runTest {
+        val started = mutableListOf<PusherConnection>(); var closed = 0
+        var conn: FakeConn? = null
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { }.also { conn = it } }, nowMs = { testScheduler.currentTime },
+            voiceHost = { c -> started += c; AutoCloseable { closed++ } })
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(1, started.size); assertEquals(0, closed)
+        conn!!.fakeClosed.complete(Closed(1006, "net")); runCurrent()
+        assertEquals(1, closed)
+    }
+
+    @Test
+    fun leaveClosesTheVoiceHostAndAReconnectStartsAFreshOne() = runTest {
+        var starts = 0; var closes = 0
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { } }, nowMs = { testScheduler.currentTime },
+            voiceHost = { starts++; AutoCloseable { closes++ } })
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        session.dispatch(Command.Leave); runCurrent()
+        assertEquals(1, closes)
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(2, starts)
+    }
+
+    @Test
+    fun aVoiceHostThatThrowsDoesNotBreakPresence() = runTest {
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { } }, nowMs = { testScheduler.currentTime },
+            voiceHost = { error("libwebrtc missing") })
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(Connection.Connected, session.state.value.connection)
+    }
 }

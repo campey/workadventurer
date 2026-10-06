@@ -31,6 +31,7 @@ class WaApp : Application() {
                     c.closed.invokeOnCompletion { logJob.cancel() }
                 }
             },
+            voiceHost = MeshVoiceHost(this),
         )
         appScope.launch {
             s.state.map { it.connection }.distinctUntilChanged().collect { Log.i("WaSession", it.toString()) }

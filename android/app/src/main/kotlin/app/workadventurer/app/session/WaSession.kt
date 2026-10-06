@@ -77,6 +77,9 @@ data class SessionState(
 
 typealias ConnectionFactory = (RoomConfig) -> PusherConnection
 
+/** Started once per live connection after it is Connected; the returned handle is closed when that connection ends. */
+typealias VoiceHost = (PusherConnection) -> AutoCloseable
+
 // WorkAdventure (v1.34.0 defaults, back/src/Enum/EnvironmentVariableValidator.ts): two players form a bubble at
 // <= MINIMUM_DISTANCE = 64 px, and you join an existing bubble at <= GROUP_RADIUS = 48 px. "Walk to a player" must
 // therefore end inside 48 px, or you can't talk to them. Stand 40 px in front of them and stop within 8 px of that
@@ -111,6 +114,7 @@ class WaSession(
     private val backoffMs: (attempt: Int) -> Long = { minOf(30_000L, 1_000L shl (it - 1).coerceAtMost(5)) },
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 }, // monotonic: a clock change must not stretch walk deadlines
     private val stableAfterMs: Long = 30_000,
+    private val voiceHost: VoiceHost = { AutoCloseable { } },
 ) {
     private val _state = MutableStateFlow(SessionState())
     val state: StateFlow<SessionState> = _state.asStateFlow()
@@ -277,11 +281,13 @@ class WaSession(
             val c = factory(cfg)
             if (!adopt(gen, c)) { c.close(); return }
             var upAt = -1L
+            var voice: AutoCloseable? = null
             try {
                 c.connect()
                 everConnected = true
                 upAt = nowMs()
                 setState(gen) { it.copy(connection = Connection.Connected, areas = c.state.areas) }
+                voice = try { voiceHost(c) } catch (e: Exception) { null } // voice must never take presence down with it
                 coroutineScope {
                     // A child of this run, so it can't outlive it or leak past a Leave.
                     val mirror = launch { mirrorState(c, gen) }
@@ -299,6 +305,7 @@ class WaSession(
                 // transient: retry below
             } finally {
                 synchronized(lock) { if (gen == generation) stopMovement() }
+                try { voice?.close() } catch (e: Exception) { /* never let voice cleanup break the reconnect loop */ }
                 c.close()
                 c.state.clear()
             }
