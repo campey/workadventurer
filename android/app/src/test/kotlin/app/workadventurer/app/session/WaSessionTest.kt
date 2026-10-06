@@ -290,7 +290,7 @@ class WaSessionTest {
         advanceTimeBy(20_000); runCurrent()
         assertEquals(Activity.Idle, session.state.value.activity)
         val p = conn().state.myPose.value
-        assertTrue(kotlin.math.hypot(p.x - 300.0, p.y) < 100.0, "should end near Ada, at $p")
+        assertTrue(kotlin.math.hypot(p.x - 300.0, p.y) <= 48.0, "should end inside bubble range of Ada, at $p")
     }
 
     @Test
@@ -310,11 +310,15 @@ class WaSessionTest {
 
     @Test
     fun aNewMovementReplacesTheCurrentOne() = runTest {
-        val (session, _) = connected(adaX = 5_000)
+        val (session, conn) = connected(adaX = 5_000)
         session.dispatch(Command.WalkToPlayer(1)); runCurrent()
         session.dispatch(Command.WalkToArea("fire")); runCurrent()
         assertEquals(Activity.WalkingTo("Fire pit"), session.state.value.activity)
-        session.dispatch(Command.StopMoving); runCurrent()
+        advanceTimeBy(15_000); runCurrent()
+        // Ada is 5000 px away; had the first walk kept running we'd be far past the fire pit (centre 250,50)
+        val p = conn().state.myPose.value
+        assertTrue(kotlin.math.hypot(p.x - 250.0, p.y - 50.0) <= 24.0, "should have gone to the fire pit, at $p")
+        assertEquals(Activity.Idle, session.state.value.activity)
     }
 
     @Test

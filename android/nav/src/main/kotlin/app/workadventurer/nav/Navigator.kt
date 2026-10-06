@@ -68,6 +68,7 @@ class Navigator(
         }
     }
 
+    /** Straight-line walk, no routing. Not used by the app (it always goes through [navTo]); kept as the grid-less primitive. */
     suspend fun walkTo(
         target: Pt,
         stopWithin: Double = 48.0,

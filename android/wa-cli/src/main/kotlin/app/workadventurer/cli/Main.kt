@@ -80,7 +80,7 @@ fun main(args: Array<String>): Unit = runBlocking<Unit> {
         exitProcess(1)
     }
 
-    val nav = Navigator({ conn.grid.value }, conn, System::currentTimeMillis)
+    val nav = Navigator({ conn.grid.value }, conn) { System.nanoTime() / 1_000_000 }
     val moveJob = when {
         opt(args, "--walk-to-area") != null -> {
             val needle = opt(args, "--walk-to-area")!!

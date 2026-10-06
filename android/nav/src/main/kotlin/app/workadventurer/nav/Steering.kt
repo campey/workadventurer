@@ -27,8 +27,8 @@ fun NavGrid.snapToFree(x: Double, y: Double): Pt? {
     return tileCenterPx(free.first, free.second)
 }
 
-/** Where to stand `spacing` px short of [target], on the side we approach from. */
-fun followPoint(me: Pt, target: Pt, spacing: Double = 72.0, grid: NavGrid? = null): Pt {
+/** Where to stand `spacing` px short of [target], on the side we approach from (last resort for [frontOf]). */
+fun standOffPoint(me: Pt, target: Pt, spacing: Double = 72.0, grid: NavGrid? = null): Pt {
     var dx = me.x - target.x
     var dy = me.y - target.y
     var d = hypot(dx, dy)
@@ -53,7 +53,7 @@ fun frontOf(target: Target, me: Pt, spacing: Double = 64.0, grid: NavGrid? = nul
         // free point NEAREST US on a ring around them at the same spacing: still in bubble range of them, whereas
         // snapping to "the first free tile" could land 60+ px away.
         grid.nearestFreeOnRing(Pt(target.x, target.y), spacing, me)?.let { return it }
-        return grid.snapToFree(gx, gy) ?: followPoint(me, Pt(target.x, target.y), spacing, grid)
+        return grid.snapToFree(gx, gy) ?: standOffPoint(me, Pt(target.x, target.y), spacing, grid)
     }
     return Pt(gx, gy)
 }

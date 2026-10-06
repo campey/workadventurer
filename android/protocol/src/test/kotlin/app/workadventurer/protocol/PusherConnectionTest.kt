@@ -302,10 +302,14 @@ class PusherConnectionTest {
         val fake = joiningFake()
         serverWithMap(fake, tmj = null).use { s ->
             val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            val logs = java.util.concurrent.CopyOnWriteArrayList<String>()
+            val collector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { conn.log.collect { logs += it } }
             withTimeout(5_000) { conn.connect() }
             assertEquals(7, conn.state.myUserId.value)
-            delay(400)
+            // wait for the loader to actually give up, rather than a fixed sleep that a slow load would outlast
+            withTimeout(5_000) { while (logs.none { it.contains("nav grid unavailable") }) delay(10) }
             assertNull(conn.grid.value)
+            collector.cancel()
             conn.close()
         }
     }

@@ -109,7 +109,7 @@ class WaSession(
     private val scope: CoroutineScope,
     private val factory: ConnectionFactory,
     private val backoffMs: (attempt: Int) -> Long = { minOf(30_000L, 1_000L shl (it - 1).coerceAtMost(5)) },
-    private val nowMs: () -> Long = System::currentTimeMillis,
+    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 }, // monotonic: a clock change must not stretch walk deadlines
     private val stableAfterMs: Long = 30_000,
 ) {
     private val _state = MutableStateFlow(SessionState())

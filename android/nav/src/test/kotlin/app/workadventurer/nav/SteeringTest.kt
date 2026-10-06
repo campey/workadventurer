@@ -16,23 +16,23 @@ class SteeringTest {
     }
 
     @Test
-    fun followPointStandsShortOnTheApproachSide() {
-        val p = followPoint(me = Pt(0.0, 0.0), target = Pt(100.0, 0.0), spacing = 72.0)
+    fun standOffPointStandsShortOnTheApproachSide() {
+        val p = standOffPoint(me = Pt(0.0, 0.0), target = Pt(100.0, 0.0), spacing = 72.0)
         assertEquals(28.0, p.x, 1e-9) // 72 px short of the target, on our side
         assertEquals(0.0, p.y, 1e-9)
     }
 
     @Test
-    fun followPointOnTopOfTheTargetStepsBelowIt() {
-        val p = followPoint(me = Pt(100.0, 100.0), target = Pt(100.0, 100.0), spacing = 72.0)
+    fun standOffPointOnTopOfTheTargetStepsBelowIt() {
+        val p = standOffPoint(me = Pt(100.0, 100.0), target = Pt(100.0, 100.0), spacing = 72.0)
         assertEquals(Pt(100.0, 172.0), p)
     }
 
     @Test
-    fun followPointSnapsOffABlockedTile() {
+    fun standOffPointSnapsOffABlockedTile() {
         val g = gridOf("...", ".#.", "...")
         // target right of the wall; the approach point lands on the blocked tile (1,1)
-        val p = followPoint(me = Pt(16.0, 48.0), target = Pt(48.0 + 40.0, 48.0), spacing = 40.0, grid = g)
+        val p = standOffPoint(me = Pt(16.0, 48.0), target = Pt(48.0 + 40.0, 48.0), spacing = 40.0, grid = g)
         assertTrue(!g.isPxBlocked(p.x, p.y), "point $p is still blocked")
     }
 

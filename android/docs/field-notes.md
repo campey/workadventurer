@@ -14,8 +14,9 @@ anything here that contradicts it means the spec gets revised first.
 
 ## G2 — movement (2026-10-05 / 06)
 
-**Verdict: walk-to works well on a real phone; two things the live runs changed (below). Invite is implemented and
-unit-tested but its live check against a browser peer is still open.**
+**Verdict: walk-to and invitations (both directions, including locating a player outside the viewport) work on a real
+phone against prod; the live runs changed several things (below, and "G2 live checks on the real phone"). Still not run:
+a walk with the screen locked.**
 
 Measured:
 - **Runtime collision builder matches the Node bake exactly.** `wa-cli collision --baked …` rebuilds each map from the
@@ -51,7 +52,7 @@ Findings that changed the build:
   (about ±1,920 × ±1,080 px); after walking ~1,600 px away the list dropped from 3 players to 0. For "who's around"
   that's right, for "who's in the room" it isn't. The protocol has `AskPosition{userIdentifier, playUri, LOCATE|MOVE}`
   → `LocatePosition` to find a player outside the viewport; the Android client now uses it when accepting an invite from
-  someone we can't see (not yet verified on the wire). Folded into #77.
+  someone we can't see (verified on the wire since: see the live checks below). Folded into #77.
 - **Smoothed paths can graze a wall corner** (as in the Node client): the smoothing guarantees line-of-sight between
   tile *centres*, not geometric clearance. Measured at 1.2 px inside a wall tile in the unit geometry; the test now
   asserts "never more than 12 px into a wall". Cosmetic: movement is client-authoritative.
