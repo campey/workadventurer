@@ -143,4 +143,44 @@ class NavigatorTest {
         val r = nav.navTo(Pt(0.0, 0.0), getTarget = { if (calls++ < 2) Pt(5_000.0, 0.0) else null })
         assertEquals(Outcome.TARGET_GONE, r)
     }
+
+    // Route waypoints are tile CENTRES. Without a final step to the exact goal the avatar parks up to ~22 px away,
+    // and an 8 px arrival tolerance is never met: the walk looped until its timeout (seen on a real phone, where
+    // "Walking to :David" never went away).
+    @Test
+    fun navToReachesAGoalThatIsNotAtATileCentre() = runTest {
+        val g = gridOf(".....", ".....", ".....", ".....", ".....")
+        val goal = Pt(94.0, 94.0) // 14,14 off the centre of tile (2,2)
+        val sink = FakeSink(g.tileCenterPx(0, 0))
+        val nav = Navigator({ g }, sink, { testScheduler.currentTime })
+        assertEquals(Outcome.ARRIVED, nav.navTo(goal, stopWithin = 8.0, timeoutMs = 10_000))
+        assertTrue(hypot(sink.pos.x - goal.x, sink.pos.y - goal.y) <= 8.0, "ended at ${sink.pos}")
+        assertTrue(testScheduler.currentTime < 5_000, "took ${testScheduler.currentTime} ms")
+        assertFalse(sink.moves.last().moving)
+    }
+
+    @Test
+    fun navToReachesAnOffCentreGoalInTheTileItStartsIn() = runTest {
+        val g = gridOf(".....", ".....", ".....", ".....", ".....")
+        val sink = FakeSink(g.tileCenterPx(2, 2)) // (80,80): the goal below is in the same tile
+        val nav = Navigator({ g }, sink, { testScheduler.currentTime })
+        assertEquals(Outcome.ARRIVED, nav.navTo(Pt(94.0, 94.0), stopWithin = 8.0, timeoutMs = 10_000))
+        assertTrue(testScheduler.currentTime < 5_000, "took ${testScheduler.currentTime} ms")
+    }
+
+    @Test
+    fun navToEndsWhenTheArrivalPredicateHoldsEvenWhileTheGoalKeepsMovingAway() = runTest {
+        val sink = FakeSink(Pt(0.0, 0.0))
+        val nav = Navigator({ null }, sink, { testScheduler.currentTime })
+        var goalX = 5_000.0
+        val outcome = nav.navTo(
+            Pt(goalX, 0.0),
+            getTarget = { goalX += 20.0; Pt(goalX, 0.0) }, // forever just ahead of us
+            arrivedWhen = { it.x >= 200.0 },
+            timeoutMs = 30_000,
+        )
+        assertEquals(Outcome.ARRIVED, outcome)
+        assertTrue(sink.pos.x >= 200.0 && sink.pos.x < 400.0, "stopped at ${sink.pos}")
+        assertFalse(sink.moves.last().moving)
+    }
 }

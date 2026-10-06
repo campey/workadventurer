@@ -239,8 +239,15 @@ open class PusherConnection(
     private fun handle(m: ServerToClientMessage) {
         m.batchMessage?.let { b ->
             for (sub in b.payload) {
-                if (sub.pingMessage != null) send(ClientToServerMessage(pingMessage = PingMessage()))
-                else state.applySub(sub)
+                if (sub.pingMessage != null) {
+                    send(ClientToServerMessage(pingMessage = PingMessage()))
+                } else {
+                    val groupBefore = state.groupId.value
+                    state.applySub(sub)
+                    val groupAfter = state.groupId.value
+                    // so a log can answer "did the server put us in a bubble?" from the phone's side
+                    if (groupAfter != groupBefore) _log.tryEmit(if (groupAfter != null) "entered bubble $groupAfter" else "left bubble")
+                }
             }
             return
         }

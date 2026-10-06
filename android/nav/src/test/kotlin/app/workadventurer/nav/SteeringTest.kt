@@ -53,6 +53,26 @@ class SteeringTest {
     }
 
     @Test
+    fun frontOfFallsBackToTheNearestFreePointInBubbleRangeNotARasterNeighbour() {
+        // Facing UP on the top row: the front spot is off the map. The old snap took the first free tile in raster
+        // order, which was 62 px from the player: a walk "arrived" outside bubble range and no bubble formed.
+        val g = NavGrid(20, 5, 32, BooleanArray(100))
+        val p = frontOf(Target(300.0, 0.0, Facing.UP), me = Pt(0.0, 0.0), spacing = 40.0, grid = g)
+        assertTrue(!g.isPxBlocked(p.x, p.y), "point $p is blocked")
+        assertEquals(40.0, kotlin.math.hypot(p.x - 300.0, p.y), 1e-6) // exactly the bubble spacing from the player
+        assertTrue(p.x < 300.0, "should be on our side of the player, got $p")
+    }
+
+    @Test
+    fun frontOfWithAWallInFrontStandsBesideThePlayerWithinRange() {
+        val g = gridOf("..........", "..........", "....#.....", "..........")
+        // Target at tile (4,1) centre (144,48), facing DOWN; its front spot (144,88) is the wall tile (4,2)
+        val p = frontOf(Target(144.0, 48.0, Facing.DOWN), me = Pt(16.0, 48.0), spacing = 40.0, grid = g)
+        assertTrue(!g.isPxBlocked(p.x, p.y))
+        assertTrue(kotlin.math.hypot(p.x - 144.0, p.y - 48.0) <= 48.0, "out of bubble range: $p")
+    }
+
+    @Test
     fun snapToFreeReturnsTheSamePointWhenFreeAndAFreeTileCentreWhenBlocked() {
         val g = gridOf("...", ".#.", "...")
         assertEquals(Pt(10.0, 10.0), g.snapToFree(10.0, 10.0))

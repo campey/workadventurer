@@ -45,7 +45,7 @@ class WaSessionTest {
         val responses = mutableListOf<Pair<String, Boolean>>()       // sender uuid, accepted
         val locates = mutableListOf<String>()
         var locateResult: Pt? = null
-        private val fakeGrid = MutableStateFlow<NavGrid?>(null)
+        val fakeGrid = MutableStateFlow<NavGrid?>(null)
         override val closed get() = fakeClosed
         override val grid: StateFlow<NavGrid?> get() = fakeGrid
         override suspend fun connect() = behaviour()
@@ -467,5 +467,53 @@ class WaSessionTest {
         assertIs<Connection.Reconnecting>(session.state.value.connection)
         assertTrue(session.state.value.pendingInvites.isEmpty())
         assertEquals(null, session.state.value.inviteStatus)
+    }
+
+    // ---- walking on a real map (the straight-line tests above have no grid, which hid a stuck walk) ----
+
+    private fun openGrid() = NavGrid(20, 5, 32, BooleanArray(100))
+
+    @Test
+    fun walkToPlayerFinishesOnARealGridAndThenStopsMoving() = runTest {
+        val (session, conn) = connected()
+        conn().fakeGrid.value = openGrid()
+        session.dispatch(Command.WalkToPlayer(1)); advanceTimeBy(15_000); runCurrent()
+        assertEquals(Activity.Idle, session.state.value.activity, "still walking after 15 s: it never arrived")
+        val p = conn().state.myPose.value
+        assertTrue(kotlin.math.hypot(p.x - 300.0, p.y) <= 48.0, "should end inside bubble range of Ada, at $p")
+        assertFalse(conn().moves.last().third, "the last thing we told the server must be a stop")
+    }
+
+    @Test
+    fun walkToPlayerStopsAsSoonAsItIsInBubbleRangeOfThePlayer() = runTest {
+        // Ada faces UP, so the spot "in front of her" is (300,-40): 40 px above her, i.e. ~60 px from where we arrive.
+        // Bubble range (44 px) is reached well before that, and that is where the walk must end.
+        val (session, conn) = connected()
+        conn().fakeGrid.value = openGrid()
+        conn().state.applySub(SubMessage(userMovedMessage = UserMovedMessage(
+            userId = 1, position = PositionMessage(x = 300, y = 0, direction = PositionMessage.Direction.UP),
+        )))
+        session.dispatch(Command.WalkToPlayer(1)); advanceTimeBy(15_000); runCurrent()
+        assertEquals(Activity.Idle, session.state.value.activity)
+        val p = conn().state.myPose.value
+        val d = kotlin.math.hypot(p.x - 300.0, p.y)
+        assertTrue(d <= 48.0, "ended ${"%.0f".format(d)} px from Ada: out of bubble range, at $p")
+        assertTrue(p.x < 285.0, "walked on past bubble range to her front at $p instead of stopping when in range")
+        assertFalse(conn().moves.last().third)
+    }
+
+    @Test
+    fun walkToPlayerGivesUpAfterAWhileInsteadOfChasingForever() = runTest {
+        val (session, conn) = connected(adaX = 5_000)
+        session.dispatch(Command.WalkToPlayer(1)); runCurrent()
+        var adaX = 5_000
+        repeat(400) { // Ada runs away at 450 px/s for 40 s: unreachable
+            adaX += 45
+            conn().state.applySub(SubMessage(userMovedMessage = UserMovedMessage(
+                userId = 1, position = PositionMessage(x = adaX, y = 0, direction = PositionMessage.Direction.RIGHT),
+            )))
+            advanceTimeBy(100); runCurrent()
+        }
+        assertEquals(Activity.Idle, session.state.value.activity, "was still chasing after 40 s")
     }
 }

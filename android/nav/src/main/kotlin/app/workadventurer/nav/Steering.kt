@@ -1,7 +1,10 @@
 package app.workadventurer.nav
 
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.sin
 
 /** Where another avatar is and which way it faces. */
 data class Target(val x: Double, val y: Double, val facing: Facing)
@@ -46,7 +49,22 @@ fun frontOf(target: Target, me: Pt, spacing: Double = 64.0, grid: NavGrid? = nul
     val gx = target.x + vx * spacing
     val gy = target.y + vy * spacing
     if (grid != null && grid.isPxBlocked(gx, gy)) {
+        // The spot in front of them is a wall or off the map (people face walls and desks all the time). Stand at the
+        // free point NEAREST US on a ring around them at the same spacing: still in bubble range of them, whereas
+        // snapping to "the first free tile" could land 60+ px away.
+        grid.nearestFreeOnRing(Pt(target.x, target.y), spacing, me)?.let { return it }
         return grid.snapToFree(gx, gy) ?: followPoint(me, Pt(target.x, target.y), spacing, grid)
     }
     return Pt(gx, gy)
 }
+
+private const val RING_POINTS = 16
+
+private fun NavGrid.nearestFreeOnRing(center: Pt, radius: Double, me: Pt): Pt? =
+    (0 until RING_POINTS)
+        .map { k ->
+            val a = k * 2 * PI / RING_POINTS
+            Pt(center.x + cos(a) * radius, center.y + sin(a) * radius)
+        }
+        .filter { !isPxBlocked(it.x, it.y) }
+        .minByOrNull { hypot(it.x - me.x, it.y - me.y) }

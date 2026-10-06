@@ -39,14 +39,28 @@ class Navigator(
         emit(p.x, p.y, lookAt ?: facing, false)
     }
 
+    /**
+     * A route's waypoints are tile CENTRES, so it ends at the centre of the goal's tile, up to ~22 px from the real
+     * goal. Walk the last step to the exact goal (when it is on a free tile; if it was blocked, findPath snapped it to
+     * a nearby free tile and that centre is the best we can do). Without this a tight arrival tolerance can never be
+     * met and the walk loops until its timeout.
+     */
+    private fun withExactGoal(g: NavGrid, path: List<Pt>, goal: Pt): List<Pt> =
+        if (path.isNotEmpty() && !g.isPxBlocked(goal.x, goal.y)) path.dropLast(1) + goal else path
+
     /** Steps toward [t] until within [stopWithin] (true) or [deadline] passes (false). Sends no stop. */
-    private suspend fun walkLeg(t: Pt, stopWithin: Double, stepPx: Double, tickMs: Long, deadline: Long): Boolean {
+    private suspend fun walkLeg(
+        t: Pt, stopWithin: Double, stepPx: Double, tickMs: Long, deadline: Long,
+        arrivedWhen: ((Pt) -> Boolean)? = null,
+    ): Boolean {
         while (true) {
             val p = sink.position()
             val dx = t.x - p.x
             val dy = t.y - p.y
             val dist = hypot(dx, dy)
-            if (dist <= stopWithin) return true
+            // "arrived" counts as reaching this leg too, so we stop on the very step it becomes true instead of
+            // running on to the end of the re-plan window; navTo then confirms it at the top of its loop
+            if (dist <= stopWithin || arrivedWhen?.invoke(p) == true) return true
             if (nowMs() > deadline) return false
             val step = min(stepPx, dist)
             emit(p.x + dx / dist * step, p.y + dy / dist * step, faceToward(p.x, p.y, t.x, t.y), true)
@@ -88,6 +102,11 @@ class Navigator(
         face: (() -> Pt?)? = null,
         timeoutMs: Long = 120_000,
         repathMs: Long = 2_000,
+        /**
+         * Extra arrival test on our own position, checked before every re-plan. Lets a caller say "I'm there once I'm
+         * within range of the *player*", which stays true even if the player has since drifted from the point we aimed at.
+         */
+        arrivedWhen: ((Pt) -> Boolean)? = null,
     ): Outcome {
         val started = nowMs()
         try {
@@ -95,19 +114,19 @@ class Navigator(
                 val iterStart = nowMs()
                 val t = if (getTarget != null) (getTarget() ?: return Outcome.TARGET_GONE) else target
                 val p = sink.position()
-                if (hypot(t.x - p.x, t.y - p.y) <= stopWithin) {
+                if (hypot(t.x - p.x, t.y - p.y) <= stopWithin || arrivedWhen?.invoke(p) == true) {
                     stop(lookAt = face?.invoke()?.let { faceToward(p.x, p.y, it.x, it.y) })
                     return Outcome.ARRIVED
                 }
                 val deadline = iterStart + repathMs
-                val path = grid()?.findPath(p, t)
+                val path = grid()?.let { g -> g.findPath(p, t)?.let { withExactGoal(g, it, t) } }
                 if (path.isNullOrEmpty()) {
                     // no grid yet, or no route: walk straight toward the goal for this window, then try again
-                    walkLeg(t, stopWithin, 32.0, 120, deadline)
+                    walkLeg(t, stopWithin, 32.0, 120, deadline, arrivedWhen)
                 } else {
                     for (wp in path) {
                         if (nowMs() > deadline) break
-                        if (!walkLeg(wp, 12.0, 40.0, 100, deadline)) break
+                        if (!walkLeg(wp, 12.0, 40.0, 100, deadline, arrivedWhen)) break
                     }
                 }
                 // Defence in depth: whatever happened above, never spin. (Node hit a live 100% CPU / growing-RSS

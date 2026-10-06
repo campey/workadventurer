@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.math.hypot
 
 /** Everything the UI, notification buttons and (later) media buttons can ask the session to do. */
 sealed interface Command {
@@ -83,6 +84,12 @@ typealias ConnectionFactory = (RoomConfig) -> PusherConnection
 private const val BUBBLE_SPACING_PX = 40.0
 private const val ARRIVE_WITHIN_PX = 8.0
 
+// A walk to a player is done once we're inside bubble range of the PLAYER (not once we've hit the exact spot we aimed
+// at, which moves when they do), and it gives up after a while instead of chasing someone who keeps walking away.
+// Without both, "Walking to X" never went away on a real phone and looked like the old follow loop.
+private const val BUBBLE_ARRIVE_PX = 44.0
+private const val WALK_TO_PLAYER_TIMEOUT_MS = 30_000L
+
 /**
  * Owns one room presence: state out, [Command]s in. No Android imports, so it unit-tests on the JVM.
  *
@@ -139,6 +146,8 @@ class WaSession(
                             // Re-plan twice a second so a player who walks away (or leaves) is noticed quickly,
                             // instead of chasing where they were up to 2 s ago.
                             repathMs = 500,
+                            arrivedWhen = { me -> targetOf(c, cmd.userId)?.let { hypot(it.x - me.x, it.y - me.y) <= BUBBLE_ARRIVE_PX } == true },
+                            timeoutMs = WALK_TO_PLAYER_TIMEOUT_MS,
                         )
                     }
                 }
@@ -205,6 +214,8 @@ class WaSession(
             },
             face = { visible()?.let { Pt(it.x.toDouble(), it.y.toDouble()) } },
             repathMs = 500,
+            arrivedWhen = { me -> visible()?.let { hypot(it.x.toDouble() - me.x, it.y.toDouble() - me.y) <= BUBBLE_ARRIVE_PX } == true },
+            timeoutMs = WALK_TO_PLAYER_TIMEOUT_MS,
         )
     }
 
