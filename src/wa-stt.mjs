@@ -89,7 +89,7 @@ export class SttStream extends EventEmitter {
     super();
     this.raw = raw;
     // STT_TEE_DIR: keep the PCM + finals of a live call for the #61 clip corpus.
-    this.tee = new PcmTee(raw ? process.env.STT_TEE_DIR : undefined, label);
+    this.tee = new PcmTee(process.env.STT_TEE_DIR, label);
     this.mux = raw ? null : new OggOpusMuxStream({ channels, sampleRate });
     this.ffmpeg = null;
     this.sock = null;
@@ -135,6 +135,7 @@ export class SttStream extends EventEmitter {
     this.ffmpeg.stderr.on("data", (c) => this.emit("log", `ffmpeg: ${c.toString().trim()}`));
     this.ffmpeg.on("error", (e) => this.emit("error", e));
 
+    this.ffmpeg.stdout.on("data", (c) => this.tee.pcm(c)); // decoded PCM, same bytes the worker gets
     this.ffmpeg.stdout.pipe(this.sock);
     this.ffmpeg.stdin.write(this.mux.headerPages());
   }

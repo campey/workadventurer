@@ -3,7 +3,7 @@
 // finals against test/fixtures/stt/expected.json, so a change to the worker's
 // gates/model/language is compared by numbers, not by ear.
 //
-//   node scripts/stt-eval.mjs [--fast] [--only substr] [--max-wer 0.25] [--json out.json]
+//   node scripts/stt-eval.mjs [--fast] [--repeat N] [--only substr] [--max-wer 0.25] [--json out.json]
 //
 // Worker knobs travel by environment (inherited by the spawned worker), e.g.
 //   STT_LANGUAGE=en node scripts/stt-eval.mjs
@@ -14,7 +14,7 @@
 //   mean WER over speech clips > --max-wer, or any spurious final / non-Latin
 //   output / token loop anywhere.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { SttStream, stopWorker } from "../src/wa-stt.mjs";
@@ -29,9 +29,23 @@ const fast = flag("fast");
 const only = opt("only", "");
 const maxWer = Number(opt("max-wer", "0.25"));
 const jsonOut = opt("json", null);
+const repeat = Number(opt("repeat", "1")); // decoding is sampled (temperature fallback), so one pass is noisy
 
-const dir = fileURLToPath(new URL("../test/fixtures/stt/", import.meta.url));
-const expected = JSON.parse(readFileSync(path.join(dir, "expected.json"), "utf8"));
+// test/fixtures/stt/ is committed (synthetic); test/fixtures/stt-real/ is a
+// local-only corpus of real call audio (people's voices — never committed).
+// In expected.json, "" = must produce nothing, null = no reference (script/loop
+// checks only), anything else = reference text for WER.
+const dirs = ["stt", "stt-real"]
+  .map((d) => fileURLToPath(new URL(`../test/fixtures/${d}/`, import.meta.url)))
+  .filter((d) => existsSync(path.join(d, "expected.json")));
+const expected = {};
+const clipPath = {};
+for (const d of dirs) {
+  for (const [clip, text] of Object.entries(JSON.parse(readFileSync(path.join(d, "expected.json"), "utf8")))) {
+    expected[clip] = text;
+    clipPath[clip] = path.join(d, clip);
+  }
+}
 const clips = Object.keys(expected).filter((c) => c.includes(only));
 
 async function runClip(file) {
@@ -61,8 +75,8 @@ async function runClip(file) {
 }
 
 const rows = [];
-for (const clip of clips) {
-  const { finals, error, ms } = await runClip(path.join(dir, clip));
+for (const clip of clips.flatMap((c) => Array(repeat).fill(c))) {
+  const { finals, error, ms } = await runClip(clipPath[clip]);
   rows.push({ clip, expected: expected[clip], ...scoreClip({ expected: expected[clip], finals }), finals, error: error?.message, ms });
 }
 stopWorker();
@@ -71,7 +85,7 @@ const pad = (s, n) => String(s).padEnd(n);
 console.log(`${pad("clip", 26)} ${pad("wer", 5)} ${pad("spur", 4)} ${pad("nonL", 4)} ${pad("loop", 4)} text`);
 for (const r of rows) {
   const w = r.wer === null ? "-" : r.wer.toFixed(2);
-  console.log(`${pad(r.clip, 26)} ${pad(w, 5)} ${pad(r.spurious, 4)} ${pad(r.nonLatin ? "X" : ".", 4)} ${pad(r.loop ? "X" : ".", 4)} ${JSON.stringify(r.text)}${r.error ? "  ERROR " + r.error : ""}`);
+  console.log(`${pad(r.clip, 26)} ${pad(w, 5)} ${pad(r.spurious, 4)} ${pad(r.nonLatin ? "X" : ".", 4)} ${pad(r.loop ? "X" : ".", 4)} ${JSON.stringify(r.text.length > 110 ? r.text.slice(0, 110) + `…(+${r.text.length - 110})` : r.text)}${r.error ? "  ERROR " + r.error : ""}`);
 }
 
 const speech = rows.filter((r) => r.wer !== null);

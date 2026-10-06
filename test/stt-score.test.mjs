@@ -47,6 +47,32 @@ test("scoreClip flags a token run of 4+ as a loop", () => {
   assert.equal(scoreClip({ expected: "stop", finals: ["stop stop stop"] }).loop, false);
 });
 
+test("scoreClip with expected null checks only script and loops (no reference text)", () => {
+  const bad = scoreClip({ expected: null, finals: ["و lnك الرحيم"] });
+  assert.equal(bad.nonLatin, true);
+  assert.equal(bad.wer, null);
+  assert.equal(bad.spurious, 0);
+  assert.equal(scoreClip({ expected: null, finals: ["foo foo foo foo foo"] }).loop, true);
+  const ok = scoreClip({ expected: null, finals: ["perfectly fine words", "more of them"] });
+  assert.deepEqual([ok.nonLatin, ok.loop, ok.spurious, ok.wer], [false, false, 0, null]);
+  assert.equal(scoreClip({ expected: null, finals: [] }).spurious, 0);
+});
+
+test("scoreClip flags undecodable U+FFFD output as wrong-script garbage", () => {
+  assert.equal(scoreClip({ expected: "hello", finals: ["Yeah ����"] }).nonLatin, true);
+});
+
+test("scoreClip flags a single character repeated many times as a loop", () => {
+  assert.equal(scoreClip({ expected: "on", finals: ["On" + "n".repeat(40)] }).loop, true);
+  assert.equal(scoreClip({ expected: "so", finals: ["sooooo, wait... what"] }).loop, false);
+});
+
+test("scoreClip flags a no-space repeated substring (dodododo…) as a loop", () => {
+  assert.equal(scoreClip({ expected: "bar", finals: ["I bar" + "do".repeat(30)] }).loop, true);
+  assert.equal(scoreClip({ expected: "care", finals: ["and always be" + "care".repeat(20)] }).loop, true);
+  assert.equal(scoreClip({ expected: "ha", finals: ["hahaha that was funny"] }).loop, false);
+});
+
 test("scoreClip joins multiple finals for WER on speech clips", () => {
   const s = scoreClip({ expected: "the quick brown fox", finals: ["the quick", "brown fox"] });
   assert.equal(s.wer, 0);

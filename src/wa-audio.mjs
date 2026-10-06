@@ -537,7 +537,7 @@ export class WaAudio extends EventEmitter {
           this.emit("log", `[${connectionId}] stt skipped — ${MAX_STT_STREAMS} already active`);
           return;
         }
-        const stt = new SttStream();
+        const stt = new SttStream({ label: String(connectionId).slice(0, 8) });
         stt.on("log", (m) => this.emit("log", `[${connectionId}] stt: ${m}`));
         stt.on("error", (e) => this.emit("log", `[${connectionId}] stt error: ${e.message}`));
         stt.on("partial", (m) => this.emit("heard", { connectionId, remoteUserId, ...m, final: false }));

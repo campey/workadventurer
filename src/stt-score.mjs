@@ -26,7 +26,7 @@ export function wer(expected, actual) {
   return prev[hyp.length] / ref.length;
 }
 
-const hasNonLatinLetter = (s) => /[\p{L}]/u.test(s.replace(/\p{Script=Latin}/gu, ""));
+const hasNonLatinLetter = (s) => /[\p{L}\uFFFD]/u.test(s.replace(/\p{Script=Latin}/gu, ""));
 
 function hasLoop(words, minRun = 4) {
   let run = 1;
@@ -38,17 +38,20 @@ function hasLoop(words, minRun = 4) {
 }
 
 /**
- * @param {{expected: string, finals: string[]}} clip  expected "" = must produce nothing
+ * @param {{expected: string|null, finals: string[]}} clip  expected "" = must produce nothing
  * @returns {{wer: number|null, spurious: number, nonLatin: boolean, loop: boolean, text: string}}
  */
-export function scoreClip({ expected, finals }) {
+export function scoreClip({ expected: rawExpected, finals }) {
+  // null = real recording with no known reference: only script/loop are checked
+  const expected = rawExpected ?? "x";
+  const noReference = rawExpected === null;
   const nonEmpty = finals.filter((f) => f.trim());
   const text = nonEmpty.join(" ");
   return {
     text,
-    wer: wer(expected, text),
-    spurious: normalizeWords(expected).length === 0 ? nonEmpty.length : 0,
+    wer: noReference ? null : wer(expected, text),
+    spurious: !noReference && normalizeWords(expected).length === 0 ? nonEmpty.length : 0,
     nonLatin: !hasNonLatinLetter(expected) && hasNonLatinLetter(text),
-    loop: hasLoop(normalizeWords(text)),
+    loop: hasLoop(normalizeWords(text)) || /(.{1,12}?)\1{5,}/u.test(text), // word run, or a substring (1-12 chars) 6+ times in a row
   };
 }
