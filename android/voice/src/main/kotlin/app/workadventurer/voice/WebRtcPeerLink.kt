@@ -19,6 +19,7 @@ internal class WebRtcPeerLink(
     factory: PeerConnectionFactory,
     private val connectionId: String,
     iceServers: List<IceServerInfo>,
+    private val localTrack: livekit.org.webrtc.AudioTrack, // the engine's one microphone track, shared by every link
 ) : PeerLink {
     private val gate = CandidateGate() // when a non-trickle SDP has its candidates; see CandidateGate
     private val keepAlive = mutableListOf<Any>() // data channel references: libwebrtc drops channels nobody holds
@@ -65,6 +66,8 @@ internal class WebRtcPeerLink(
         pc.transceivers
             .filter { it.mediaType == livekit.org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO }
             .forEach { it.direction = livekit.org.webrtc.RtpTransceiver.RtpTransceiverDirection.INACTIVE }
+        // Send our microphone too: addTrack reuses the receive-only audio transceiver the browser's offer created.
+        pc.addTrack(localTrack, listOf(STREAM_ID))
 
         val created = CompletableDeferred<SessionDescription>()
         pc.createAnswer(object : SdpObserver {
@@ -89,10 +92,7 @@ internal class WebRtcPeerLink(
     override suspend fun createOffer(): String? {
         val channel = pc.createDataChannel("simplepeer", DataChannel.Init())
         synchronized(keepAlive) { if (channel != null) keepAlive += channel }
-        pc.addTransceiver(
-            livekit.org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
-            livekit.org.webrtc.RtpTransceiver.RtpTransceiverInit(livekit.org.webrtc.RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
-        )
+        pc.addTrack(localTrack, listOf(STREAM_ID)) // a send-and-receive audio transceiver carrying our microphone
         val created = CompletableDeferred<SessionDescription>()
         pc.createOffer(object : SdpObserver {
             override fun onCreateSuccess(d: SessionDescription) { created.complete(d) }
@@ -115,6 +115,18 @@ internal class WebRtcPeerLink(
         }, SessionDescription(SessionDescription.Type.ANSWER, answerSdp))
     }
 
+    private suspend fun audioStat(type: String, key: String): Long {
+        val out = CompletableDeferred<Long>()
+        pc.getStats { report ->
+            val v = report.statsMap.values.firstOrNull { it.type == type && it.members["kind"] == "audio" }?.members?.get(key)
+            out.complete((v as? Number)?.toLong() ?: 0L)
+        }
+        return withTimeoutOrNull(3_000) { out.await() } ?: 0L
+    }
+
+    internal suspend fun audioPacketsSent() = audioStat("outbound-rtp", "packetsSent")
+    internal suspend fun audioPacketsReceived() = audioStat("inbound-rtp", "packetsReceived")
+
     /** True once ICE reports the connection is up (used by the on-device loopback test). */
     internal suspend fun awaitConnected(timeoutMs: Long): Boolean = withTimeoutOrNull(timeoutMs) { connected.await() } != null
 
@@ -136,5 +148,6 @@ internal class WebRtcPeerLink(
     companion object {
         const val GATHER_TIMEOUT_MS = 4_000L
         const val SETTLE_MS = 1_000L
+        private const val STREAM_ID = "wa-voice"
     }
 }
