@@ -2,9 +2,15 @@ package app.workadventurer.protocol
 
 import app.workadventurer.nav.Facing
 import app.workadventurer.nav.Pt
+import app.workadventurer.proto.AskPositionMessage
 import app.workadventurer.proto.BatchMessage
 import app.workadventurer.proto.ClientToServerMessage
 import app.workadventurer.proto.ErrorScreenMessage
+import app.workadventurer.proto.LocatePositionMessage
+import app.workadventurer.proto.MeetingInvitationRequestClosedMessage
+import app.workadventurer.proto.MeetingInvitationRequestReceivedMessage
+import app.workadventurer.proto.MeetingInvitationRequestTooHighMessage
+import app.workadventurer.proto.MeetingInvitationResponseReceivedMessage
 import app.workadventurer.proto.PingMessage
 import app.workadventurer.proto.PositionMessage
 import app.workadventurer.proto.RoomConnectedMessage
@@ -335,5 +341,137 @@ class PusherConnectionTest {
                 assertEquals(1, tmjRequests.get())
             }
         } finally { dir.deleteRecursively() }
+    }
+
+    // ---- invitations and locating a player (meetingInvitation* / askPosition) ----
+
+    /** A fake pusher that joins us, hands the test its server-side socket, and lets the test react to each frame. */
+    private class LiveFake(react: (WebSocket, ClientToServerMessage) -> Unit = { _, _ -> }) {
+        @Volatile var serverWs: WebSocket? = null
+        val fake = Fake(
+            onOpen = { ws ->
+                serverWs = ws
+                ws.send(Envelope.wrap(1, ServerToClientMessage.ADAPTER.encode(ServerToClientMessage(roomConnectedMessage = RoomConnectedMessage()))).toByteString())
+            },
+            onFrame = { ws, msg ->
+                if (msg.joinRoomFrontMessage != null) {
+                    ws.send(Envelope.wrap(1, ServerToClientMessage.ADAPTER.encode(ServerToClientMessage(roomJoinedMessage = RoomJoinedMessage(currentUserId = 7)))).toByteString())
+                }
+                react(ws, msg)
+            },
+        )
+        fun push(m: ServerToClientMessage) {
+            serverWs!!.send(Envelope.wrap(1, ServerToClientMessage.ADAPTER.encode(m)).toByteString())
+        }
+    }
+
+    private suspend fun waitFor(timeoutMs: Long = 5_000, cond: () -> Boolean) {
+        withTimeout(timeoutMs) { while (!cond()) delay(10) }
+    }
+
+    @Test
+    fun sendInviteSendsTheReceiversUuidAndUserId() = runBlocking<Unit> {
+        val live = LiveFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            conn.sendInvite("uuid-ada", 42)
+            val req = generateSequence { live.fake.received.poll(2, TimeUnit.SECONDS) }
+                .first { it.meetingInvitationRequestMessage != null }.meetingInvitationRequestMessage!!
+            assertEquals("uuid-ada", req.receiverUserUuid)
+            assertEquals(42, req.receiverUserId)
+            conn.close()
+        }
+    }
+
+    @Test
+    fun anIncomingInviteBecomesPendingAndTheClosedMessageClearsIt() = runBlocking<Unit> {
+        val live = LiveFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(meetingInvitationRequestReceivedMessage = MeetingInvitationRequestReceivedMessage(
+                senderUserUuid = "uuid-bob", senderName = "Bob", senderUserId = 9, senderPlayUri = "https://play/room",
+            )))
+            waitFor { conn.state.pendingInvites.value.isNotEmpty() }
+            assertEquals(listOf(Invite("uuid-bob", "Bob", 9, "https://play/room")), conn.state.pendingInvites.value)
+
+            // another session of ours answered it: the server tells us to drop it
+            live.push(ServerToClientMessage(meetingInvitationRequestClosedMessage = MeetingInvitationRequestClosedMessage()))
+            waitFor { conn.state.pendingInvites.value.isEmpty() }
+            conn.close()
+        }
+    }
+
+    @Test
+    fun respondingSendsTheAnswerAndDropsThePendingInvite() = runBlocking<Unit> {
+        val live = LiveFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(meetingInvitationRequestReceivedMessage = MeetingInvitationRequestReceivedMessage(
+                senderUserUuid = "uuid-bob", senderName = "Bob", senderPlayUri = "u",
+            )))
+            waitFor { conn.state.pendingInvites.value.isNotEmpty() }
+            conn.respondToInvite("uuid-bob", accept = true)
+            val resp = generateSequence { live.fake.received.poll(2, TimeUnit.SECONDS) }
+                .first { it.meetingInvitationResponseMessage != null }.meetingInvitationResponseMessage!!
+            assertTrue(resp.accept)
+            assertEquals("uuid-bob", resp.requestSenderUserUuid)
+            assertTrue(conn.state.pendingInvites.value.isEmpty())
+            conn.close()
+        }
+    }
+
+    @Test
+    fun theOutcomeOfAnInviteWeSentIsSurfaced() = runBlocking<Unit> {
+        val live = LiveFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(meetingInvitationResponseReceivedMessage = MeetingInvitationResponseReceivedMessage(accepted = true, responderName = "Ada")))
+            waitFor { conn.state.inviteOutcome.value != null }
+            assertEquals(InviteOutcome.Accepted("Ada"), conn.state.inviteOutcome.value)
+
+            live.push(ServerToClientMessage(meetingInvitationResponseReceivedMessage = MeetingInvitationResponseReceivedMessage(accepted = false, responderName = "Cy")))
+            waitFor { conn.state.inviteOutcome.value == InviteOutcome.Declined("Cy") }
+
+            live.push(ServerToClientMessage(meetingInvitationRequestTooHighMessage = MeetingInvitationRequestTooHighMessage()))
+            waitFor { conn.state.inviteOutcome.value == InviteOutcome.TooMany }
+            conn.close()
+        }
+    }
+
+    @Test
+    fun locateReturnsThePositionTheServerAnswersWith() = runBlocking<Unit> {
+        val live = LiveFake { ws, msg ->
+            val ask = msg.askPositionMessage
+            if (ask != null && ask.askType == AskPositionMessage.AskType.LOCATE) {
+                ws.send(Envelope.wrap(1, ServerToClientMessage.ADAPTER.encode(ServerToClientMessage(
+                    locatePositionMessage = LocatePositionMessage(position = PositionMessage(x = 1234, y = 567), userId = 9, userUuid = ask.userIdentifier),
+                ))).toByteString())
+            }
+        }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertEquals(Pt(1234.0, 567.0), conn.locate("uuid-bob", "https://play/room"))
+            val ask = generateSequence { live.fake.received.poll(2, TimeUnit.SECONDS) }
+                .first { it.askPositionMessage != null }.askPositionMessage!!
+            assertEquals("uuid-bob", ask.userIdentifier)
+            assertEquals("https://play/room", ask.playUri)
+            conn.close()
+        }
+    }
+
+    @Test
+    fun locateGivesUpWhenTheServerNeverAnswers() = runBlocking<Unit> {
+        val live = LiveFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertNull(conn.locate("uuid-nobody", "u", timeoutMs = 300))
+            conn.close()
+        }
     }
 }

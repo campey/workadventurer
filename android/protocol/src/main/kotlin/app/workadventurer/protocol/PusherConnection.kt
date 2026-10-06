@@ -4,9 +4,12 @@ import app.workadventurer.nav.Facing
 import app.workadventurer.nav.MovementSink
 import app.workadventurer.nav.NavGrid
 import app.workadventurer.nav.Pt
+import app.workadventurer.proto.AskPositionMessage
 import app.workadventurer.proto.AvailabilityStatus
 import app.workadventurer.proto.ClientToServerMessage
 import app.workadventurer.proto.JoinRoomFrontMessage
+import app.workadventurer.proto.MeetingInvitationRequestMessage
+import app.workadventurer.proto.MeetingInvitationResponseMessage
 import app.workadventurer.proto.PingMessage
 import app.workadventurer.proto.PositionMessage
 import app.workadventurer.proto.ServerToClientMessage
@@ -37,6 +40,7 @@ import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 class JoinFailed(message: String) : Exception(message)
@@ -77,6 +81,40 @@ open class PusherConnection(
     override fun move(x: Double, y: Double, facing: Facing, moving: Boolean) {
         state.setMyPose(x, y, facing)
         send(ClientToServerMessage(userMovesMessage = UserMovesMessage(position = positionMessage(moving), viewport = viewport())))
+    }
+
+    /** "Invite to discussion": ask [receiverUuid] to come over. The outcome arrives in [RoomState.inviteOutcome]. */
+    open fun sendInvite(receiverUuid: String, receiverUserId: Int?) {
+        send(ClientToServerMessage(meetingInvitationRequestMessage = MeetingInvitationRequestMessage(
+            receiverUserUuid = receiverUuid, receiverUserId = receiverUserId,
+        )))
+    }
+
+    /** Accept or decline an invitation from [senderUuid]; either way it is no longer pending. */
+    open fun respondToInvite(senderUuid: String, accept: Boolean) {
+        send(ClientToServerMessage(meetingInvitationResponseMessage = MeetingInvitationResponseMessage(
+            accept = accept, requestSenderUserUuid = senderUuid,
+        )))
+        state.removeInvite(senderUuid)
+    }
+
+    private val pendingLocates = ConcurrentHashMap<String, CompletableDeferred<Pt>>()
+
+    /**
+     * Where is the player [uuid]? Works for players outside our viewport (the server only streams nearby players).
+     * Null if the server doesn't answer within [timeoutMs].
+     */
+    open suspend fun locate(uuid: String, playUri: String, timeoutMs: Long = 5_000): Pt? {
+        val answer = CompletableDeferred<Pt>()
+        pendingLocates[uuid] = answer
+        send(ClientToServerMessage(askPositionMessage = AskPositionMessage(
+            userIdentifier = uuid, playUri = playUri, askType = AskPositionMessage.AskType.LOCATE,
+        )))
+        return try {
+            withTimeoutOrNull(timeoutMs) { answer.await() }
+        } finally {
+            pendingLocates.remove(uuid)
+        }
     }
 
     private fun nudgeOffBlockedTile(g: NavGrid) {
@@ -217,6 +255,22 @@ open class PusherConnection(
             _log.tryEmit("joined room as userId ${r.currentUserId}")
             startKeepAlive()
             joined.complete(Unit)
+            return
+        }
+        m.meetingInvitationRequestReceivedMessage?.let {
+            state.addInvite(Invite(it.senderUserUuid, it.senderName, it.senderUserId, it.senderPlayUri))
+            _log.tryEmit("invited by ${it.senderName}")
+            return
+        }
+        if (m.meetingInvitationRequestClosedMessage != null) { state.clearInvites(); return }
+        m.meetingInvitationResponseReceivedMessage?.let {
+            state.setInviteOutcome(if (it.accepted) InviteOutcome.Accepted(it.responderName) else InviteOutcome.Declined(it.responderName))
+            return
+        }
+        if (m.meetingInvitationRequestTooHighMessage != null) { state.setInviteOutcome(InviteOutcome.TooMany); return }
+        m.locatePositionMessage?.let { loc ->
+            val p = loc.position
+            if (p != null) pendingLocates.remove(loc.userUuid)?.complete(Pt(p.x.toDouble(), p.y.toDouble()))
             return
         }
         m.errorScreenMessage?.let { fail("server error screen: ${it.title} / ${it.details}"); return }

@@ -27,12 +27,26 @@ class RoomState {
     private val _myUserId = MutableStateFlow<Int?>(null)
     private val _groupId = MutableStateFlow<Int?>(null)
     private val _pose = MutableStateFlow(Pose(0.0, 0.0, Facing.DOWN))
+    private val _invites = MutableStateFlow<List<Invite>>(emptyList())
+    private val _inviteOutcome = MutableStateFlow<InviteOutcome?>(null)
 
     val players: StateFlow<Map<Int, Player>> = _players.asStateFlow()
     val myUserId: StateFlow<Int?> = _myUserId.asStateFlow()
     val groupId: StateFlow<Int?> = _groupId.asStateFlow()
     val myPose: StateFlow<Pose> = _pose.asStateFlow()
+
+    /** Invitations other players sent us that we haven't answered. */
+    val pendingInvites: StateFlow<List<Invite>> = _invites.asStateFlow()
+
+    /** The latest result of an invite we sent, or null. */
+    val inviteOutcome: StateFlow<InviteOutcome?> = _inviteOutcome.asStateFlow()
     @Volatile var areas: List<Area> = emptyList()
+
+    /** A new invite from the same sender replaces their earlier one. */
+    fun addInvite(invite: Invite) { _invites.update { list -> list.filterNot { it.senderUuid == invite.senderUuid } + invite } }
+    fun removeInvite(senderUuid: String) { _invites.update { list -> list.filterNot { it.senderUuid == senderUuid } } }
+    fun clearInvites() { _invites.value = emptyList() }
+    fun setInviteOutcome(outcome: InviteOutcome?) { _inviteOutcome.value = outcome }
 
     fun setMyUserId(id: Int) { _myUserId.value = id }
     fun setMyPose(x: Double, y: Double, facing: Facing) { _pose.value = Pose(x, y, facing) }
@@ -76,5 +90,7 @@ class RoomState {
         _players.value = emptyMap()
         _myUserId.value = null
         _groupId.value = null
+        _invites.value = emptyList()
+        _inviteOutcome.value = null
     }
 }
