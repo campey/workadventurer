@@ -244,6 +244,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A rejected connect no longer storms (issue #56).** Every reconnect attempt's
+  client was wired with the reconnect-on-close handler, so each attempt the
+  server rejected (it closes the socket) started another concurrent chain —
+  attempts grew ~2^N (1187 connections and 1605 logins in 100 s against a fake
+  pusher; ~41% CPU, 348 MB RSS at 2 min). Now `src/reconnect.mjs` runs exactly
+  one chain and only the live client triggers it. Also: the server's
+  `errorScreenMessage` is a typed `ServerRejectedError` (`code`, `retryable`)
+  with a readable message instead of `[object Object]`; `NEW_VERSION` (or a
+  `timeToRetry` ≥ 1 h) is fatal — no retry, clear message, exit 1, for both the
+  initial connect and an established daemon (a failed initial connect used to
+  die as an uncaught exception and leave a daemon with no control API);
+  `scripts/selfcheck.mjs` now reports a rejected hash as
+  `apiVersionHash accepted: FAIL` instead of a timeout. Repro tooling:
+  `scripts/fake-pusher.mjs`.
 - **Area-meeting join/leave is debounced.** `_handleAreaMeeting` fired
   `_joinSpace` / `_leaveSpace` on every `livekitRoomProperty` boundary crossing;
   walking through an area-dense map (staging `wa-village`) churned WebRTC peers
