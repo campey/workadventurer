@@ -15,8 +15,8 @@ anything here that contradicts it means the spec gets revised first.
 ## G2 — movement (2026-10-05 / 06)
 
 **Verdict: walk-to and invitations (both directions, including locating a player outside the viewport) work on a real
-phone against prod; the live runs changed several things (below, and "G2 live checks on the real phone"). Still not run:
-a walk with the screen locked.**
+phone against prod, including with the screen locked; the live runs changed several things (below, and "G2 live checks
+on the real phone").**
 
 Measured:
 - **Runtime collision builder matches the Node bake exactly.** `wa-cli collision --baked …` rebuilds each map from the
@@ -82,6 +82,10 @@ Findings that changed the build:
   permission is needed to stay connected in the background"; "Not in a room", no service, no notification, process alive,
   no crash.
 - **One continuous 32-minute connection** (see above) and no reconnect events across the invite runs.
+- **Walk with the screen locked** (2026-10-06, merged build): walk-to started, phone locked over adb (`mWakefulness=Dozing`
+  throughout). The session stayed connected, the microphone-type foreground service stayed up, and the avatar entered a
+  bubble with the player 16 s after the tap with the screen off. On waking there was no "Walking to" row; Leave was clean
+  (0 foreground services). Stay-awake was off.
 
 ### Bugs the live runs found in my own work (all fixed, each reproduced by a failing test first)
 
