@@ -16,14 +16,14 @@ class InviteNotificationsTest {
         val n = inviteNotifications(listOf(ada, bob))
         assertEquals(2, n.size)
         assertEquals("Ada", n[0].title)
-        assertEquals("Ada invited you over", n[0].text)
+        assertEquals("Ada invites you to join the meeting", n[0].text) // WorkAdventure's own wording
         assertEquals("Bob", n[1].title)
     }
 
     @Test
     fun aBlankSenderNameStillReadsSensibly() {
         val n = inviteNotifications(listOf(ada.copy(senderName = " ")))
-        assertEquals("Someone invited you over", n.single().text)
+        assertEquals("Someone invites you to join the meeting", n.single().text)
     }
 
     @Test

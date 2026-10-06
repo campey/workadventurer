@@ -1,6 +1,5 @@
 package app.workadventurer.app
 
-import app.workadventurer.app.ui.inviteText
 import app.workadventurer.protocol.Invite
 
 /** The foreground service's own notification id; invite notifications must never reuse it. */
@@ -16,8 +15,16 @@ data class InviteNotification(val id: Int, val title: String, val text: String)
 fun inviteNotificationId(senderUuid: String): Int =
     PRESENCE_NOTIFICATION_ID + 1 + ((senderUuid.hashCode() and 0x7fffffff) % 1_000_000)
 
+/**
+ * One notification per pending invite. The sentence is WorkAdventure's own wording (en-US `chat.meetingInvitation.title`
+ * in v1.34.0: "{name} invites you to join the meeting"), hard-coded in English for now; using its translated strings is
+ * tracked in an issue.
+ */
 fun inviteNotifications(invites: List<Invite>): List<InviteNotification> =
-    invites.map { InviteNotification(inviteNotificationId(it.senderUuid), it.senderName.ifBlank { "Someone" }, inviteText(it)) }
+    invites.map {
+        val name = it.senderName.ifBlank { "Someone" }
+        InviteNotification(inviteNotificationId(it.senderUuid), name, "$name invites you to join the meeting")
+    }
 
 /** Posted invite notifications that are no longer pending (answered in the app, or the connection dropped). */
 fun staleInviteNotificationIds(posted: Set<Int>, current: List<InviteNotification>): Set<Int> =
