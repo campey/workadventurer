@@ -50,6 +50,34 @@ Phone joined as `g3-voice`, the user (David, in a browser) walked next to it, th
   after nothing answered the first, since this build only logs and ignores them).
 - Walking away: `left space`, `left bubble`, then `webRtcDisconnect` from the peer, in that order.
 
+## G3 M2 live check, hearing a browser peer (2026-10-06)
+
+The phone (`g3-voice`) walked to the user's browser avatar (David, mic on); the user heard David's voice come out of the
+phone, then with the screen locked, then across four bubble leave/enter rounds. From the phone's own log:
+- **It works against a real browser.** `webRtcStart … initiator=false`, then `answered` 0.3-0.5 s later, audio plays,
+  also with the screen locked (`mWakefulness=Dozing`), no crash, no `AndroidRuntime`/native abort.
+- **The server tells the PHONE to initiate first, in both directions.** Each of the 4 rounds began with `initiator=true`
+  (ignored: the offerer role is M4), and about **21 s later** (21.0, 20.7, 21.3, 21.0 s) a second `webRtcStart` arrived
+  with a new connection id and `initiator=false`, which we answered. In the first M1 run the phone was the one stood still
+  and got `true` first as well; here the phone walked into the browser's bubble and still got `true` first. So the earlier
+  reading "existing members get initiator=true, the newcomer answers" does not predict who is told to offer.
+  **Mechanism, from the server source** (`back/src/Model/Strategies/WebRTCCommunicationStrategy.ts`, v1.34.0):
+  `establishConnection(user1, user2)` sends `initiator=true` to the user who was already watching the space and
+  `initiator=false` to the one who just started watching. The phone joins and watches within milliseconds of the bubble
+  forming, a browser takes longer, so the phone is nearly always the "existing" member and is told to offer. We ignored that,
+  so the browser waited for an offer that never came, hit its own connection timeout (~20 s), and sent
+  `meetingConnectionRestartMessage`; `handleMeetingConnectionRestartMessage` then re-sends both starts with the roles swapped,
+  which is the second `webRtcStart` (`initiator=false`) we answered.
+  Result: **audio started about 21 s after entering a bubble.** M4 (the phone as offerer) removes that wait; it is needed
+  for usable voice, not optional.
+- Clean teardown every round: `left space`, `left bubble`, then the peer's `webRtcDisconnect`. App memory did not grow
+  across the rounds (PSS about 151 MB before, about 96 MB after).
+- libwebrtc build findings (see the unit and instrumented tests): the factory needs video codecs registered (software
+  encoder/decoder factories) or it aborts the process natively on a real browser offer ("`front()` called on an empty
+  vector"); with them registered the answer includes the video section as `recvonly` rather than rejecting it. And ICE
+  gathering `COMPLETE` can arrive before the first candidate is delivered (2 of 3 answers had no candidates), so
+  `WebRtcPeerLink` waits for a first candidate, then up to 1 s for the rest.
+
 ## G2 — movement (2026-10-05 / 06)
 
 **Verdict: walk-to and invitations (both directions, including locating a player outside the viewport) work on a real
