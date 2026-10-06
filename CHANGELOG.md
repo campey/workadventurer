@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **STT hallucination mitigation + quality corpus (issue #61).** The worker decodes
+  greedily (`temperature=0`, repeatable), drops filler-only finals on faint audio
+  (`STT_FILLER_MAX_RMS`, default 0.06), collapses no-space loops and strips `U+FFFD`
+  garbage, and exposes `STT_LANGUAGE` / `STT_*_THRESHOLD` decode knobs (unset by
+  default; `STT_LANGUAGE=en` removes wrong-script output). New: `scripts/stt-eval.mjs`
+  + synthetic corpus in `test/fixtures/stt/`, `STT_TEE_DIR` live-call capture,
+  `scripts/stt-eval-matrix.sh`. Findings and numbers in `docs/field-notes.md`.
 - **STT to Space chat (issue #41).** In `--stt` listen mode the daemon now
   posts each final transcript to Space chat as one `Name: text` line (to every
   Space joined; chat is append-only and the displayed name is fixed per

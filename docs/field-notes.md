@@ -164,6 +164,46 @@ behind one `threading.Lock` in the worker — the async tick loops stay
 concurrent for buffering/timing, only the actual GPU call queues
 (`scripts/stt_worker.py`).
 
+### whisper-tiny hallucinations: what works, with numbers (#61)
+
+`node scripts/stt-eval.mjs [--repeat N]` streams every clip in
+`test/fixtures/stt/` (synthetic: `say` + ffmpeg, regenerate with
+`scripts/stt-corpus-gen.sh`) and, if present, a **local-only**
+`test/fixtures/stt-real/` through the real `SttStream` path and scores WER,
+spurious finals on must-be-empty clips, wrong-script output, and loops
+(`expected.json`: `""` = nothing, `null` = no reference, only script/loop checks).
+Real call audio is people's voices — never commit it. Capture some with
+`STT_TEE_DIR=<dir> wa join --stt` (raw PCM + finals with byte offsets;
+`scripts/stt-tee-list.mjs <dir> [--cut …]` lists/cuts spans). Offsets are
+approximate (they lag the worker), so cut windows are loose and need a listen.
+
+Findings, from 4+ minutes of a real meeting (7 "bad" spans, 2–3 passes):
+
+- **Synthetic noise/silence/tone clips never hallucinate**; the live failures
+  only reproduce on real faint background audio. Don't trust a synthetic-only
+  corpus for this.
+- **Decoding is random.** mlx_whisper's default temperature fallback samples, so
+  the same clip gave different text each run (Cyrillic, Welsh `Mae'n yw'n…`,
+  `dododo…`). `temperature=0` makes it repeatable and cut flagged rows nowhere on
+  its own — but it makes comparisons possible.
+- **Output the old guards missed:** hundreds of `U+FFFD` (incomplete byte-level
+  tokens) and no-space loops (`kybbbb…`, `carecare…` ×800 chars) are one
+  whitespace-delimited token, invisible to `collapse_repetition()`'s word scan.
+- **Filler on background audio** (`Thank you. Thanks for watching!`): those buffers
+  peak ≈0.05 RMS per 100 ms vs ≥0.12 for real speech, so a level gate separates them.
+- **Wrong script/language** (Cyrillic, Japanese, Arabic, Welsh) on background
+  audio is fixed only by `STT_LANGUAGE=en`. Cost: ~+0.03 WER on real speech
+  (0.119 → 0.149, 3 clips) — small sample.
+- **Tightening mlx_whisper's gates made things worse** (`logprob -0.8`,
+  `compression 2.0`, `no_speech 0.5`): new `�`/loop garbage, and it blanked ~half
+  the bad clips. Not adopted.
+- Serial vs parallel evals differ: five evals sharing the GPU delayed finals and
+  inflated "empty" results. Compare configs run one at a time.
+
+Result on the bad-clip set (14 rows): baseline 5 flagged → greedy+filler+loop
+guard 4 flagged (all wrong-script) → plus `STT_LANGUAGE=en` 0 flagged.
+Not tried: a larger model (`whisper-base`/`small`), since cheap options got there.
+
 ### `SttStream` has an unexplained startup race
 
 Even in the simplest possible setup (`scripts/stt-selfcheck.mjs` — one

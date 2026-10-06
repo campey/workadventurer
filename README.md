@@ -168,6 +168,7 @@ invite cycles currently leak memory (issue #29) — restart it every few.
 | `scripts/vendor-proto.mjs` | vendors a WA git ref's proto + prints its `apiVersionHash` (for a new adapter) |
 | `scripts/selfcheck.mjs` | live smoke test of a version target (`wa selfcheck`) |
 | `scripts/stt-selfcheck.mjs` | live smoke test of the STT pipeline, standalone (no WA connection) |
+| `scripts/stt-eval.mjs` | scores STT quality over a clip corpus (`test/fixtures/stt/`); see `docs/field-notes.md` |
 | `map/<org>/<world>/<room>/collision.json` | per-room baked collision grid + named areas |
 | `src/adapters/` | one adapter per WA `major.minor` (`wa-1.33`, `wa-1.34`, `wa-master`) + `resolveAdapter` — see [§ Version targets](#version-targets) |
 | `proto/<target>/messages.proto` | vendored WA proto per target (`wa-1.33` = tag `v1.33.8`, `wa-1.34` = tag `v1.34.0`) |
@@ -488,6 +489,20 @@ pipeline standalone — no WA connection needed — with:
 ```sh
 node scripts/stt-selfcheck.mjs [path/to/clip.wav]
 ```
+
+**What the worker filters (issue #61).** whisper-tiny hallucinates on weak
+audio, so the worker decodes greedily (`temperature=0`: no random fallback, same
+audio → same text) and drops or trims: a final that is *only* filler
+(`Thank you.`, `Okay.`, `Thanks for watching!`) when its loudest 100 ms window
+is under `STT_FILLER_MAX_RMS` (default `0.06`, `0` disables — a genuinely quiet
+standalone "okay" is lost too); repeated phrases and no-space loops
+(`dododo…`) cut to two repeats plus `…`; and `U+FFFD` garbage. Wrong-script
+output (Cyrillic/CJK/Arabic on background audio) is only fixed by pinning the
+language: `STT_LANGUAGE=en` (unset by default — the room may be multilingual).
+Other decode knobs, all unset unless given: `STT_TEMPERATURE`,
+`STT_NO_SPEECH_THRESHOLD`, `STT_LOGPROB_THRESHOLD`,
+`STT_COMPRESSION_RATIO_THRESHOLD`, `STT_HALLUCINATION_SILENCE_THRESHOLD`.
+Compare settings with `node scripts/stt-eval.mjs` (see `docs/field-notes.md`).
 
 Each `SttStream` counts against a safety cap (`MAX_STT_STREAMS` in
 `wa-audio.mjs`, shared across both transports; default 8, override with

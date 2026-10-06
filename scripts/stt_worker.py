@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -48,6 +49,11 @@ TICK_MS = 400  # re-transcribe cadence
 SILENCE_MS = 700  # trailing quiet before an utterance finalizes
 SILENCE_RMS = 0.006  # s16-normalized RMS below this counts as quiet
 MAX_UTTERANCE_S = 20  # force-finalize a runaway utterance
+# A final that is *only* filler ("Thank you.", "Okay.", "Thanks for watching!")
+# is dropped unless some 100 ms window of its audio got at least this loud.
+# Whisper-tiny invents exactly these lines on faint background audio (#61):
+# those buffers peak around 0.05, real speech 0.12+. STT_FILLER_MAX_RMS=0 disables.
+FILLER_MAX_RMS = float(os.environ.get("STT_FILLER_MAX_RMS", "0.06"))
 
 
 def log(*a):
@@ -85,11 +91,35 @@ def collapse_repetition(text):
                 kept = words[: i + phrase_len * min(reps, 2)]
                 return " ".join(kept) + " …"
             i += 1
-    return text
+    # No-space loops ("dododo…", "kybbbb…") are a single whitespace-delimited
+    # token, invisible to the word scan above: cut a 1-12 char unit repeated 6+
+    # times down to two repeats.
+    return re.sub(r"(.{1,12}?)\1{5,}", r"\1\1 …", text)
 
 
 # Decode knobs for the #61 hallucination work, all unset by default (= whatever
 # mlx_whisper does). Env-driven so scripts/stt-eval.mjs can compare settings.
+_FILLER_WORDS = {
+    "thank", "you", "thanks", "very", "much", "for", "watching", "okay", "ok", "yeah",
+    "um", "uh", "hmm", "mm", "bye", "oh", "ah", "alright", "all", "right",
+}
+
+
+def is_filler_only(text):
+    words = re.findall(r"[a-z']+", text.lower())
+    return bool(words) and all(w in _FILLER_WORDS for w in words)
+
+
+def loudest_window_rms(buf):
+    """RMS of the loudest 100 ms window (or the whole buffer if shorter)."""
+    win = SAMPLE_RATE // 10
+    n = len(buf) // win
+    if n == 0:
+        return float(np.sqrt(np.mean(buf**2))) if len(buf) else 0.0
+    windows = buf[: n * win].reshape(n, win)
+    return float(np.sqrt(np.mean(windows**2, axis=1)).max())
+
+
 _DECODE_ENV = {
     "STT_LANGUAGE": ("language", str),
     "STT_TEMPERATURE": ("temperature", float),  # single value = no sampling fallback
@@ -101,7 +131,11 @@ _DECODE_ENV = {
 
 
 def decode_options(env):
-    return {key: cast(env[name]) for name, (key, cast) in _DECODE_ENV.items() if env.get(name)}
+    # Sampling (temperature fallback) makes tiny non-deterministic and prone to
+    # wrong-language/garbage retries on hard audio; greedy decoding is the default.
+    opts = {"temperature": 0.0}
+    opts.update({key: cast(env[name]) for name, (key, cast) in _DECODE_ENV.items() if env.get(name)})
+    return opts
 
 
 class MicSession:
@@ -148,7 +182,12 @@ class MicSession:
             for seg in r.get("segments", [])
             for w in seg.get("words", [])
         ]
-        return {"text": collapse_repetition(r["text"].strip()), "words": words}
+        # U+FFFD = whisper emitted byte-level tokens that never completed a UTF-8
+        # sequence; it's garbage, never speech.
+        text = collapse_repetition(re.sub(r"\s*\ufffd+\s*", " ", r["text"]).strip())
+        if FILLER_MAX_RMS and is_filler_only(text) and loudest_window_rms(self.buf) < FILLER_MAX_RMS:
+            text, words = "", []
+        return {"text": text, "words": words}
 
     def reset(self):
         self.buf = np.zeros(0, dtype=np.float32)
@@ -251,8 +290,7 @@ async def main():
     gpu_lock = threading.Lock()
 
     opts = decode_options(os.environ)
-    if opts:
-        log(f"decode options: {opts}")
+    log(f"decode options: {opts}")
 
     def transcribe(audio):
         with gpu_lock:
