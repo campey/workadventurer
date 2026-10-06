@@ -2,6 +2,7 @@ package app.workadventurer.app.session
 
 import app.workadventurer.nav.Facing
 import app.workadventurer.nav.NavGrid
+import app.workadventurer.nav.Pt
 import app.workadventurer.proto.PositionMessage
 import app.workadventurer.proto.SubMessage
 import app.workadventurer.proto.UserJoinedMessage
@@ -9,6 +10,8 @@ import app.workadventurer.proto.UserLeftMessage
 import app.workadventurer.proto.UserMovedMessage
 import app.workadventurer.protocol.Area
 import app.workadventurer.protocol.Closed
+import app.workadventurer.protocol.Invite
+import app.workadventurer.protocol.InviteOutcome
 import app.workadventurer.protocol.JoinFailed
 import app.workadventurer.protocol.PusherConnection
 import app.workadventurer.protocol.RoomConfig
@@ -38,6 +41,10 @@ class WaSessionTest {
         val fakeClosed = CompletableDeferred<Closed>()
         var closeCalls = 0
         val moves = mutableListOf<Triple<Double, Double, Boolean>>() // x, y, moving
+        val invitesSent = mutableListOf<Pair<String, Int?>>()        // receiver uuid, receiver user id
+        val responses = mutableListOf<Pair<String, Boolean>>()       // sender uuid, accepted
+        val locates = mutableListOf<String>()
+        var locateResult: Pt? = null
         private val fakeGrid = MutableStateFlow<NavGrid?>(null)
         override val closed get() = fakeClosed
         override val grid: StateFlow<NavGrid?> get() = fakeGrid
@@ -47,13 +54,20 @@ class WaSessionTest {
             moves += Triple(x, y, moving)
         }
         override fun close() { closeCalls++; fakeClosed.complete(Closed(1000, "bye")) }
+        override fun sendInvite(receiverUuid: String, receiverUserId: Int?) { invitesSent += receiverUuid to receiverUserId }
+        override fun respondToInvite(senderUuid: String, accept: Boolean) {
+            responses += senderUuid to accept
+            super.respondToInvite(senderUuid, accept) // also drops it from the pending list, like the real one
+        }
+        override suspend fun locate(uuid: String, playUri: String, timeoutMs: Long): Pt? { locates += uuid; return locateResult }
     }
 
     private fun join(
         id: Int, name: String, x: Int = 1, y: Int = 2,
         dir: PositionMessage.Direction = PositionMessage.Direction.DOWN,
+        uuid: String = "",
     ) = SubMessage(
-        userJoinedMessage = UserJoinedMessage(userId = id, name = name, position = PositionMessage(x = x, y = y, direction = dir)),
+        userJoinedMessage = UserJoinedMessage(userId = id, name = name, userUuid = uuid, position = PositionMessage(x = x, y = y, direction = dir)),
     )
 
     @Test
@@ -235,7 +249,7 @@ class WaSessionTest {
             backgroundScope,
             { c ->
                 FakeConn(c) {
-                    state.applySub(join(1, "Ada", x = adaX, y = 0, dir = PositionMessage.Direction.LEFT))
+                    state.applySub(join(1, "Ada", x = adaX, y = 0, dir = PositionMessage.Direction.LEFT, uuid = "uuid-ada"))
                     state.areas = listOf(Area("fire", "Fire pit", 200, 0, 100, 100, emptySet(), false, false))
                     state.setMyPosition(startX, startY)
                 }.also { conn = it }
@@ -348,4 +362,110 @@ class WaSessionTest {
         }
     }
 
+    // ---- invitations ----
+
+    @Test
+    fun invitingAPlayerSendsToTheirUuidAndReportsItSent() = runTest {
+        val (session, conn) = connected()
+        session.dispatch(Command.InvitePlayer(1)); runCurrent()
+        assertEquals(listOf<Pair<String, Int?>>("uuid-ada" to 1), conn().invitesSent)
+        assertEquals(InviteStatus.Sent("Ada"), session.state.value.inviteStatus)
+    }
+
+    @Test
+    fun theOutcomeReplacesSentAndAFreshInviteClearsTheOldOutcome() = runTest {
+        val (session, conn) = connected()
+        session.dispatch(Command.InvitePlayer(1)); runCurrent()
+        conn().state.setInviteOutcome(InviteOutcome.Accepted("Ada")); runCurrent()
+        assertEquals(InviteStatus.Accepted("Ada"), session.state.value.inviteStatus)
+        conn().state.setInviteOutcome(InviteOutcome.Declined("Ada")); runCurrent()
+        assertEquals(InviteStatus.Declined("Ada"), session.state.value.inviteStatus)
+        conn().state.setInviteOutcome(InviteOutcome.TooMany); runCurrent()
+        assertEquals(InviteStatus.TooMany, session.state.value.inviteStatus)
+        // inviting again must not be overwritten by the previous outcome still sitting in the room state
+        session.dispatch(Command.InvitePlayer(1)); runCurrent()
+        assertEquals(InviteStatus.Sent("Ada"), session.state.value.inviteStatus)
+    }
+
+    @Test
+    fun invitingAnUnknownPlayerOrWhileNotConnectedIsIgnored() = runTest {
+        val (session, conn) = connected()
+        session.dispatch(Command.InvitePlayer(99)); runCurrent()
+        assertTrue(conn().invitesSent.isEmpty())
+        assertEquals(null, session.state.value.inviteStatus)
+
+        val idle = WaSession(backgroundScope, { c -> FakeConn(c) { } }, nowMs = { testScheduler.currentTime })
+        idle.dispatch(Command.InvitePlayer(1)); runCurrent() // not joined at all: must not throw
+        assertEquals(null, idle.state.value.inviteStatus)
+    }
+
+    @Test
+    fun incomingInvitesAreShownAndDecliningAnswersNoAndClearsIt() = runTest {
+        val (session, conn) = connected()
+        conn().state.addInvite(Invite("uuid-bob", "Bob", null, "u")); runCurrent()
+        assertEquals(listOf(Invite("uuid-bob", "Bob", null, "u")), session.state.value.pendingInvites)
+        session.dispatch(Command.DeclineInvite("uuid-bob")); runCurrent()
+        assertEquals(listOf("uuid-bob" to false), conn().responses)
+        assertTrue(session.state.value.pendingInvites.isEmpty())
+        assertEquals(Activity.Idle, session.state.value.activity)
+    }
+
+    @Test
+    fun acceptingAnswersYesThenWalksToTheVisibleSenderInsideBubbleRange() = runTest {
+        val (session, conn) = connected()
+        conn().state.addInvite(Invite("uuid-ada", "Ada", 1, "u")); runCurrent()
+        session.dispatch(Command.AcceptInvite("uuid-ada")); runCurrent()
+        assertEquals(listOf("uuid-ada" to true), conn().responses)
+        assertEquals(Activity.WalkingTo("Ada"), session.state.value.activity)
+        assertTrue(conn().locates.isEmpty(), "a visible sender needs no locate")
+        advanceTimeBy(20_000); runCurrent()
+        val p = conn().state.myPose.value
+        assertTrue(kotlin.math.hypot(p.x - 300.0, p.y) <= 48.0, "should end inside bubble range of Ada, at $p")
+        assertTrue(session.state.value.pendingInvites.isEmpty())
+        assertEquals(Activity.Idle, session.state.value.activity)
+    }
+
+    @Test
+    fun acceptingLocatesASenderOutsideOurViewportThenWalksThere() = runTest {
+        val (session, conn) = connected()
+        conn().locateResult = Pt(500.0, 0.0)
+        conn().state.addInvite(Invite("uuid-far", "Far", 77, "https://play/room")); runCurrent()
+        session.dispatch(Command.AcceptInvite("uuid-far")); runCurrent()
+        assertEquals(listOf("uuid-far"), conn().locates)
+        advanceTimeBy(20_000); runCurrent()
+        val p = conn().state.myPose.value
+        assertTrue(kotlin.math.hypot(p.x - 500.0, p.y) <= 8.0, "should end at the located spot, at $p")
+        assertEquals(Activity.Idle, session.state.value.activity)
+    }
+
+    @Test
+    fun acceptingWhenTheSenderCannotBeFoundStillAnswersAndDoesNotCrash() = runTest {
+        val (session, conn) = connected()
+        conn().locateResult = null
+        conn().state.addInvite(Invite("uuid-ghost", "Ghost", null, "u")); runCurrent()
+        session.dispatch(Command.AcceptInvite("uuid-ghost")); advanceTimeBy(5_000); runCurrent()
+        assertEquals(listOf("uuid-ghost" to true), conn().responses)
+        assertEquals(Activity.Idle, session.state.value.activity)
+        assertTrue(conn().moves.isEmpty())
+    }
+
+    @Test
+    fun answeringAnInviteWeDoNotHaveIsIgnored() = runTest {
+        val (session, conn) = connected()
+        session.dispatch(Command.AcceptInvite("uuid-nobody")); runCurrent()
+        session.dispatch(Command.DeclineInvite("uuid-nobody")); runCurrent()
+        assertTrue(conn().responses.isEmpty())
+    }
+
+    @Test
+    fun aDroppedConnectionClearsPendingInvitesAndTheInviteStatus() = runTest {
+        val (session, conn) = connected()
+        session.dispatch(Command.InvitePlayer(1)); runCurrent()
+        conn().state.addInvite(Invite("uuid-bob", "Bob", null, "u")); runCurrent()
+        assertEquals(1, session.state.value.pendingInvites.size)
+        conn().fakeClosed.complete(Closed(1006, "net")); runCurrent()
+        assertIs<Connection.Reconnecting>(session.state.value.connection)
+        assertTrue(session.state.value.pendingInvites.isEmpty())
+        assertEquals(null, session.state.value.inviteStatus)
+    }
 }

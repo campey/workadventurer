@@ -6,6 +6,8 @@ import app.workadventurer.nav.Target
 import app.workadventurer.nav.frontOf
 import app.workadventurer.nav.snapToFree
 import app.workadventurer.protocol.Area
+import app.workadventurer.protocol.Invite
+import app.workadventurer.protocol.InviteOutcome
 import app.workadventurer.protocol.JoinFailed
 import app.workadventurer.protocol.Player
 import app.workadventurer.protocol.PusherConnection
@@ -30,6 +32,13 @@ sealed interface Command {
     data class WalkToPlayer(val userId: Int) : Command
     data class WalkToArea(val areaKey: String) : Command // Area.id ?: Area.name
     data object StopMoving : Command
+
+    /** "Invite to discussion": ask a player to come over to us. */
+    data class InvitePlayer(val userId: Int) : Command
+
+    /** Answer yes to an invitation we received, then walk to whoever sent it. */
+    data class AcceptInvite(val senderUuid: String) : Command
+    data class DeclineInvite(val senderUuid: String) : Command
 }
 
 sealed interface Connection {
@@ -46,6 +55,14 @@ sealed interface Activity {
     data class WalkingTo(val label: String) : Activity
 }
 
+/** The state of the last invite *we* sent. */
+sealed interface InviteStatus {
+    data class Sent(val label: String) : InviteStatus
+    data class Accepted(val name: String) : InviteStatus
+    data class Declined(val name: String) : InviteStatus
+    data object TooMany : InviteStatus
+}
+
 data class SessionState(
     val connection: Connection = Connection.Disconnected,
     val roomName: String = "",
@@ -53,6 +70,8 @@ data class SessionState(
     val areas: List<Area> = emptyList(),
     val inAreas: List<Area> = emptyList(),
     val activity: Activity = Activity.Idle,
+    val pendingInvites: List<Invite> = emptyList(), // invitations we received and haven't answered
+    val inviteStatus: InviteStatus? = null,
 )
 
 typealias ConnectionFactory = (RoomConfig) -> PusherConnection
@@ -131,6 +150,22 @@ class WaSession(
                     }
                 }
                 Command.StopMoving -> stopMovement()
+                is Command.InvitePlayer -> {
+                    val c = conn
+                    val p = c?.state?.players?.value?.get(cmd.userId)
+                    if (c != null && p != null && _state.value.connection == Connection.Connected) {
+                        c.state.setInviteOutcome(null) // an older outcome must not overwrite "sent"
+                        c.sendInvite(p.uuid, p.userId)
+                        _state.update { it.copy(inviteStatus = InviteStatus.Sent(label(p))) }
+                    }
+                }
+                is Command.DeclineInvite -> answerInvite(cmd.senderUuid, accept = false)
+                is Command.AcceptInvite -> {
+                    val invite = answerInvite(cmd.senderUuid, accept = true)
+                    if (invite != null) startMovement { c ->
+                        Plan(Activity.WalkingTo(invite.senderName)) { nav -> walkToInviter(c, nav, invite) }
+                    }
+                }
             }
         }
     }
@@ -142,6 +177,35 @@ class WaSession(
         conn?.close(); conn = null
         stopMovement()
         return generation
+    }
+
+    /** Caller holds [lock]. Answers the pending invite from [senderUuid]; null (and nothing sent) if there isn't one. */
+    private fun answerInvite(senderUuid: String, accept: Boolean): Invite? {
+        val c = conn ?: return null
+        if (_state.value.connection != Connection.Connected) return null
+        val invite = c.state.pendingInvites.value.firstOrNull { it.senderUuid == senderUuid } ?: return null
+        c.respondToInvite(senderUuid, accept)
+        return invite
+    }
+
+    /** Walk to whoever invited us. The server only streams nearby players, so a sender out of view is located first. */
+    private suspend fun walkToInviter(c: PusherConnection, nav: Navigator, invite: Invite) {
+        fun visible() = c.state.players.value.values.firstOrNull { it.uuid == invite.senderUuid }
+        val located: Pt = visible()?.let { Pt(it.x.toDouble(), it.y.toDouble()) }
+            ?: c.locate(invite.senderUuid, invite.playUri)
+            ?: return // can't find them: the invite is answered, there's just nowhere to walk
+        nav.navTo(
+            target = located,
+            stopWithin = ARRIVE_WITHIN_PX,
+            // once they come into view, track their live position and stop in front of them
+            getTarget = {
+                visible()?.let { v ->
+                    frontOf(Target(v.x.toDouble(), v.y.toDouble(), v.direction.toFacing()), c.position(), BUBBLE_SPACING_PX, c.grid.value)
+                } ?: located
+            },
+            face = { visible()?.let { Pt(it.x.toDouble(), it.y.toDouble()) } },
+            repathMs = 500,
+        )
     }
 
     private class Plan(val activity: Activity, val run: suspend (Navigator) -> Unit)
@@ -226,7 +290,10 @@ class WaSession(
             attempt++
             val wait = backoffMs(attempt)
             setState(gen) {
-                it.copy(connection = Connection.Reconnecting(attempt, wait), players = emptyList(), inAreas = emptyList())
+                it.copy(
+                    connection = Connection.Reconnecting(attempt, wait),
+                    players = emptyList(), inAreas = emptyList(), pendingInvites = emptyList(), inviteStatus = null,
+                )
             }
             delay(wait)
         }
@@ -234,10 +301,24 @@ class WaSession(
 
     private suspend fun mirrorState(c: PusherConnection, gen: Int) {
         // Pose too, so `inAreas` follows the avatar as it walks.
-        combine(c.state.players, c.state.myPose) { players, _ -> players }.collect { map ->
+        combine(c.state.players, c.state.myPose, c.state.pendingInvites, c.state.inviteOutcome) { players, _, invites, outcome ->
+            Triple(players, invites, outcome)
+        }.collect { (players, invites, outcome) ->
             setState(gen) {
-                it.copy(players = map.values.sortedBy { p -> p.name.lowercase() }, inAreas = c.state.currentAreas())
+                it.copy(
+                    players = players.values.sortedBy { p -> p.name.lowercase() },
+                    inAreas = c.state.currentAreas(),
+                    pendingInvites = invites,
+                    // no outcome yet means keep whatever we show (e.g. "sent")
+                    inviteStatus = outcome?.toStatus() ?: it.inviteStatus,
+                )
             }
         }
+    }
+
+    private fun InviteOutcome.toStatus(): InviteStatus = when (this) {
+        is InviteOutcome.Accepted -> InviteStatus.Accepted(name)
+        is InviteOutcome.Declined -> InviteStatus.Declined(name)
+        InviteOutcome.TooMany -> InviteStatus.TooMany
     }
 }
