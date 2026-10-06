@@ -27,7 +27,6 @@ import kotlinx.coroutines.launch
 sealed interface Command {
     data class Join(val config: RoomConfig) : Command
     data object Leave : Command
-    data class Follow(val userId: Int) : Command
     data class WalkToPlayer(val userId: Int) : Command
     data class WalkToArea(val areaKey: String) : Command // Area.id ?: Area.name
     data object StopMoving : Command
@@ -45,7 +44,6 @@ sealed interface Connection {
 sealed interface Activity {
     data object Idle : Activity
     data class WalkingTo(val label: String) : Activity
-    data class Following(val label: String) : Activity
 }
 
 data class SessionState(
@@ -59,6 +57,13 @@ data class SessionState(
 
 typealias ConnectionFactory = (RoomConfig) -> PusherConnection
 
+// WorkAdventure (v1.34.0 defaults, back/src/Enum/EnvironmentVariableValidator.ts): two players form a bubble at
+// <= MINIMUM_DISTANCE = 64 px, and you join an existing bubble at <= GROUP_RADIUS = 48 px. "Walk to a player" must
+// therefore end inside 48 px, or you can't talk to them. Stand 40 px in front of them and stop within 8 px of that
+// spot: the avatar ends 32-48 px away, always inside the smaller radius.
+private const val BUBBLE_SPACING_PX = 40.0
+private const val ARRIVE_WITHIN_PX = 8.0
+
 /**
  * Owns one room presence: state out, [Command]s in. No Android imports, so it unit-tests on the JVM.
  *
@@ -67,7 +72,7 @@ typealias ConnectionFactory = (RoomConfig) -> PusherConnection
  * only resets once a connection has stayed up for [stableAfterMs], so a connection that joins and drops
  * straight away can't hammer the server (or flicker an avatar in and out of a shared room) every second.
  *
- * Movement commands ([Command.Follow] etc.) are ignored unless [Connection.Connected]; a new movement replaces
+ * Movement commands ([Command.WalkToPlayer] etc.) are ignored unless [Connection.Connected]; a new movement replaces
  * the current one; Join, Leave, a failed join and a dropped connection all cancel it.
  *
  * Thread-safety: [dispatch] runs on the caller's thread while runs execute on [scope]'s threads. Every
@@ -104,18 +109,17 @@ class WaSession(
                     restart()
                     _state.value = SessionState()
                 }
-                is Command.Follow -> startMovement { c ->
-                    val p = c.state.players.value[cmd.userId] ?: return@startMovement null
-                    Plan(Activity.Following(label(p))) { nav -> nav.follow({ targetOf(c, cmd.userId) }) }
-                }
                 is Command.WalkToPlayer -> startMovement { c ->
                     val p = c.state.players.value[cmd.userId] ?: return@startMovement null
                     Plan(Activity.WalkingTo(label(p))) { nav ->
                         nav.navTo(
                             target = Pt(p.x.toDouble(), p.y.toDouble()),
-                            stopWithin = 24.0,
-                            getTarget = { targetOf(c, cmd.userId)?.let { frontOf(it, c.position(), 64.0, c.grid.value) } },
+                            stopWithin = ARRIVE_WITHIN_PX,
+                            getTarget = { targetOf(c, cmd.userId)?.let { frontOf(it, c.position(), BUBBLE_SPACING_PX, c.grid.value) } },
                             face = { targetOf(c, cmd.userId)?.let { Pt(it.x, it.y) } },
+                            // Re-plan twice a second so a player who walks away (or leaves) is noticed quickly,
+                            // instead of chasing where they were up to 2 s ago.
+                            repathMs = 500,
                         )
                     }
                 }

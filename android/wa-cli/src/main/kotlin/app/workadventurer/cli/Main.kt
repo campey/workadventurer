@@ -4,12 +4,10 @@ import app.workadventurer.nav.CollisionBuilder
 import app.workadventurer.nav.NavGrid
 import app.workadventurer.nav.Navigator
 import app.workadventurer.nav.Pt
-import app.workadventurer.nav.Target
 import app.workadventurer.nav.snapToFree
 import app.workadventurer.protocol.PusherConnection
 import app.workadventurer.protocol.RoomConfig
 import app.workadventurer.protocol.Wa133
-import app.workadventurer.protocol.toFacing
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -61,7 +59,7 @@ fun main(args: Array<String>): Unit = runBlocking<Unit> {
     if (args.firstOrNull() == "collision") collisionParity(args)
     val name = opt(args, "--name") ?: run {
         System.err.println(
-            "usage: --name <avatar> [--room URL] [--pusher URL] [--api-version H] [--seconds N] [--follow NAME | --walk-to-area NAME]\n" +
+            "usage: --name <avatar> [--room URL] [--pusher URL] [--api-version H] [--seconds N] [--walk-to-area NAME]\n" +
                 "       collision --baked <collision.json>\n(name the avatar after your worktree, never bare 'claude')",
         )
         exitProcess(2)
@@ -83,21 +81,7 @@ fun main(args: Array<String>): Unit = runBlocking<Unit> {
     }
 
     val nav = Navigator({ conn.grid.value }, conn, System::currentTimeMillis)
-    fun find(needle: String) = conn.state.players.value.values.firstOrNull { it.name.contains(needle, ignoreCase = true) }
     val moveJob = when {
-        opt(args, "--follow") != null -> {
-            val needle = opt(args, "--follow")!!
-            launch {
-                withTimeoutOrNull(15_000) { while (find(needle) == null) delay(200) }
-                    ?: run { println("no player matching '$needle'"); return@launch }
-                val id = find(needle)!!.userId
-                println("· following ${find(needle)!!.name}")
-                val outcome = nav.follow({
-                    conn.state.players.value[id]?.let { Target(it.x.toDouble(), it.y.toDouble(), it.direction.toFacing()) }
-                })
-                println("· follow ended: $outcome")
-            }
-        }
         opt(args, "--walk-to-area") != null -> {
             val needle = opt(args, "--walk-to-area")!!
             launch {

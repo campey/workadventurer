@@ -2,7 +2,6 @@ package app.workadventurer.nav
 
 import kotlinx.coroutines.delay
 import kotlin.math.hypot
-import kotlin.math.max
 import kotlin.math.min
 
 /** Where the avatar is and how to move it. The live connection implements this; tests fake it. */
@@ -16,7 +15,7 @@ enum class Outcome { ARRIVED, TIMEOUT, TARGET_GONE }
 private const val MIN_ITER_MS = 50L
 
 /**
- * Moves an avatar through a [MovementSink]. Port of walkTo/navTo/follow in src/wa-client.mjs, with
+ * Moves an avatar through a [MovementSink]. Port of walkTo/navTo in src/wa-client.mjs (the continuous `follow` is not ported: it isn't WorkAdventure's follow), with
  * cancellation instead of an AbortSignal and one final "stopped" message per call instead of one per waypoint.
  */
 class Navigator(
@@ -117,59 +116,6 @@ class Navigator(
                 if (elapsed < MIN_ITER_MS) delay(MIN_ITER_MS - elapsed)
             }
             return Outcome.TIMEOUT
-        } finally {
-            stop()
-        }
-    }
-
-    suspend fun follow(
-        getTarget: () -> Target?,
-        spacing: Double = 72.0,
-        tickMs: Long = 100,
-        stepPx: Double = 30.0,
-        arriveSlack: Double = 20.0,
-    ): Outcome {
-        var path: ArrayDeque<Pt>? = null
-        var pathAt = 0L
-        var pathGoal: Pt? = null
-        try {
-            while (true) {
-                val target = getTarget() ?: return Outcome.TARGET_GONE
-                val me = sink.position()
-                val goal = followPoint(me, Pt(target.x, target.y), spacing, grid())
-                val dGoal = hypot(goal.x - me.x, goal.y - me.y)
-
-                if (dGoal <= arriveSlack) {
-                    val f = faceToward(me.x, me.y, target.x, target.y)
-                    if (moving || f != facing) emit(me.x, me.y, f, false)
-                    path = null
-                    delay(tickMs * 2)
-                    continue
-                }
-
-                val pg = pathGoal
-                val stale = path == null || path.isEmpty() || nowMs() - pathAt > 700 ||
-                    pg == null || hypot(pg.x - goal.x, pg.y - goal.y) > 80
-                if (stale) {
-                    val raw = grid()?.findPath(me, goal)
-                    path = ArrayDeque(if (!raw.isNullOrEmpty()) raw else listOf(goal))
-                    pathAt = nowMs()
-                    pathGoal = goal
-                }
-                val q = path!!
-                var wp = q.first()
-                var dwp = hypot(wp.x - me.x, wp.y - me.y)
-                while (dwp <= stepPx && q.size > 1) {
-                    q.removeFirst()
-                    wp = q.first()
-                    dwp = hypot(wp.x - me.x, wp.y - me.y)
-                }
-                val step = min(stepPx, max(dwp, dGoal))
-                val nx = if (dwp > 0.001) me.x + (wp.x - me.x) / dwp * step else me.x
-                val ny = if (dwp > 0.001) me.y + (wp.y - me.y) / dwp * step else me.y
-                emit(nx, ny, faceToward(me.x, me.y, wp.x, wp.y), true)
-                delay(tickMs)
-            }
         } finally {
             stop()
         }

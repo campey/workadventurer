@@ -19,10 +19,9 @@ fun notificationText(s: SessionState): String = when (s.connection) {
     else -> statusText(s.connection)
 }
 
-/** The movement status line, or null when the avatar isn't walking or following anyone. */
+/** The movement status line, or null when the avatar isn't walking anywhere. */
 fun activityText(a: Activity): String? = when (a) {
     Activity.Idle -> null
-    is Activity.Following -> "Following ${a.label}"
     is Activity.WalkingTo -> "Walking to ${a.label}"
 }
 

@@ -1,12 +1,10 @@
 package app.workadventurer.nav
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -144,33 +142,5 @@ class NavigatorTest {
         var calls = 0
         val r = nav.navTo(Pt(0.0, 0.0), getTarget = { if (calls++ < 2) Pt(5_000.0, 0.0) else null })
         assertEquals(Outcome.TARGET_GONE, r)
-    }
-
-    @Test
-    fun followConvergesToSpacingShortOfTheTargetAndStops() = runTest {
-        val sink = FakeSink(Pt(0.0, 0.0))
-        val nav = Navigator({ null }, sink, { testScheduler.currentTime })
-        val target = Target(300.0, 0.0, Facing.LEFT)
-        val job = launch { nav.follow({ target }, spacing = 72.0, stepPx = 30.0, tickMs = 100) }
-        advanceTimeBy(10_000); runCurrent()
-        assertTrue(abs(sink.pos.x - 228.0) <= 20.0, "ended at ${sink.pos}")
-        assertFalse(sink.moves.last().moving, "must stop when it arrives, not wait for a keepalive")
-        assertEquals(Facing.RIGHT, sink.moves.last().facing) // looking at the target
-        job.cancel()
-    }
-
-    @Test
-    fun followEndsWhenTheTargetDisappears() = runTest {
-        val sink = FakeSink(Pt(0.0, 0.0))
-        val nav = Navigator({ null }, sink, { testScheduler.currentTime })
-        var present = true
-        // 5000 px away: at 30 px per 100 ms the avatar is still walking after 3 s
-        val result = async { nav.follow({ if (present) Target(5_000.0, 0.0, Facing.DOWN) else null }) }
-        advanceTimeBy(3_000); runCurrent()
-        assertTrue(sink.moves.last().moving)
-        present = false
-        advanceTimeBy(500); runCurrent()
-        assertEquals(Outcome.TARGET_GONE, result.await())
-        assertFalse(sink.moves.last().moving)
     }
 }

@@ -34,7 +34,6 @@ class PresenceFormatTest {
 
     @Test fun activityTextDescribesWhatTheAvatarIsDoing() {
         assertEquals(null, activityText(Activity.Idle))
-        assertEquals("Following Ada", activityText(Activity.Following("Ada")))
         assertEquals("Walking to Fire pit", activityText(Activity.WalkingTo("Fire pit")))
     }
 

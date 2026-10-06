@@ -6,6 +6,7 @@ import app.workadventurer.proto.PositionMessage
 import app.workadventurer.proto.SubMessage
 import app.workadventurer.proto.UserJoinedMessage
 import app.workadventurer.proto.UserLeftMessage
+import app.workadventurer.proto.UserMovedMessage
 import app.workadventurer.protocol.Area
 import app.workadventurer.protocol.Closed
 import app.workadventurer.protocol.JoinFailed
@@ -227,16 +228,16 @@ class WaSessionTest {
         assertEquals(Connection.Connected, session.state.value.connection)
     }
 
-    /** A connected session with Ada (userId 1) at (300,0) facing LEFT, an area "Fire pit" around (250,50), us at the origin. */
-    private fun TestScope.connected(): Pair<WaSession, () -> FakeConn> {
+    /** A connected session with Ada (userId 1) at (adaX,0) facing LEFT, an area "Fire pit" around (250,50), us at the origin. */
+    private fun TestScope.connected(startX: Int = 0, startY: Int = 0, adaX: Int = 300): Pair<WaSession, () -> FakeConn> {
         var conn: FakeConn? = null
         val session = WaSession(
             backgroundScope,
             { c ->
                 FakeConn(c) {
-                    state.applySub(join(1, "Ada", x = 300, y = 0, dir = PositionMessage.Direction.LEFT))
+                    state.applySub(join(1, "Ada", x = adaX, y = 0, dir = PositionMessage.Direction.LEFT))
                     state.areas = listOf(Area("fire", "Fire pit", 200, 0, 100, 100, emptySet(), false, false))
-                    state.setMyPosition(0, 0)
+                    state.setMyPosition(startX, startY)
                 }.also { conn = it }
             },
             nowMs = { testScheduler.currentTime },
@@ -246,20 +247,9 @@ class WaSessionTest {
     }
 
     @Test
-    fun followStartsReportsActivityAndWalksTowardThePlayer() = runTest {
-        val (session, conn) = connected()
-        session.dispatch(Command.Follow(1)); runCurrent()
-        assertEquals(Activity.Following("Ada"), session.state.value.activity)
-        advanceTimeBy(5_000); runCurrent()
-        assertTrue(conn().moves.isNotEmpty())
-        assertTrue(conn().state.myPose.value.x > 100.0, "should have walked toward Ada, at ${conn().state.myPose.value}")
-        session.dispatch(Command.StopMoving); runCurrent()
-    }
-
-    @Test
     fun stopMovingGoesIdleWithAFinalStop() = runTest {
-        val (session, conn) = connected()
-        session.dispatch(Command.Follow(1)); advanceTimeBy(1_000); runCurrent()
+        val (session, conn) = connected(adaX = 5_000)
+        session.dispatch(Command.WalkToPlayer(1)); advanceTimeBy(1_000); runCurrent()
         session.dispatch(Command.StopMoving); runCurrent()
         assertEquals(Activity.Idle, session.state.value.activity)
         assertFalse(conn().moves.last().third, "last message must be a stop")
@@ -269,9 +259,9 @@ class WaSessionTest {
     }
 
     @Test
-    fun followEndsWhenThePlayerLeaves() = runTest {
-        val (session, conn) = connected()
-        session.dispatch(Command.Follow(1)); advanceTimeBy(1_000); runCurrent()
+    fun walkToPlayerEndsWhenThePlayerLeaves() = runTest {
+        val (session, conn) = connected(adaX = 5_000)
+        session.dispatch(Command.WalkToPlayer(1)); advanceTimeBy(1_000); runCurrent()
         conn().state.applySub(SubMessage(userLeftMessage = UserLeftMessage(userId = 1)))
         advanceTimeBy(1_000); runCurrent()
         assertEquals(Activity.Idle, session.state.value.activity)
@@ -306,8 +296,8 @@ class WaSessionTest {
 
     @Test
     fun aNewMovementReplacesTheCurrentOne() = runTest {
-        val (session, _) = connected()
-        session.dispatch(Command.Follow(1)); runCurrent()
+        val (session, _) = connected(adaX = 5_000)
+        session.dispatch(Command.WalkToPlayer(1)); runCurrent()
         session.dispatch(Command.WalkToArea("fire")); runCurrent()
         assertEquals(Activity.WalkingTo("Fire pit"), session.state.value.activity)
         session.dispatch(Command.StopMoving); runCurrent()
@@ -315,8 +305,8 @@ class WaSessionTest {
 
     @Test
     fun leaveStopsMovementAndNothingIsSentAfterwards() = runTest {
-        val (session, conn) = connected()
-        session.dispatch(Command.Follow(1)); advanceTimeBy(1_000); runCurrent()
+        val (session, conn) = connected(adaX = 5_000)
+        session.dispatch(Command.WalkToPlayer(1)); advanceTimeBy(1_000); runCurrent()
         session.dispatch(Command.Leave); runCurrent()
         assertEquals(Activity.Idle, session.state.value.activity)
         val n = conn().moves.size
@@ -326,8 +316,8 @@ class WaSessionTest {
 
     @Test
     fun aDroppedConnectionStopsMovement() = runTest {
-        val (session, conn) = connected()
-        session.dispatch(Command.Follow(1)); advanceTimeBy(1_000); runCurrent()
+        val (session, conn) = connected(adaX = 5_000)
+        session.dispatch(Command.WalkToPlayer(1)); advanceTimeBy(1_000); runCurrent()
         conn().fakeClosed.complete(Closed(1006, "net")); runCurrent()
         assertIs<Connection.Reconnecting>(session.state.value.connection)
         assertEquals(Activity.Idle, session.state.value.activity)
@@ -339,9 +329,23 @@ class WaSessionTest {
     @Test
     fun movementCommandsAreIgnoredUntilConnected() = runTest {
         val session = WaSession(backgroundScope, { c -> FakeConn(c) { } }, nowMs = { testScheduler.currentTime })
-        session.dispatch(Command.Follow(1)); runCurrent()          // not joined at all
+        session.dispatch(Command.WalkToPlayer(1)); runCurrent()          // not joined at all
         session.dispatch(Command.Join(cfg))                        // Connecting, connect() not yet run
-        session.dispatch(Command.Follow(1)); runCurrent()
+        session.dispatch(Command.WalkToPlayer(1)); runCurrent()
         assertEquals(Activity.Idle, session.state.value.activity)
     }
+
+    // WorkAdventure (v1.34.0 defaults): two players form a bubble at <= MINIMUM_DISTANCE 64 px, and you join an
+    // existing bubble at <= GROUP_RADIUS 48 px. Stopping merely "near" isn't enough to talk to anyone.
+    @Test
+    fun walkToPlayerEndsInsideTheBubbleDistance() = runTest {
+        for ((sx, sy) in listOf(0 to 0, 300 to 300, 600 to 0)) {
+            val (session, conn) = connected(sx, sy)
+            session.dispatch(Command.WalkToPlayer(1)); advanceTimeBy(20_000); runCurrent()
+            val p = conn().state.myPose.value
+            val d = kotlin.math.hypot(p.x - 300.0, p.y)
+            assertTrue(d <= 48.0, "from ($sx,$sy) it stopped ${"%.0f".format(d)} px from Ada: too far to join a bubble")
+        }
+    }
+
 }

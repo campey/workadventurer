@@ -35,7 +35,7 @@ import app.workadventurer.protocol.Wa133
 /**
  * Minimal and TalkBack-first (the seed of the accessibility goal): every row is one focusable element
  * with a full description, nothing is conveyed by colour alone, touch targets are at least 48dp, and every
- * button's description is the whole action ("Follow Ada"), not just its visible label.
+ * button's description is the whole action ("Walk to Ada"), not just its visible label.
  */
 @Composable
 fun PresenceScreen(
@@ -100,10 +100,6 @@ fun PresenceScreen(
                 val label = playerLabel(p)
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(label, Modifier.weight(1f).semantics { contentDescription = "Player $label" })
-                    TextButton(
-                        onClick = { onCommand(Command.Follow(p.userId)) }, enabled = canMove,
-                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Follow $label" },
-                    ) { Text("Follow") }
                     TextButton(
                         onClick = { onCommand(Command.WalkToPlayer(p.userId)) }, enabled = canMove,
                         modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Walk to $label" },
