@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import app.workadventurer.app.session.Command
 import app.workadventurer.app.session.Connection
+import app.workadventurer.app.session.shouldLeaveWhenServiceStops
 import app.workadventurer.app.ui.notificationText
 import app.workadventurer.protocol.RoomConfig
 import app.workadventurer.protocol.Wa133
@@ -82,7 +83,8 @@ class PresenceService : Service() {
     override fun onDestroy() {
         deactivate()
         scope.cancel()
-        session.dispatch(Command.Leave)
+        // Not after a failed join: the service stops itself then, and a reset would wipe "Couldn't join: …".
+        if (shouldLeaveWhenServiceStops(session.state.value)) session.dispatch(Command.Leave)
         super.onDestroy()
     }
 

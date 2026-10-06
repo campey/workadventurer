@@ -28,6 +28,7 @@ android {
 
 dependencies {
     implementation(project(":protocol"))
+    implementation(project(":nav"))
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)

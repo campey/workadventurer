@@ -12,6 +12,101 @@ anything here that contradicts it means the spec gets revised first.
 - The Gradle wrapper was generated from a one-off Gradle 8.10.2 download (avoids
   `brew install gradle`, which pulls a from-source `openjdk` on macOS 14).
 
+## G2 — movement (2026-10-05 / 06)
+
+**Verdict: walk-to and invitations (both directions, including locating a player outside the viewport) work on a real
+phone against prod; the live runs changed several things (below, and "G2 live checks on the real phone"). Still not run:
+a walk with the screen locked.**
+
+Measured:
+- **Runtime collision builder matches the Node bake exactly.** `wa-cli collision --baked …` rebuilds each map from the
+  live `.wam` + `.tmj`: afrolabs 913 = 913 blocked tiles, lean-iterator 2961 = 2961, no differences either way.
+  wa-village: Kotlin 3390 vs the committed bake's 3426; a *fresh* Node bake today also gives 3390 and then matches
+  Kotlin exactly, so the committed `map/tcm/…/collision.json` (2026-09-10) is simply stale (36 tiles).
+- **Kotlin A\* equals Node's, path for path** on 74 generated cases (exact equality), including the 6 unreachable ones.
+- **Grid load is off the critical path:** join → `Connected` in about 4 s; the `.tmj` (1.5 MB) takes ~4.4 s more on a
+  cold first run and ~0.2 s once cached on disk (logcat, real phone).
+- **One continuous 32-minute connection on the phone** (09:24:31 → 09:56:56, foreground service up, screen on and then
+  off) with **no reconnect or disconnect event** in the new logcat output (`adb logcat -s WaConn:I WaSession:I`).
+  This answers the open G1 question "did a silent reconnect happen?" for that run, and extends G1's 6½-minute soak.
+- Mac-side CLI run (follow, since removed) tracked a moving browser avatar across ~2,000 px; all 18 sampled positions
+  were on free tiles.
+
+Reported by the user (not measured): walk-to "seems to work really well" on the phone.
+
+Findings that changed the build:
+- **"Follow" was the wrong feature and was removed.** WorkAdventure's follow is a mutually negotiated request made once
+  in a bubble (`FollowRequest` / `FollowConfirmation` / `FollowAbort`), not a client loop that keeps walking toward a
+  player. "Walk to" is the only thing you can do to a player at a distance. The Node CLI's `wa follow` has the same
+  mislabelling. Real follow is issue #76; the Android UI redesign (users panel, a screen per user) is #77.
+- **Walk-to didn't always get close enough to bubble up.** WorkAdventure v1.34.0 defaults (read from
+  `back/src/Enum/EnvironmentVariableValidator.ts`): `MINIMUM_DISTANCE = 64` px to form a bubble,
+  `GROUP_RADIUS = 48` px to join one. We stopped 40–88 px away. Now: stand 40 px in front, stop within 8 px (ends
+  32–48 px away), re-plan every 500 ms (it was 2 s, so a player who walked away was chased from where they were up to
+  2 s earlier). A failing test reproduced it first (stopped 76 px away). The numbers are the documented defaults, not
+  measured on prod.
+- **"Couldn't join: …" vanished within 6 ms** (phone log: `Failed` → `Disconnected` 6 ms apart): the service stops
+  itself after a failed join, and its `onDestroy` then reset the session. Fixed with a tested rule
+  (`shouldLeaveWhenServiceStops`).
+- **The player list only shows nearby players.** The server streams only players inside the viewport around us
+  (about ±1,920 × ±1,080 px); after walking ~1,600 px away the list dropped from 3 players to 0. For "who's around"
+  that's right, for "who's in the room" it isn't. The protocol has `AskPosition{userIdentifier, playUri, LOCATE|MOVE}`
+  → `LocatePosition` to find a player outside the viewport; the Android client now uses it when accepting an invite from
+  someone we can't see (verified on the wire since: see the live checks below). Folded into #77.
+- **Smoothed paths can graze a wall corner** (as in the Node client): the smoothing guarantees line-of-sight between
+  tile *centres*, not geometric clearance. Measured at 1.2 px inside a wall tile in the unit geometry; the test now
+  asserts "never more than 12 px into a wall". Cosmetic: movement is client-authoritative.
+- **A first-attempt transport failure is final** (reviewer finding, seen live): one Mac-side join died with
+  `closed before join: -1 EOFException` (a one-off network drop; an immediate retry worked). The CLI has no retry and
+  the app treats a first-attempt socket failure as `Failed`.
+- Lag when following (user report) was **not** diagnosed before follow was removed. Walking speed in WorkAdventure is
+  `WOKA_SPEED` 9 × 20 = 180 px/s (running 2.5× = 450 px/s) per `play/src/front/Phaser/Player/Player.ts` and the docs;
+  the removed loop moved at 300 px/s, so at walking pace the lag was latency, not top speed.
+
+### G2 live checks on the real phone, 2026-10-06 (measured from the phone's own log and accessibility tree unless marked)
+
+- **Invites, both directions work on the wire.** Incoming: `invited by :David` arrived and the Accept/Decline row showed.
+  Outgoing: tapping Invite showed "Invited :David…", then "… accepted your invitation" (17 s, 6 s on a second try) and
+  "… declined your invitation" (5.7 s). The user accepted an incoming invite by hand and **the phone walked to them**
+  (reported).
+- **`AskPosition(LOCATE)` works.** With the user far outside the phone's viewport (player list at 0), accepting an
+  invite made the phone locate them, walk across the map, and finish in about 9 s. A walk can only start if the locate
+  answered, so that is direct evidence.
+- **Invite → accept → walk → bubble, end to end on the fixed build:** `invited by` 11:10:21, `answering … accept`
+  11:10:32, `entered bubble 1078` 11:10:39, and "Walking to" cleared by itself 8.5 s after accepting.
+- **Leave:** "Not in a room"; 0 foreground services, 0 notification records. The stale-notification bug from the first
+  phone run is gone.
+- **Bogus room:** "Couldn't join: server error screen: ERROR / …" stays on screen (still there 6 s later; it used to
+  vanish in 6 ms), button back to Join, 0 services, 0 notifications.
+- **Microphone denied** (revoked with `pm revoke`, real system prompt answered "Don't allow"): the app shows "Microphone
+  permission is needed to stay connected in the background"; "Not in a room", no service, no notification, process alive,
+  no crash.
+- **One continuous 32-minute connection** (see above) and no reconnect events across the invite runs.
+
+### Bugs the live runs found in my own work (all fixed, each reproduced by a failing test first)
+
+- **Walk-to never finished on a real map** (user: it "stays in walking to mode", and looked like the old follow). Route
+  waypoints are tile *centres*, so the avatar could only park within ~22 px of an off-centre goal; my bubble-distance
+  fix had tightened the arrival tolerance from 24 px to 8 px, which made the goal unreachable, so the walk re-targeted
+  the player every 500 ms until its 120 s timeout, and left the avatar's last message as "moving". My unit tests had no
+  map (straight-line walking), which hid it. Fixes: finish the route at the exact goal; end a walk when within 44 px of
+  the *player*, checked every step; give up after 30 s.
+- **Stand-point could be out of bubble range.** When the spot in front of a player was a wall or off the map, the old
+  snap took the first free tile in raster order: 62 px away in the test case, so the walk "arrived" outside bubble range.
+  Now the free point nearest us on a ring around the player at bubble spacing. Found only because a test I wrote to
+  prove the arrival range used an awkward geometry. Mutation checking (disabling the range and timeout, confirming the
+  tests then fail) also showed one of my first new tests wasn't discriminating, and it was replaced.
+- **The logging build printed another player's account email.** For logged-in players the protocol's "user uuid" is the
+  account email address (seen: `inviting david@…`). Logs now carry names and user ids only. Worth knowing for the future:
+  `Player.uuid` / `Invite.senderUuid` are PII for logged-in accounts.
+- **"No bubble formed" once**, even after walking away and back and leaving and rejoining; it worked after the user
+  reloaded their browser tab (reported), and then reliably (bubble entered 7 s after accepting, measured). Treated as a
+  browser-side glitch; the connection now logs `entered bubble` / `left bubble` so the phone's side is visible next time.
+
+Small UX wart noted for #77: the last invite result ("… declined your invitation") stays on screen indefinitely.
+
+Open: the lock-screen-while-walking run (the 32-minute soak ran locked part of the time, but not mid-walk).
+
 ## G1 — real phone (Galaxy S25 Ultra `SM-S938B`, Android 16 / One UI), 2026-10-05
 
 **Verdict: passed with caveats. Presence survived a locked-screen run on a real

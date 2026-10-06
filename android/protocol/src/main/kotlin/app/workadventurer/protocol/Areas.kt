@@ -1,5 +1,6 @@
 package app.workadventurer.protocol
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -54,8 +55,8 @@ fun parseWam(json: String): List<Area> {
     }
 }
 
-/** Best-effort: any failure yields an empty list (join must still work without areas). */
-suspend fun loadAreas(http: OkHttpClient, cfg: RoomConfig): List<Area> = withContext(Dispatchers.IO) {
+/** Best-effort: the room's `.wam` as JSON text, or null on any failure (a join must work without it). */
+suspend fun fetchWamJson(http: OkHttpClient, cfg: RoomConfig): String? = withContext(Dispatchers.IO) {
     try {
         val mapUrl = (cfg.pusherUrl + Wa133.MAP).toHttpUrl().newBuilder()
             .addQueryParameter("playUri", cfg.roomUrl).build()
@@ -64,12 +65,18 @@ suspend fun loadAreas(http: OkHttpClient, cfg: RoomConfig): List<Area> = withCon
             it.body!!.string()
         }
         val wamUrl = Json.parseToJsonElement(get(mapUrl.toString())).jsonObject["wamUrl"]
-            ?.jsonPrimitive?.contentOrNull ?: return@withContext emptyList()
-        parseWam(get(wamUrl))
+            ?.jsonPrimitive?.contentOrNull ?: return@withContext null
+        get(wamUrl)
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
-        emptyList()
+        null
     }
 }
+
+/** Best-effort: any failure yields an empty list (join must still work without areas). */
+suspend fun loadAreas(http: OkHttpClient, cfg: RoomConfig): List<Area> =
+    fetchWamJson(http, cfg)?.let { try { parseWam(it) } catch (e: Exception) { emptyList() } } ?: emptyList()
 
 fun pickSpawn(areas: List<Area>, rnd: Random = Random.Default): Spawn {
     val starts = areas.filter { it.isStart }
