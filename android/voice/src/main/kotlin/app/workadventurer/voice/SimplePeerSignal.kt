@@ -34,6 +34,18 @@ object SimplePeerSignal {
         }
     }
 
+    /**
+     * What shape a signal has, for logs: the `type`, the top-level key names, and a transceiver request's `kind`. Never any value
+     * that could carry an SDP, ICE credentials or addresses.
+     */
+    fun describe(json: String): String {
+        val o = try { Json.parseToJsonElement(json) } catch (e: Exception) { return "not json" }
+        if (o !is JsonObject) return "not an object"
+        val type = o["type"].str()?.let { "type=$it " }.orEmpty()
+        val kind = ((o["transceiverRequest"] as? JsonObject)?.get("kind")).str()?.let { " kind=$it" }.orEmpty()
+        return "${type}keys=[${o.keys.joinToString(", ")}]$kind"
+    }
+
     fun answer(sdp: String): String = buildJsonObject { put("type", "answer"); put("sdp", sdp) }.toString()
 
     fun offer(sdp: String): String = buildJsonObject { put("type", "offer"); put("sdp", sdp) }.toString()

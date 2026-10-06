@@ -29,6 +29,17 @@ class SimplePeerSignalTest {
         assertNull(SimplePeerSignal.parse("""{"type":"candidate","candidate":"not an object"}"""))
     }
 
+    // To learn what a browser sends when it adds a track after the first negotiation, without ever logging an SDP.
+    @Test
+    fun describeNamesTheShapeOfASignalButNeverItsContent() {
+        assertEquals("type=renegotiate keys=[type, renegotiate]", SimplePeerSignal.describe("""{"type":"renegotiate","renegotiate":true}"""))
+        assertEquals("keys=[transceiverRequest] kind=audio", SimplePeerSignal.describe("""{"transceiverRequest":{"kind":"audio","init":{"direction":"sendrecv"}}}"""))
+        val offer = SimplePeerSignal.describe("""{"type":"offer","sdp":"v=0 SECRET-ICE-UFRAG"}""")
+        assertEquals("type=offer keys=[type, sdp]", offer)
+        assertEquals("not json", SimplePeerSignal.describe("{{{ x"))
+        assertEquals("not an object", SimplePeerSignal.describe("[1]"))
+    }
+
     @Test
     fun anOfferSerialisesInSimplePeersShape() {
         val json = SimplePeerSignal.offer("v=0\r\ns=-\r\n")

@@ -66,7 +66,7 @@ class MeshSession(
                         val l = synchronized(active) { active[e.connectionId] }?.link
                         if (l == null) log("[${e.connectionId}] answer for an unknown connection, ignored") else l.acceptAnswer(s.sdp)
                     }
-                    null -> log("[${e.connectionId}] unparseable or unsupported signal, ignored")
+                    null -> log("[${e.connectionId}] unsupported signal ignored: ${SimplePeerSignal.describe(e.signal)}")
                 }
             }
             is VoiceEvent.Disconnect -> closeWhere { it.spaceName == e.spaceName && it.peer == e.peerSpaceUserId }
