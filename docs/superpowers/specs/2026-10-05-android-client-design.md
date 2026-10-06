@@ -139,3 +139,19 @@ the spec above left these open.
   heap's tie-breaking); the runtime builder is checked against the baked maps by a
   live parity command (`wa-cli collision --baked`), since the `.tmj` files are too
   large to keep as fixtures.
+
+### Changes made after the real-phone G2 runs (2026-10-06)
+
+- **No "Follow" command.** The spec's `Command` list named `Follow`; it was built (a client loop that keeps walking toward a
+  player) and then removed: WorkAdventure's follow is a mutually negotiated request made once in a bubble
+  (`FollowRequest` / `FollowConfirmation` / `FollowAbort`). From a distance the only thing you can do to a player is walk to
+  them (and invite them). The real follow is issue #76. The command set is now `Join`, `Leave`, `WalkToPlayer`,
+  `WalkToArea`, `StopMoving`, `InvitePlayer`, `AcceptInvite`, `DeclineInvite`.
+- **Invitations are in scope for the app** (both directions): send "invite to discussion", and receive one with Accept /
+  Decline, where accepting walks to the sender. A sender outside our viewport is located first with
+  `AskPosition(LOCATE)` (verified on the wire).
+- **"Walk to a player" means "get inside bubble range", not "reach a spot".** WorkAdventure forms a bubble at <= 64 px and
+  lets you join one at <= 48 px (v1.34.0 defaults), so the walk stops inside 44 px of the player, gives up after 30 s,
+  and never chases a player who keeps moving.
+- **UI**: a Users-panel style list with a screen per user is wanted (#77); the current flat list with inline buttons is
+  provisional.
