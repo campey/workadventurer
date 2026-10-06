@@ -4,10 +4,16 @@ import app.workadventurer.nav.Facing
 import app.workadventurer.nav.MovementSink
 import app.workadventurer.nav.NavGrid
 import app.workadventurer.nav.Pt
+import app.workadventurer.proto.AddSpaceFilterMessage
 import app.workadventurer.proto.AnswerMessage
 import app.workadventurer.proto.AskPositionMessage
 import app.workadventurer.proto.AvailabilityStatus
 import app.workadventurer.proto.ClientToServerMessage
+import app.workadventurer.proto.FilterType
+import app.workadventurer.proto.JoinSpaceQuery
+import app.workadventurer.proto.LeaveSpaceQuery
+import app.workadventurer.proto.RemoveSpaceFilterMessage
+import app.workadventurer.proto.SpaceFilterMessage
 import app.workadventurer.proto.JoinRoomFrontMessage
 import app.workadventurer.proto.MeetingInvitationRequestMessage
 import app.workadventurer.proto.MeetingInvitationResponseMessage
@@ -33,6 +39,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
@@ -126,6 +134,49 @@ open class PusherConnection(
             return a
         } finally {
             pendingQueries.remove(id, answer)
+        }
+    }
+
+    private val spaceMutex = Mutex()
+
+    private fun joinSpace(spaceName: String, props: List<String>) {
+        scope.launch {
+            spaceMutex.withLock {
+                if (state.spaces.value.containsKey(spaceName)) return@launch // already a member
+                try {
+                    val answer = query { id ->
+                        QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(
+                            spaceName = spaceName, filterType = FilterType.ALL_USERS,
+                            propertiesToSync = props.ifEmpty { DEFAULT_SPACE_PROPS },
+                        ))
+                    }
+                    state.addSpace(spaceName, answer.joinSpaceAnswer?.spaceUserId.orEmpty())
+                    // "watch" the space: without this the server never sets up peer connections for us
+                    send(ClientToServerMessage(addSpaceFilterMessage = AddSpaceFilterMessage(SpaceFilterMessage(spaceName = spaceName))))
+                    _log.tryEmit("joined space $spaceName")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _log.tryEmit("joinSpace $spaceName failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun leaveSpace(spaceName: String) {
+        scope.launch {
+            spaceMutex.withLock {
+                if (!state.spaces.value.containsKey(spaceName)) return@launch // never joined
+                state.removeSpace(spaceName)
+                send(ClientToServerMessage(removeSpaceFilterMessage = RemoveSpaceFilterMessage(SpaceFilterMessage(spaceName = spaceName))))
+                _log.tryEmit("left space $spaceName")
+            }
+            // fire and forget: the server cleans up our membership either way
+            try {
+                query { id -> QueryMessage(id = id, leaveSpaceQuery = LeaveSpaceQuery(spaceName = spaceName)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) { /* ignored */ }
         }
     }
 
@@ -328,6 +379,8 @@ open class PusherConnection(
             if (p != null) pendingLocates.remove(loc.userUuid)?.complete(Pt(p.x.toDouble(), p.y.toDouble()))
             return
         }
+        m.joinSpaceRequestMessage?.let { joinSpace(it.spaceName, it.propertiesToSync); return }
+        m.leaveSpaceRequestMessage?.let { leaveSpace(it.spaceName); return }
         m.answerMessage?.let { pendingQueries.remove(it.id)?.complete(it); return }
         m.errorScreenMessage?.let { fail("server error screen: ${it.title} / ${it.details}"); return }
         if (m.invalidCharacterTextureMessage != null) { fail("invalid character texture"); return }

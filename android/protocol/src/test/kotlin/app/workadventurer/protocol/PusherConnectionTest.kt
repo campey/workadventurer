@@ -607,4 +607,83 @@ class PusherConnectionTest {
             conn.close()
         }
     }
+
+    private fun spaceFake(onLeaveQuery: () -> Unit = {}) = LiveFake { ws, msg ->
+        msg.queryMessage?.let { q ->
+            when {
+                q.joinSpaceQuery != null -> ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, joinSpaceAnswer = JoinSpaceAnswer(spaceUserId = "${q.joinSpaceQuery!!.spaceName}_7")))))
+                q.leaveSpaceQuery != null -> onLeaveQuery()
+            }
+        }
+    }
+
+    @Test
+    fun aJoinSpaceRequestJoinsWithTheAdapterValuesThenWatchesTheSpace() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "open-space_bubble1")))
+            waitFor { conn.state.spaces.value.containsKey("open-space_bubble1") }
+            assertEquals("open-space_bubble1_7", conn.state.spaces.value["open-space_bubble1"])
+            val sent = generateSequence { live.fake.received.poll(2, TimeUnit.SECONDS) }.take(40).toList()
+            val join = sent.mapNotNull { it.queryMessage?.joinSpaceQuery }.single()
+            assertEquals(FilterType.ALL_USERS, join.filterType)
+            assertEquals(listOf("cameraState", "microphoneState", "screenSharingState"), join.propertiesToSync)
+            assertEquals("open-space_bubble1", sent.mapNotNull { it.addSpaceFilterMessage }.single().spaceFilterMessage!!.spaceName)
+            conn.close()
+        }
+    }
+
+    @Test
+    fun theServersOwnPropertiesToSyncWinOverTheDefaults() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp", propertiesToSync = listOf("microphoneState"))))
+            waitFor { conn.state.spaces.value.containsKey("sp") }
+            val join = generateSequence { live.fake.received.poll(2, TimeUnit.SECONDS) }.take(40).mapNotNull { it.queryMessage?.joinSpaceQuery }.first()
+            assertEquals(listOf("microphoneState"), join.propertiesToSync)
+            conn.close()
+        }
+    }
+
+    // Review Focus 7: a second join request for a space we are in, and a leave for one we never joined, are harmless.
+    @Test
+    fun repeatedJoinsAndUnknownLeavesAreHarmless() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp")))
+            waitFor { conn.state.spaces.value.containsKey("sp") }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp")))
+            live.push(ServerToClientMessage(leaveSpaceRequestMessage = LeaveSpaceRequestMessage(spaceName = "never")))
+            delay(300)
+            val sent = generateSequence { live.fake.received.poll(300, TimeUnit.MILLISECONDS) }.toList()
+            assertEquals(1, sent.count { it.queryMessage?.joinSpaceQuery != null })
+            assertEquals(0, sent.count { it.removeSpaceFilterMessage != null })
+            assertEquals(setOf("sp"), conn.state.spaces.value.keys)
+            conn.close()
+        }
+    }
+
+    @Test
+    fun aLeaveSpaceRequestUnwatchesAndLeaves() = runBlocking<Unit> {
+        val left = java.util.concurrent.CountDownLatch(1)
+        val live = spaceFake { left.countDown() }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp")))
+            waitFor { conn.state.spaces.value.containsKey("sp") }
+            live.push(ServerToClientMessage(leaveSpaceRequestMessage = LeaveSpaceRequestMessage(spaceName = "sp")))
+            waitFor { conn.state.spaces.value.isEmpty() }
+            assertTrue(left.await(3, TimeUnit.SECONDS), "leaveSpaceQuery never sent")
+            val sent = generateSequence { live.fake.received.poll(300, TimeUnit.MILLISECONDS) }.toList()
+            assertEquals("sp", sent.mapNotNull { it.removeSpaceFilterMessage }.single().spaceFilterMessage!!.spaceName)
+            conn.close()
+        }
+    }
 }
