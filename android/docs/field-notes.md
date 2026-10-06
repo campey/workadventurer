@@ -36,6 +36,20 @@ Throwaway probe: `voice/src/androidTest/.../WebRtcSpikeTest.kt`, run on the S25 
 - **Not yet tried:** answering a real browser offer (with its `m=video`), being offered to, the microphone and echo
   cancellation, the WorkAdventure space/signalling path (the Android client has no space handling yet).
 
+## G3 M1 live check, space join (2026-10-06)
+
+Phone joined as `g3-voice`, the user (David, in a browser) walked next to it, then away. From the phone's own log:
+- 17 s after joining, within a second of David arriving: `entered bubble 1637`, `joined space <room url>#1637#<timestamp>`,
+  `webRtcStart conn=<uuid> initiator=true`. No `joinSpace ... failed`.
+- The space name is the room URL plus the bubble's group id and a timestamp, not a fixed name.
+- **Who gets `initiator=true`.** When a browser avatar walks up to a phone that is already standing there, the phone is the
+  *existing* member and is told to send the offer. So being the offerer (M4) is the common case whenever people come to the
+  phone; answering (M2) only happens when the phone walks into someone else's bubble. The M2 live check therefore has the
+  phone do the walking.
+- Two more `webRtcStart` arrived 20 s and 41 s later with `initiator=false` and fresh connection ids (the server's retry
+  after nothing answered the first, since this build only logs and ignores them).
+- Walking away: `left space`, `left bubble`, then `webRtcDisconnect` from the peer, in that order.
+
 ## G2 — movement (2026-10-05 / 06)
 
 **Verdict: walk-to and invitations (both directions, including locating a player outside the viewport) work on a real
