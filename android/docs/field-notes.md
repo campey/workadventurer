@@ -12,6 +12,30 @@ anything here that contradicts it means the spec gets revised first.
 - The Gradle wrapper was generated from a one-off Gradle 8.10.2 download (avoids
   `brew install gradle`, which pulls a from-source `openjdk` on macOS 14).
 
+## G3 — voice: library spike, step 1 (2026-10-06)
+
+Question: does LiveKit's libwebrtc build run on the phone and produce the audio offer a WorkAdventure browser peer needs?
+Throwaway probe: `voice/src/androidTest/.../WebRtcSpikeTest.kt`, run on the S25 Ultra with
+`./gradlew :voice:connectedDebugAndroidTest`. Measured on the phone, not unit-tested.
+
+- **Which artifact.** `livekit-android` 2.29.0 depends on `io.github.webrtc-sdk:android-prefixed:144.7559.14`, the
+  *prefixed* build (classes are `livekit.org.webrtc.*`, not `org.webrtc.*`). The mesh uses that exact artifact and
+  version directly, so G4's `livekit-android` shares one native stack. (The plain `io.github.webrtc-sdk:android` artifact
+  is a different build; mixing the two would put two copies of libwebrtc in the app.)
+- **It runs.** `PeerConnectionFactory` initialises, an audio track plus a `simplepeer` data channel produce an offer with
+  `m=audio` (Opus 111, red, G722, PCMU/A, telephone-event), `m=application` (SCTP data channel), DTLS `actpass`.
+- **Needs `ACCESS_NETWORK_STATE`, or the whole process aborts.** libwebrtc's network monitor calls
+  `ConnectivityManager.getActiveNetworkInfo`; without the permission it throws and a native `CHECK` in `jvm.cc` kills the
+  process (SIGABRT on `network_thread`, nothing catchable). Declared in `voice/src/main/AndroidManifest.xml` along with
+  INTERNET, MODIFY_AUDIO_SETTINGS, RECORD_AUDIO.
+- **Gathering started right after the factory is created finds no network.** Offer created immediately: 0 candidates and
+  "gathering complete" within milliseconds. After a 1.5 s pause: 2 host + 2 srflx candidates, all in the offer. libwebrtc
+  learns the network list asynchronously. Production must create the engine early (at join, not at the first bubble) and
+  must not trust a very fast "complete" with zero candidates, the same guard the Node client has (`candidateCount === 0`
+  tears down).
+- **Not yet tried:** answering a real browser offer (with its `m=video`), being offered to, the microphone and echo
+  cancellation, the WorkAdventure space/signalling path (the Android client has no space handling yet).
+
 ## G2 — movement (2026-10-05 / 06)
 
 **Verdict: walk-to and invitations (both directions, including locating a player outside the viewport) work on a real
