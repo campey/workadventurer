@@ -398,11 +398,40 @@ Rapid-fire invites (several in a few seconds) hit issue #29.
   a player, invite, monitor RSS/HTTP). Watch its RSS trace — a steady climb
   past ~300 MB or an HTTP timeout means #29 is biting; `pkill -9` and restart.
 
+### Reconnect and server error screens (#56)
+
+- The pusher's `errorScreenMessage` fields are `google.protobuf.*Value`
+  wrappers (`{value: …}`), so they must be unwrapped. `src/server-rejected.mjs`
+  turns one into a `ServerRejectedError { code, retryable }`:
+  `server error screen: Please refresh — A new version of WorkAdventure is available (NEW_VERSION)`.
+- **Fatal rule, one table** (`FATAL_CODES` + `FATAL_TIME_TO_RETRY_S` in that
+  file): `NEW_VERSION`, or a server `timeToRetry` ≥ 3600 s (WA sends 999999
+  with `NEW_VERSION`), means don't auto-retry. The daemon exits 1 with the
+  message — at initial connect, and for an established daemon via the
+  reconnector. Unknown codes keep the bounded 5-attempt retry.
+- **The exponential-chain lesson.** A rejected attempt makes the server close
+  the socket. If the attempt client carries the "reconnect on close" handler,
+  that close starts a *second* chain, and each of its attempts starts more:
+  ~2^N connections, each a proto load + login + map fetch. Reconnect-on-close
+  belongs to the live client only (`watchLive` in `wa-daemon.mjs`);
+  `createReconnector` (`src/reconnect.mjs`) keeps a single chain in flight and
+  checks `deliberateShutdown` every iteration. A log tell: `reconnect attempt
+  1/5…` appearing repeatedly instead of `1/5`, `2/5`.
+- **Repro without production traffic:** `node scripts/fake-pusher.mjs 8855
+  [code] [timeToRetry]` (serves `anonymLogin`, `/map` and a `/ws/room` that
+  sends one `errorScreenMessage` then closes 1000), then
+  `WA_TARGET=wa-1.34 WA_PUSHER_URL=http://127.0.0.1:8855
+  WA_ROOM=http://127.0.0.1:8855/@/a/b/c WA_DAEMON_PORT=88xx node src/wa-daemon.mjs`.
+  The same server backs `test/helpers/fake-pusher.mjs`. Not covered: a daemon
+  that was *joined* and is then rejected on reconnect (the fake only rejects) —
+  that path is unit-tested through the reconnector only.
+
 ### When prod bumps
 
 Prod moved from `v1.33.8` to `v1.34.0` without notice (2026-10-05) and every
 client stopped connecting: the server answers a stale `apiVersionHash` with
-`errorScreen NEW_VERSION`, and the resolver, finding no adapter for the new
+`errorScreen NEW_VERSION` (the daemon now exits 1 saying exactly that, and
+`selfcheck` prints `apiVersionHash accepted: FAIL`), and the resolver, finding no adapter for the new
 minor, falls back to the old one *and its hash*. Issue #55. The procedure that
 worked, in order:
 

@@ -38,6 +38,8 @@ import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
 import { resolveClip } from "./resolve-clip.mjs";
 import { makeSttRoomOutput } from "./stt-room-output.mjs";
+import { createReconnector } from "./reconnect.mjs";
+import { ServerRejectedError } from "./server-rejected.mjs";
 
 const cfg = resolveConfig();
 const PORT = cfg.port;
@@ -60,7 +62,6 @@ let wa;
 let audio; // WaAudio, bound to the current client
 let follow = null; // { name, userId, controller, paused }
 let deliberateShutdown = false;
-let reconnecting = false;
 
 let sttLineOpen = false; // a provisional partial line is currently on the terminal, unterminated
 
@@ -151,9 +152,17 @@ function wireClient(client) {
       walkToPlayer(sender, 90_000).then((r) => log("invite walk:", JSON.stringify(r)))
     );
   });
-  client.on("close", (c) => {
-    log("socket closed", c.code, c.reason || "");
+  client.on("close", (c) => log("socket closed", c.code, c.reason || ""));
+}
+
+// Reconnect-on-close belongs to the LIVE client only. Attempt clients made by
+// the reconnector are wired with wireClient() alone: a rejected attempt closes
+// its socket, and when that triggered a reconnect it started a new chain per
+// attempt (~2^N connections — #56).
+function watchLive(client) {
+  client.on("close", () => {
     if (deliberateShutdown) return shutdown(0);
+    if (client !== wa) return; // a stale client's close isn't a drop of the live one
     attemptReconnect().catch((e) => {
       log("reconnect gave up:", e.message);
       shutdown(1);
@@ -362,7 +371,7 @@ function state() {
         }
       : null,
     connected: wa.ws?.readyState === 1,
-    reconnecting,
+    reconnecting: reconnector.active,
     myUserId: wa.myUserId,
     pos: { x: Math.round(wa.pos.x), y: Math.round(wa.pos.y) },
     facing: ["up", "right", "down", "left"][wa.pos.direction] ?? null,
@@ -395,46 +404,44 @@ function state() {
   };
 }
 
-async function attemptReconnect() {
-  reconnecting = true;
-  const prevFollow = follow ? { name: follow.name, paused: follow.paused } : null;
-  const delays = [2000, 5000, 10000, 20000, 30000];
-  for (let i = 0; i < delays.length; i++) {
-    await new Promise((r) => setTimeout(r, delays[i]));
-    log(`reconnect attempt ${i + 1}/${delays.length}…`);
-    const client = new WorkAdventureClient({
-      name: cfg.name,
-      roomUrl: cfg.roomUrl,
-      pusherUrl: cfg.pusherUrl,
-      target: cfg.target,
-      version: cfg.version,
-      wokaId: cfg.wokaId,
-      // A listen-mode ("scribe") instance doesn't publish audio by default —
-      // client.micOn is the single source of truth every mic-announce path
-      // respects (#10). See wa-audio.mjs for the rest of that invariant.
-      micOn: !cfg.stt,
-    });
+const newClient = () =>
+  new WorkAdventureClient({
+    name: cfg.name,
+    roomUrl: cfg.roomUrl,
+    pusherUrl: cfg.pusherUrl,
+    target: cfg.target,
+    version: cfg.version,
+    wokaId: cfg.wokaId,
+    // A listen-mode ("scribe") instance doesn't publish audio by default —
+    // client.micOn is the single source of truth every mic-announce path
+    // respects (#10). See wa-audio.mjs for the rest of that invariant.
+    micOn: !cfg.stt,
+  });
+
+const reconnector = createReconnector({
+  makeClient: () => {
+    const client = newClient();
     wireClient(client);
-    try {
-      await client.connect();
-      wa = client;
-      attachAudio(wa);
-      reconnecting = false;
-      log(`reconnected as userId ${wa.myUserId}`);
-      follow = null;
-      if (prevFollow && !prevFollow.paused) {
-        startFollow(prevFollow.name).then((r) => log("post-reconnect follow:", JSON.stringify(r)));
-      } else if (prevFollow) {
-        follow = { name: prevFollow.name, userId: -1, controller: new AbortController(), paused: true };
-      }
-      return;
-    } catch (e) {
-      log(`  attempt ${i + 1} failed: ${e.message}`);
-      try { client.close(); } catch {}
+    return client;
+  },
+  onConnected: (client) => {
+    const prevFollow = follow ? { name: follow.name, paused: follow.paused } : null;
+    wa = client;
+    watchLive(client);
+    attachAudio(wa);
+    log(`reconnected as userId ${wa.myUserId}`);
+    follow = null;
+    if (prevFollow && !prevFollow.paused) {
+      startFollow(prevFollow.name).then((r) => log("post-reconnect follow:", JSON.stringify(r)));
+    } else if (prevFollow) {
+      follow = { name: prevFollow.name, userId: -1, controller: new AbortController(), paused: true };
     }
-  }
-  throw new Error("exhausted reconnect attempts");
-}
+  },
+  log,
+  isStopped: () => deliberateShutdown,
+});
+
+const attemptReconnect = () => reconnector.start();
 
 const readBody = (req) =>
   new Promise((resolve) => {
@@ -585,18 +592,20 @@ server.on("error", (e) => {
 });
 
 log(`connecting to WorkAdventure as "${cfg.name}"…`);
-wa = new WorkAdventureClient({
-  name: cfg.name,
-  roomUrl: cfg.roomUrl,
-  pusherUrl: cfg.pusherUrl,
-  target: cfg.target,
-  version: cfg.version,
-  wokaId: cfg.wokaId,
-  // See the reconnect-path comment above: micOn is single-source-of-truth.
-  micOn: !cfg.stt,
-});
+wa = newClient();
 wireClient(wa);
-await wa.connect();
+try {
+  await wa.connect();
+} catch (e) {
+  // Nothing to keep alive yet and the control API isn't up: say why and exit
+  // non-zero rather than limping on via uncaughtException (#56).
+  log(e instanceof ServerRejectedError && !e.retryable
+    ? `${e.message} — the server refuses this client; not retrying`
+    : `initial connect failed: ${e.message}`);
+  shutdown(1);
+  await new Promise(() => {}); // shutdown() exits the process after cleanup
+}
+watchLive(wa);
 attachAudio(wa);
 log(`joined as userId ${wa.myUserId}; spawn (${wa.pos.x | 0},${wa.pos.y | 0})`);
 

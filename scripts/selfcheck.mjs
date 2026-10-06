@@ -6,6 +6,7 @@
 
 import { WorkAdventureClient } from "../src/wa-client.mjs";
 import { resolveConfig } from "../src/config.mjs";
+import { isVersionRejection } from "../src/server-rejected.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name) => {
@@ -34,7 +35,7 @@ const client = new WorkAdventureClient({
 });
 
 const errors = [];
-client.on("error", (e) => errors.push(e.message));
+client.on("error", (e) => errors.push(e));
 
 try {
   // --- connect ---
@@ -45,9 +46,10 @@ try {
   line("PASS", "connect + join", `userId ${client.myUserId}`);
   line("PASS", "adapter resolved", `${client.adapter.id} (${client.adapter.waVersion})`);
 
-  // --- adapter match: a NEW_VERSION errorScreen would have landed in `errors` ---
-  if (errors.some((m) => /version/i.test(m))) {
-    line("FAIL", "apiVersionHash accepted", errors.find((m) => /version/i.test(m)));
+  // --- adapter match: a NEW_VERSION errorScreen after join would land in `errors` ---
+  const rejected = errors.find(isVersionRejection);
+  if (rejected) {
+    line("FAIL", "apiVersionHash accepted", rejected.message);
   } else {
     line("PASS", "apiVersionHash accepted");
   }
@@ -90,7 +92,9 @@ try {
   // --- audio (best-effort; needs a live peer) ---
   line("SKIP", "audio into meeting", "no second participant in an automated run");
 } catch (e) {
-  line("FAIL", "connect + join", e.message);
+  // A rejected hash makes connect() itself reject (typed, keyed on the code).
+  if (isVersionRejection(e)) line("FAIL", "apiVersionHash accepted", e.message);
+  else line("FAIL", "connect + join", e.message);
 } finally {
   client.close();
   console.log(failed ? "\nFAIL" : "\nOK");
