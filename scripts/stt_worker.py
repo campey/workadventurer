@@ -88,6 +88,22 @@ def collapse_repetition(text):
     return text
 
 
+# Decode knobs for the #61 hallucination work, all unset by default (= whatever
+# mlx_whisper does). Env-driven so scripts/stt-eval.mjs can compare settings.
+_DECODE_ENV = {
+    "STT_LANGUAGE": ("language", str),
+    "STT_TEMPERATURE": ("temperature", float),  # single value = no sampling fallback
+    "STT_NO_SPEECH_THRESHOLD": ("no_speech_threshold", float),
+    "STT_LOGPROB_THRESHOLD": ("logprob_threshold", float),
+    "STT_COMPRESSION_RATIO_THRESHOLD": ("compression_ratio_threshold", float),
+    "STT_HALLUCINATION_SILENCE_THRESHOLD": ("hallucination_silence_threshold", float),
+}
+
+
+def decode_options(env):
+    return {key: cast(env[name]) for name, (key, cast) in _DECODE_ENV.items() if env.get(name)}
+
+
 class MicSession:
     def __init__(self, transcribe):
         self._transcribe = transcribe
@@ -234,6 +250,10 @@ async def main():
     # concurrent, only the actual inference call queues.
     gpu_lock = threading.Lock()
 
+    opts = decode_options(os.environ)
+    if opts:
+        log(f"decode options: {opts}")
+
     def transcribe(audio):
         with gpu_lock:
             return mlx_whisper.transcribe(
@@ -242,6 +262,7 @@ async def main():
                 word_timestamps=True,
                 verbose=False,
                 condition_on_previous_text=False,
+                **opts,
             )
 
     # warm the model once at startup so the first real utterance isn't slow

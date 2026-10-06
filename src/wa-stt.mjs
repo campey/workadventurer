@@ -18,7 +18,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { OggOpusMuxStream } from "./ogg-opus-mux.mjs";
 import { PcmTee } from "./pcm-tee.mjs";
 
-const SOCK_PATH = fileURLToPath(new URL("../.wa-stt.sock", import.meta.url));
+const SOCK_PATH = process.env.STT_SOCKET ?? fileURLToPath(new URL("../.wa-stt.sock", import.meta.url));
 const WORKER_SCRIPT = fileURLToPath(new URL("../scripts/stt_worker.py", import.meta.url));
 
 let workerProc = null;
