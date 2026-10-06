@@ -183,4 +183,17 @@ class NavigatorTest {
         assertTrue(sink.pos.x >= 200.0 && sink.pos.x < 400.0, "stopped at ${sink.pos}")
         assertFalse(sink.moves.last().moving)
     }
+
+    // A leg may stop up to 12 px short of a waypoint; for the LAST waypoint (the exact goal) that left a dead band
+    // between 8 and 12 px: re-planning found every waypoint "reached", nothing moved, and the walk stood still until
+    // its timeout.
+    @Test
+    fun navToDoesNotStallJustShortOfAGoalWhenTheFinalLegIsAboutFiftyPx() = runTest {
+        val g = gridOf(".....", ".....", ".....")
+        val sink = FakeSink(Pt(16.0, 48.0))
+        val nav = Navigator({ g }, sink, { testScheduler.currentTime })
+        assertEquals(Outcome.ARRIVED, nav.navTo(Pt(66.0, 48.0), stopWithin = 8.0, timeoutMs = 30_000))
+        assertTrue(hypot(sink.pos.x - 66.0, sink.pos.y - 48.0) <= 8.0, "ended at ${sink.pos}")
+        assertTrue(testScheduler.currentTime < 5_000, "took ${testScheduler.currentTime} ms")
+    }
 }

@@ -18,7 +18,11 @@ import app.workadventurer.proto.RoomJoinedMessage
 import app.workadventurer.proto.ServerToClientMessage
 import app.workadventurer.proto.SubMessage
 import app.workadventurer.proto.UserJoinedMessage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
@@ -471,6 +475,35 @@ class PusherConnectionTest {
             val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
             withTimeout(5_000) { conn.connect() }
             assertNull(conn.locate("uuid-nobody", "u", timeoutMs = 300))
+            conn.close()
+        }
+    }
+
+    // The older locate's cleanup used to remove whatever was stored under the uuid, i.e. the NEWER locate's entry, so
+    // the server's reply for it was dropped (seen as an accepted invite whose walk silently never started).
+    @Test
+    fun cancellingAnOlderLocateDoesNotDropTheNewerOnesAnswer() = runBlocking<Unit> {
+        val asks = java.util.concurrent.atomic.AtomicInteger()
+        val release = java.util.concurrent.CountDownLatch(1)
+        val live = LiveFake { ws, msg ->
+            val ask = msg.askPositionMessage
+            if (ask != null && ask.askType == AskPositionMessage.AskType.LOCATE && asks.incrementAndGet() == 2) {
+                release.await(5, TimeUnit.SECONDS)
+                ws.send(Envelope.wrap(1, ServerToClientMessage.ADAPTER.encode(ServerToClientMessage(
+                    locatePositionMessage = LocatePositionMessage(position = PositionMessage(x = 10, y = 20), userId = 9, userUuid = ask.userIdentifier),
+                ))).toByteString())
+            }
+        }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            val older = launch(Dispatchers.IO) { conn.locate("uuid-bob", "u", timeoutMs = 10_000) }
+            waitFor { asks.get() == 1 }
+            val newer = async(Dispatchers.IO) { conn.locate("uuid-bob", "u", timeoutMs = 4_000) }
+            waitFor { asks.get() == 2 }
+            older.cancelAndJoin()
+            release.countDown()
+            assertEquals(Pt(10.0, 20.0), newer.await())
             conn.close()
         }
     }

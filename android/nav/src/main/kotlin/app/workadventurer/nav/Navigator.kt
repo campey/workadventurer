@@ -124,9 +124,12 @@ class Navigator(
                     // no grid yet, or no route: walk straight toward the goal for this window, then try again
                     walkLeg(t, stopWithin, 32.0, 120, deadline, arrivedWhen)
                 } else {
-                    for (wp in path) {
+                    for ((i, wp) in path.withIndex()) {
                         if (nowMs() > deadline) break
-                        if (!walkLeg(wp, 12.0, 40.0, 100, deadline, arrivedWhen)) break
+                        // Intermediate waypoints may be cut short by 12 px; the LAST one is the exact goal, so it must be
+                        // reached to the caller's tolerance, or re-planning sees a "reached" route and never moves again.
+                        val tolerance = if (i == path.lastIndex) minOf(12.0, stopWithin) else 12.0
+                        if (!walkLeg(wp, tolerance, 40.0, 100, deadline, arrivedWhen)) break
                     }
                 }
                 // Defence in depth: whatever happened above, never spin. (Node hit a live 100% CPU / growing-RSS

@@ -117,7 +117,7 @@ open class PusherConnection(
         return try {
             withTimeoutOrNull(timeoutMs) { answer.await() }
         } finally {
-            pendingLocates.remove(uuid)
+            pendingLocates.remove(uuid, answer) // only our own entry: a newer locate for the same uuid may have replaced it
         }
     }
 
