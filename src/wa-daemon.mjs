@@ -38,6 +38,7 @@ import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
 import { resolveClip } from "./resolve-clip.mjs";
 import { makeSttRoomOutput } from "./stt-room-output.mjs";
+import { stopWorker } from "./wa-stt.mjs";
 import { createReconnector } from "./reconnect.mjs";
 import { ServerRejectedError } from "./server-rejected.mjs";
 
@@ -575,6 +576,7 @@ function shutdown(code) {
   try { server.close(); } catch {}
   try { wa?.close(); } catch {}
   disposeLiveKitRuntime().catch(() => {}); // no-op unless a LiveKit room was ever created (#8)
+  stopWorker().catch(() => {}); // SIGTERM to the STT worker, if one was started (#57); stdin EOF covers a hard exit
   setTimeout(() => process.exit(code), 150);
 }
 process.on("SIGINT", () => shutdown(0));

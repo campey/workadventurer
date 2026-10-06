@@ -193,11 +193,12 @@ A human-only call can't test multi-speaker behaviour on demand, so this was
 tested with headless avatars instead — and it found four bugs the human calls
 never did. Recipe, so it can be repeated:
 
-- **Listener in its own checkout.** The worker socket path is relative to the
-  checkout (`.wa-stt.sock`), and a second daemon spawning a worker there
-  unlinks and replaces the first one's socket. Use a throwaway
-  `git worktree add --detach .claude/worktrees/<name> origin/<branch>` for the
-  listener (remove it afterwards).
+- **Listener**: each daemon owns its own worker and socket
+  (`.wa-stt.<daemon-pid>.sock`, #57), so STT daemons in one checkout no longer
+  clobber each other — no throwaway worktree needed any more. The worker dies
+  with its daemon: it is spawned with a piped stdin and exits on EOF (works
+  for `kill -9`), and `shutdown()` SIGTERMs it. If you ever see an
+  `stt_worker.py` with PPID 1, it predates this change.
 - **Speakers**: N avatars, each `WA_NAME=<bench>-sN WA_DAEMON_PORT=<unique>
   node src/wa-daemon.mjs` (no `WA_STT`), the listener the same with `WA_STT=1`.
   Walk them into the meeting area; five or more participants forces LiveKit.

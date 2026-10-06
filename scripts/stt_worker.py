@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 import sys
 import threading
 import time
@@ -218,11 +219,42 @@ async def handle_conn(reader, writer, transcribe):
     log(f"[{peer}] disconnected")
 
 
+def die_with_parent(sock_path):
+    """Exit when the parent goes away (issue #57).
+
+    wa-stt.mjs spawns us with a piped stdin it never writes to and holds open
+    for its whole life; the OS closes it when the parent dies — even on
+    SIGKILL — so EOF here means "nobody is using this worker any more". A
+    thread (not the event loop) so it also fires while the model is still
+    loading. SIGTERM, the graceful stop, cleans up the socket the same way.
+    """
+    def bye(*_):
+        try:
+            os.remove(sock_path)
+        except OSError:
+            pass
+        os._exit(0)
+
+    def watch():
+        try:
+            while sys.stdin.buffer.read(4096):
+                pass
+        except (OSError, ValueError):
+            pass
+        # Exit first: stderr is the same dead parent, so logging can raise
+        # BrokenPipeError and kill this thread before it ever calls bye().
+        bye()
+
+    signal.signal(signal.SIGTERM, bye)
+    threading.Thread(target=watch, daemon=True).start()
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--socket", default=os.path.join(os.path.dirname(__file__), "..", ".wa-stt.sock"))
     ap.add_argument("--model", default="mlx-community/whisper-tiny")
     args = ap.parse_args()
+    die_with_parent(os.path.abspath(args.socket))
 
     import mlx_whisper
 
