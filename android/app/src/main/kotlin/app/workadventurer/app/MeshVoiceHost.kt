@@ -35,8 +35,17 @@ import kotlinx.coroutines.withContext
 class MeshVoiceHost(private val context: Context) : (PusherConnection) -> VoiceHandle {
     /** Holds the mute choice from the first moment, so one pressed before the engine exists is applied when it does. */
     private class Handle(private val onClose: () -> Unit) : VoiceHandle {
-        @Volatile var currentlyMuted = true
-        override fun setMuted(muted: Boolean) { currentlyMuted = muted } // wired to the engine in Task 4
+        private var currentlyMuted = true
+        private var engine: VoiceEngine? = null
+
+        @Synchronized override fun setMuted(muted: Boolean) { currentlyMuted = muted; engine?.setMuted(muted) }
+
+        /** The engine now exists: apply whatever mute choice has been made so far. */
+        @Synchronized fun attach(e: VoiceEngine) { engine = e; e.setMuted(currentlyMuted) }
+
+        /** Before the engine is disposed, so a late mute can't touch a disposed track. */
+        @Synchronized fun detach() { engine = null }
+
         override fun close() = onClose()
     }
 
@@ -49,6 +58,7 @@ class MeshVoiceHost(private val context: Context) : (PusherConnection) -> VoiceH
 
         val audio = context.getSystemService(AudioManager::class.java)
         val previousMode = audio.mode
+        val handle = Handle { scope.cancel() }
         // ATOMIC: the body (and so its cleanup) always runs, even if the host is closed before the job gets to start.
         scope.launch(start = CoroutineStart.ATOMIC) {
             var engine: VoiceEngine? = null
@@ -57,6 +67,7 @@ class MeshVoiceHost(private val context: Context) : (PusherConnection) -> VoiceH
                 audio.mode = AudioManager.MODE_IN_COMMUNICATION // voice-call routing and volume
                 val e = VoiceEngine(context) // at join, so the network list is known by the first bubble
                 engine = e
+                handle.attach(e) // applies a mute pressed before the engine existed
                 val ice = async { conn.iceServers() }
                 val m = MeshSession(
                     links = { id -> e.newLink(id, ice.await()) },
@@ -71,12 +82,13 @@ class MeshVoiceHost(private val context: Context) : (PusherConnection) -> VoiceH
                 Log.e("WaVoice", "voice failed to start or crashed: ${t.message}")
             } finally {
                 withContext(NonCancellable) {
+                    handle.detach()
                     try { mesh?.closeAll() } catch (t: Throwable) { Log.e("WaVoice", "closing links failed: ${t.message}") }
                     try { engine?.close() } catch (t: Throwable) { Log.e("WaVoice", "closing the engine failed: ${t.message}") }
                     audio.mode = previousMode
                 }
             }
         }
-        return Handle { scope.cancel() }
+        return handle
     }
 }

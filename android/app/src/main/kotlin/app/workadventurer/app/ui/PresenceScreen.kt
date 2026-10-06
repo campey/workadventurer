@@ -77,6 +77,18 @@ fun PresenceScreen(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         )
+        if (canMove) {
+            // The microphone: always muted at join. A live region so TalkBack announces the change.
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(micText(state.muted), Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
+                Button(
+                    onClick = { onCommand(Command.SetMuted(!state.muted)) },
+                    modifier = Modifier.heightIn(min = 48.dp).semantics {
+                        contentDescription = if (state.muted) "Unmute the microphone" else "Mute the microphone"
+                    },
+                ) { Text(if (state.muted) "Unmute" else "Mute") }
+            }
+        }
         activityText(state.activity)?.let { text ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(text, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
