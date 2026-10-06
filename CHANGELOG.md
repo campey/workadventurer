@@ -249,6 +249,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `walkToPlayer()`. Closes #4. (Later refined to stand in the player's eyeline
   — see Added.)
 
+### Removed
+
+- **BREAKING: `wa follow`, `wa unfollow` and `wa resume` (issue #81).** They
+  were a client-side loop that kept walking toward a player; WorkAdventure has
+  no such thing (its real follow is negotiated in a bubble — #76). Gone with
+  them: `POST /follow|/unfollow|/resume`, the follow state, the `following`
+  field in `/state` and the "following …" line in `wa status`. The removed
+  commands now exit 1 with a pointer to `wa to <player>` (exit 0 under
+  `--if-running`, so an already-installed plugin's old `Stop` hook is not a
+  blocking error). `wa quiet` stays as a
+  standalone command (nearest empty area, or stay put if already quiet) and no
+  longer pauses anything. **The Claude Code plugin loses its `Stop` hook**
+  (`wa resume`) — it now only steps the avatar away while Claude works; it no
+  longer walks back afterwards. `WorkAdventureClient.follow()` (library API, used
+  by `src/find-player.mjs`) is untouched.
+
 ### Fixed
 
 - **Parallel daemons no longer share discovery files or a log (issue #65).**

@@ -407,7 +407,7 @@ The headless client responds: `_handle` surfaces
 `meetingInvitationRequestReceivedMessage` as an `inviteReceived` event; the
 daemon auto-accepts (`acceptMeetingInvitation`), resolves the sender (by
 `userId`, else `playerByUuid`), and `walkToPlayer()`s over — one-shot, same
-stand-in-front as `wa to`, interrupts an active follow. Driven entirely from
+stand-in-front as `wa to`. Driven entirely from
 the browser; no CLI command. `/state` reports `lastInvite`.
 
 Rapid-fire invites (several in a few seconds) hit issue #29.

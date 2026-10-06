@@ -21,11 +21,8 @@ const USAGE = `wa — WorkAdventure presence control
   wa leave
   wa status [--json]
   wa goto <x> <y>
-  wa to <player>              walk next to a player (no follow)
-  wa follow <player>          follow a player continuously
-  wa unfollow
-  wa quiet                    step away to the nearest empty area (pauses follow)
-  wa resume                   walk back and resume following
+  wa to <player>              walk next to a player
+  wa quiet                    step away to the nearest empty area (stays put if already quiet)
   wa greet <player>           walk over + "hi" speech bubble
   wa speech-bubble <text…>
   wa thought-bubble <text…>
@@ -152,12 +149,6 @@ function prettyStatus(s) {
   if (s.areas && s.areas.length) {
     L.push("in areas: " + s.areas.map((a) => `${a.name}${a.props.length ? ` [${a.props.join(", ")}]` : ""}`).join("; "));
   }
-  if (s.following) {
-    L.push(`following ${s.following.name}${s.following.paused ? " (paused — quiet)" : ""}` +
-      (s.following.pos ? `  they're at (${s.following.pos.x},${s.following.pos.y})${s.following.area ? ` in ${s.following.area}` : ""}` : "  (not visible)"));
-  } else {
-    L.push("following nobody");
-  }
   if (s.players.length) {
     L.push("visible players:");
     for (const p of s.players) L.push(`  ${p.name}  (${p.pos.x},${p.pos.y})${p.area ? `  ${p.area}` : ""}`);
@@ -171,7 +162,7 @@ function report(json) {
   if (flags.json) { process.stdout.write(JSON.stringify(json, null, 2) + "\n"); return; }
   if (json.raw) { process.stdout.write(String(json.raw).trim() + "\n"); return; }
   const bits = [];
-  for (const k of ["following", "goingTo", "quietSpot", "greeted", "speechBubble", "thoughtBubble", "sound", "chat", "nothingToResume", "alreadyQuiet", "alreadyFollowing", "leaving"]) {
+  for (const k of ["goingTo", "quietSpot", "greeted", "speechBubble", "thoughtBubble", "sound", "chat", "alreadyQuiet", "leaving"]) {
     if (json[k] !== undefined && json[k] !== null && json[k] !== false) bits.push(`${k}: ${typeof json[k] === "object" ? JSON.stringify(json[k]) : json[k]}`);
   }
   process.stdout.write((bits.length ? bits.join(", ") : "ok") + "\n");
@@ -235,29 +226,26 @@ switch (cmd) {
     report(r.json);
     break;
   }
-  case "follow": {
-    if (!args[0]) die("usage: wa follow <player>", 2);
-    await needDaemon();
-    const r = await api("POST", "/follow", { player: args.join(" ") });
-    if (!r.ok) die(r.json.error || `follow failed (${r.status})`);
-    report(r.json);
+  // Removed in #81: WorkAdventure has no continuous follow (its real follow is
+  // negotiated in a bubble — #76). Say so instead of "unknown command".
+  case "follow":
+  case "unfollow":
+  case "resume": {
+    const msg =
+      `\`wa ${cmd}\` was removed — WorkAdventure has no continuous follow. ` +
+      `Use \`wa to <player>\` to walk to someone (negotiated follow is tracked in #76).`;
+    // An already-installed plugin still runs `wa --if-running resume` from its
+    // Stop hook, and a hook exiting 2 is a *blocking* error that can stop
+    // Claude finishing. On that path: say so, exit 0. Otherwise a plain error
+    // (1, not 2, for the same reason).
+    if (flags["if-running"]) { note(msg); process.exit(0); }
+    die(msg, 1);
     break;
   }
-  case "unfollow":
-    await needDaemon();
-    report((await api("POST", "/unfollow")).json);
-    break;
   case "quiet":
     await needDaemon();
     report((await api("POST", "/quiet")).json);
     break;
-  case "resume": {
-    await needDaemon();
-    const r = (await api("POST", "/resume")).json;
-    if (r.nothingToResume) { note("nothing to resume"); process.exit(0); }
-    report(r);
-    break;
-  }
   case "greet": {
     if (!args[0]) die("usage: wa greet <player>", 2);
     await needDaemon();

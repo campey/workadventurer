@@ -13,8 +13,7 @@ yourself.
 
 1. Resolve the CLI: use `wa` if it's on PATH, otherwise `npx -y workadventurer wa`.
 2. `wa status` — if it prints state, a presence is already running; go to the request.
-   If it says "not joined", run `wa join --detach` first (add `--follow <name>`
-   if the request is about following someone). If `wa join` fails, read
+   If it says "not joined", run `wa join --detach` first. If `wa join` fails, read
    the daemon log (`wa join --detach` prints its path; `~/.workadventurer/daemon-<port>.log`)
    and report the error. If `wa` says several daemons are running, pass `--port`.
 
@@ -22,12 +21,9 @@ yourself.
 
 | Command | Effect |
 |---|---|
-| `wa status [--json]` | position, area, who you're following (and whether paused), visible players |
-| `wa to <player>` | walk next to them, no follow |
-| `wa follow <player>` | approach and follow continuously (searches the map if they aren't in view yet) |
-| `wa unfollow` | stop and forget |
-| `wa quiet` | step away to the nearest empty area; pauses (remembers) the follow |
-| `wa resume` | walk back to the follow subject and resume |
+| `wa status [--json]` | position, area, visible players |
+| `wa to <player>` | walk next to them |
+| `wa quiet` | step away to the nearest empty area (stays put if already quiet) |
 | `wa greet <player>` | walk over + "hi" speech bubble (no state change) |
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text over the avatar's head |
 | `wa clear-bubble` | dismiss whatever bubble is showing |
@@ -42,9 +38,9 @@ Player matching is case-insensitive substring (`david` matches `:David`).
 - Fewest commands to satisfy the request, then report **concisely**: what you
   did plus the parts of `wa status` that matter. One short paragraph or a tiny list.
 - "who's here / look around" → `wa status`, summarise the players.
-- `follow` / `to` / `goto` return immediately; the walk continues in the
+- `to` / `goto` return immediately; the walk continues in the
   background. If asked to confirm arrival, wait a few seconds then `wa status`.
 - Never run `wa leave` unless explicitly asked to leave the room. Follow-up
   messages reuse the same running presence.
 - If a player can't be found, say so and list who *is* visible (the avatar only
-  sees players in nearby map zones; `wa follow` will wander to look, `wa to` won't).
+  sees players in nearby map zones, and `wa to` won't wander to look).
