@@ -16,6 +16,7 @@ import net from "node:net";
 import { fileURLToPath } from "node:url";
 import { existsSync, unlinkSync } from "node:fs";
 import { OggOpusMuxStream } from "./ogg-opus-mux.mjs";
+import { PcmTee } from "./pcm-tee.mjs";
 
 const SOCK_PATH = fileURLToPath(new URL("../.wa-stt.sock", import.meta.url));
 const WORKER_SCRIPT = fileURLToPath(new URL("../scripts/stt_worker.py", import.meta.url));
@@ -84,9 +85,11 @@ export function stopWorker() {
  * `pushPcm(buffer)` instead of `push({data, samples})`.
  */
 export class SttStream extends EventEmitter {
-  constructor({ channels = 2, sampleRate = 48000, raw = false } = {}) {
+  constructor({ channels = 2, sampleRate = 48000, raw = false, label = "peer" } = {}) {
     super();
     this.raw = raw;
+    // STT_TEE_DIR: keep the PCM + finals of a live call for the #61 clip corpus.
+    this.tee = new PcmTee(raw ? process.env.STT_TEE_DIR : undefined, label);
     this.mux = raw ? null : new OggOpusMuxStream({ channels, sampleRate });
     this.ffmpeg = null;
     this.sock = null;
@@ -146,6 +149,7 @@ export class SttStream extends EventEmitter {
       if (!line.trim()) continue;
       try {
         const msg = JSON.parse(line);
+        if (msg.type === "final") this.tee.event(msg);
         this.emit(msg.type, msg); // "partial" | "final"
       } catch (e) {
         this.emit("log", `stt parse error: ${e.message}`);
@@ -167,6 +171,7 @@ export class SttStream extends EventEmitter {
   pushPcm(pcm) {
     if (this._closed || !this.sock?.writable) return;
     try {
+      this.tee.pcm(pcm);
       this.sock.write(pcm);
     } catch (e) {
       this.emit("log", `stt push error: ${e.message}`);
@@ -176,6 +181,9 @@ export class SttStream extends EventEmitter {
   close() {
     if (this._closed) return;
     this._closed = true;
+    // Late finals (the close flush) still land in the events file: give the
+    // socket time to deliver them before the tee shuts.
+    setTimeout(() => this.tee.close(), 6000).unref();
     if (this.raw) {
       // No ffmpeg tail to drain — just end the socket so the worker sees EOF
       // and flushes a final transcript for whatever's still buffered.
