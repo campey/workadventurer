@@ -686,4 +686,87 @@ class PusherConnectionTest {
             conn.close()
         }
     }
+
+    private fun batch(vararg subs: SubMessage) = ServerToClientMessage(batchMessage = BatchMessage(payload = subs.toList()))
+    private fun privateEvent(sender: String, ev: PrivateSpaceEvent) = SubMessage(privateEvent = PrivateEventPusherToFront(
+        spaceName = "sp", receiverUserId = "me", sender = SpaceUser(spaceUserId = sender), spaceEvent = ev))
+
+    @Test
+    fun webRtcPrivateEventsBecomeVoiceEvents() = runBlocking<Unit> {
+        val live = LiveFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            val events = java.util.concurrent.CopyOnWriteArrayList<VoiceEvent>()
+            val collector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { conn.voiceEvents.collect { events += it } }
+            withTimeout(5_000) { conn.connect() }
+            live.push(batch(
+                privateEvent("sp_9", PrivateSpaceEvent(webRtcStartMessage = WebRtcStartMessage(userId = "x", initiator = false, connectionId = "c1"))),
+                privateEvent("sp_9", PrivateSpaceEvent(webRtcSignal = WebRtcSignal(signal = "{\"type\":\"offer\"}", connectionId = "c1"))),
+                privateEvent("sp_9", PrivateSpaceEvent(webRtcDisconnectMessage = WebRtcDisconnectMessage(userId = "x"))),
+            ))
+            waitFor { events.size == 3 }
+            assertEquals(VoiceEvent.Start("sp", "sp_9", "c1", false), events[0])
+            assertEquals(VoiceEvent.Signal("sp", "sp_9", "c1", "{\"type\":\"offer\"}"), events[1])
+            assertEquals(VoiceEvent.Disconnect("sp", "sp_9"), events[2])
+            collector.cancel(); conn.close()
+        }
+    }
+
+    @Test
+    fun otherPrivateEventsAreIgnoredAndLeavingASpaceEmitsSpaceLeft() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            val events = java.util.concurrent.CopyOnWriteArrayList<VoiceEvent>()
+            val collector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { conn.voiceEvents.collect { events += it } }
+            withTimeout(5_000) { conn.connect() }
+            live.push(batch(privateEvent("sp_9", PrivateSpaceEvent(muteAudio = MuteAudioPrivateMessage()))))
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp")))
+            waitFor { conn.state.spaces.value.containsKey("sp") }
+            live.push(ServerToClientMessage(leaveSpaceRequestMessage = LeaveSpaceRequestMessage(spaceName = "sp")))
+            waitFor { events.isNotEmpty() }
+            assertEquals(listOf<VoiceEvent>(VoiceEvent.SpaceLeft("sp")), events.toList())
+            collector.cancel(); conn.close()
+        }
+    }
+
+    @Test
+    fun sendSignalAddressesTheRightPeerAndConnection() = runBlocking<Unit> {
+        val live = LiveFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            conn.sendSignal("sp", "sp_9", "c1", "{\"type\":\"answer\",\"sdp\":\"x\"}")
+            val pe = generateSequence { live.fake.received.poll(2, TimeUnit.SECONDS) }.first { it.privateEvent != null }.privateEvent!!
+            assertEquals("sp", pe.spaceName); assertEquals("sp_9", pe.receiverUserId)
+            assertEquals("c1", pe.spaceEvent!!.webRtcSignal!!.connectionId)
+            assertEquals("{\"type\":\"answer\",\"sdp\":\"x\"}", pe.spaceEvent!!.webRtcSignal!!.signal)
+            conn.close()
+        }
+    }
+
+    @Test
+    fun iceServersComeFromTheServerAndFallBackToStunWhenItFails() = runBlocking<Unit> {
+        val ok = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q ->
+                if (q.iceServersQuery != null) ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id,
+                    iceServersAnswer = IceServersAnswer(iceServers = listOf(IceServer(urls = listOf("turn:t.example:3478"), username = "u", credential = "c")))))))
+            }
+        }
+        server(ok.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertEquals(listOf(IceServerInfo(listOf("turn:t.example:3478"), "u", "c")), conn.iceServers())
+            conn.close()
+        }
+        val bad = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q -> ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, error = ErrorMessage(message = "no"))))) }
+        }
+        server(bad.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertEquals(listOf(IceServerInfo(listOf("stun:stun.l.google.com:19302"), null, null)), conn.iceServers())
+            conn.close()
+        }
+    }
 }

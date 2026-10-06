@@ -10,6 +10,7 @@ import app.workadventurer.proto.AskPositionMessage
 import app.workadventurer.proto.AvailabilityStatus
 import app.workadventurer.proto.ClientToServerMessage
 import app.workadventurer.proto.FilterType
+import app.workadventurer.proto.IceServersQuery
 import app.workadventurer.proto.JoinSpaceQuery
 import app.workadventurer.proto.LeaveSpaceQuery
 import app.workadventurer.proto.RemoveSpaceFilterMessage
@@ -19,10 +20,14 @@ import app.workadventurer.proto.MeetingInvitationRequestMessage
 import app.workadventurer.proto.MeetingInvitationResponseMessage
 import app.workadventurer.proto.PingMessage
 import app.workadventurer.proto.PositionMessage
+import app.workadventurer.proto.PrivateEventFrontToPusher
+import app.workadventurer.proto.PrivateEventPusherToFront
+import app.workadventurer.proto.PrivateSpaceEvent
 import app.workadventurer.proto.QueryMessage
 import app.workadventurer.proto.ServerToClientMessage
 import app.workadventurer.proto.UserMovesMessage
 import app.workadventurer.proto.ViewportMessage
+import app.workadventurer.proto.WebRtcSignal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -137,6 +142,44 @@ open class PusherConnection(
         }
     }
 
+    private val _voiceEvents = MutableSharedFlow<VoiceEvent>(extraBufferCapacity = 64)
+
+    /** WebRTC start/signal/disconnect from other space members, and "we left a space". */
+    open val voiceEvents: SharedFlow<VoiceEvent> get() = _voiceEvents.asSharedFlow()
+
+    open fun sendSignal(spaceName: String, peerSpaceUserId: String, connectionId: String, signal: String) {
+        send(ClientToServerMessage(privateEvent = PrivateEventFrontToPusher(
+            spaceName = spaceName, receiverUserId = peerSpaceUserId,
+            spaceEvent = PrivateSpaceEvent(webRtcSignal = WebRtcSignal(signal = signal, connectionId = connectionId)),
+        )))
+    }
+
+    open suspend fun iceServers(): List<IceServerInfo> = try {
+        query { id -> QueryMessage(id = id, iceServersQuery = IceServersQuery()) }
+            .iceServersAnswer?.iceServers.orEmpty()
+            .map { IceServerInfo(it.urls, it.username, it.credential) }
+            .ifEmpty { FALLBACK_ICE }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        _log.tryEmit("iceServersQuery failed (${e.message}); using default STUN")
+        FALLBACK_ICE
+    }
+
+    private fun onPrivateEvent(p: PrivateEventPusherToFront) {
+        val peer = p.sender?.spaceUserId.orEmpty()
+        val ev = p.spaceEvent ?: return
+        ev.webRtcStartMessage?.let {
+            _log.tryEmit("webRtcStart conn=${it.connectionId} initiator=${it.initiator}")
+            _voiceEvents.tryEmit(VoiceEvent.Start(p.spaceName, peer, it.connectionId, it.initiator))
+        }
+        ev.webRtcSignal?.let { _voiceEvents.tryEmit(VoiceEvent.Signal(p.spaceName, peer, it.connectionId, it.signal)) }
+        ev.webRtcDisconnectMessage?.let {
+            _log.tryEmit("webRtcDisconnect from a peer in ${p.spaceName}")
+            _voiceEvents.tryEmit(VoiceEvent.Disconnect(p.spaceName, peer))
+        }
+    }
+
     private val spaceMutex = Mutex()
 
     private fun joinSpace(spaceName: String, props: List<String>) {
@@ -168,6 +211,7 @@ open class PusherConnection(
             spaceMutex.withLock {
                 if (!state.spaces.value.containsKey(spaceName)) return@launch // never joined
                 state.removeSpace(spaceName)
+                _voiceEvents.tryEmit(VoiceEvent.SpaceLeft(spaceName))
                 send(ClientToServerMessage(removeSpaceFilterMessage = RemoveSpaceFilterMessage(SpaceFilterMessage(spaceName = spaceName))))
                 _log.tryEmit("left space $spaceName")
             }
@@ -327,6 +371,8 @@ open class PusherConnection(
             for (sub in b.payload) {
                 if (sub.pingMessage != null) {
                     send(ClientToServerMessage(pingMessage = PingMessage()))
+                } else if (sub.privateEvent != null) {
+                    onPrivateEvent(sub.privateEvent!!)
                 } else {
                     val groupBefore = state.groupId.value
                     state.applySub(sub)
