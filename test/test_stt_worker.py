@@ -68,8 +68,11 @@ class FillerGate(unittest.TestCase):
 
 
 class DecodeOptions(unittest.TestCase):
-    def test_temperature_defaults_to_zero_and_language_to_auto(self):
-        self.assertEqual(w.decode_options({}), {"temperature": 0.0})
+    def test_defaults_are_greedy_english(self):
+        self.assertEqual(w.decode_options({}), {"temperature": 0.0, "language": "en"})
+
+    def test_language_auto_restores_detection(self):
+        self.assertEqual(w.decode_options({"STT_LANGUAGE": "auto"}), {"temperature": 0.0})
 
     def test_env_overrides(self):
         o = w.decode_options({"STT_LANGUAGE": "en", "STT_TEMPERATURE": "0.2", "STT_LOGPROB_THRESHOLD": "-0.8"})

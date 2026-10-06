@@ -192,7 +192,8 @@ Findings, from 4+ minutes of a real meeting (7 "bad" spans, 2–3 passes):
 - **Filler on background audio** (`Thank you. Thanks for watching!`): those buffers
   peak ≈0.05 RMS per 100 ms vs ≥0.12 for real speech, so a level gate separates them.
 - **Wrong script/language** (Cyrillic, Japanese, Arabic, Welsh) on background
-  audio is fixed only by `STT_LANGUAGE=en`. Cost: ~+0.03 WER on real speech
+  audio is fixed only by pinning the language, so **`en` is now the default**
+  (`STT_LANGUAGE=auto` to detect). Cost: ~+0.03 WER on real speech
   (0.119 → 0.149, 3 clips) — small sample.
 - **Tightening mlx_whisper's gates made things worse** (`logprob -0.8`,
   `compression 2.0`, `no_speech 0.5`): new `�`/loop garbage, and it blanked ~half

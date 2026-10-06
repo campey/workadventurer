@@ -133,8 +133,13 @@ _DECODE_ENV = {
 def decode_options(env):
     # Sampling (temperature fallback) makes tiny non-deterministic and prone to
     # wrong-language/garbage retries on hard audio; greedy decoding is the default.
-    opts = {"temperature": 0.0}
+    # English is pinned by default: on faint background audio auto-detect picks
+    # Cyrillic/CJK/Arabic/Welsh and emits gibberish (#61). STT_LANGUAGE=auto
+    # restores detection for a multilingual room.
+    opts = {"temperature": 0.0, "language": "en"}
     opts.update({key: cast(env[name]) for name, (key, cast) in _DECODE_ENV.items() if env.get(name)})
+    if opts["language"] == "auto":
+        del opts["language"]
     return opts
 
 

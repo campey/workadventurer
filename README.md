@@ -497,9 +497,10 @@ audio → same text) and drops or trims: a final that is *only* filler
 is under `STT_FILLER_MAX_RMS` (default `0.06`, `0` disables — a genuinely quiet
 standalone "okay" is lost too); repeated phrases and no-space loops
 (`dododo…`) cut to two repeats plus `…`; and `U+FFFD` garbage. Wrong-script
-output (Cyrillic/CJK/Arabic on background audio) is only fixed by pinning the
-language: `STT_LANGUAGE=en` (unset by default — the room may be multilingual).
-Other decode knobs, all unset unless given: `STT_TEMPERATURE`,
+output (Cyrillic/CJK/Arabic on background audio) is prevented by pinning the
+language: `STT_LANGUAGE` defaults to `en`; set `STT_LANGUAGE=auto` (or another
+code) for a multilingual room.
+Other decode knobs, unset unless given: `STT_TEMPERATURE`,
 `STT_NO_SPEECH_THRESHOLD`, `STT_LOGPROB_THRESHOLD`,
 `STT_COMPRESSION_RATIO_THRESHOLD`, `STT_HALLUCINATION_SILENCE_THRESHOLD`.
 Compare settings with `node scripts/stt-eval.mjs` (see `docs/field-notes.md`).
