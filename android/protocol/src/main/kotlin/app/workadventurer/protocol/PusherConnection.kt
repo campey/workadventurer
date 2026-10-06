@@ -15,6 +15,8 @@ import app.workadventurer.proto.JoinSpaceQuery
 import app.workadventurer.proto.LeaveSpaceQuery
 import app.workadventurer.proto.RemoveSpaceFilterMessage
 import app.workadventurer.proto.SpaceFilterMessage
+import app.workadventurer.proto.SpaceUser
+import app.workadventurer.proto.UpdateSpaceUserMessage
 import app.workadventurer.proto.JoinRoomFrontMessage
 import app.workadventurer.proto.MeetingInvitationRequestMessage
 import app.workadventurer.proto.MeetingInvitationResponseMessage
@@ -28,6 +30,7 @@ import app.workadventurer.proto.ServerToClientMessage
 import app.workadventurer.proto.UserMovesMessage
 import app.workadventurer.proto.ViewportMessage
 import app.workadventurer.proto.WebRtcSignal
+import com.google.protobuf.FieldMask
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -75,6 +78,7 @@ open class PusherConnection(
     private val keepAliveMs: Long = 5_000,
     private val joinTimeoutMs: Long = 20_000,
     private val cacheDir: File? = null,
+    private val micReannounceMs: List<Long> = listOf(0L, 1_000L, 3_000L),
 ) : MovementSink {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val seq = AtomicLong(1)
@@ -180,6 +184,41 @@ open class PusherConnection(
         }
     }
 
+    @Volatile var micOn = false
+        private set
+    private val micTimers = ConcurrentHashMap<String, Job>()
+
+    /** Tell every space we are in whether our mic is live; while it is on, repeat the announcement (see [micReannounceMs]). */
+    open fun setMicOn(on: Boolean) {
+        micOn = on
+        for (space in state.spaces.value.keys) if (on) scheduleMicAnnouncements(space) else { cancelMicTimer(space); announceMic(space) }
+    }
+
+    private fun announceMic(spaceName: String) {
+        val mine = state.spaces.value[spaceName] ?: return // never joined, or already left
+        send(ClientToServerMessage(updateSpaceUserMessage = UpdateSpaceUserMessage(
+            spaceName = spaceName,
+            user = SpaceUser(spaceUserId = mine, microphoneState = micOn),
+            updateMask = FieldMask(paths = listOf("microphoneState")),
+        )))
+    }
+
+    // A single announcement right after joining races the server registering us and the peers watching us; if it is missed
+    // they treat us as muted and never play our audio (issue #10). So repeat it, but only while the mic is on.
+    private fun scheduleMicAnnouncements(spaceName: String) {
+        micTimers.remove(spaceName)?.cancel()
+        micTimers[spaceName] = scope.launch {
+            var last = 0L
+            for (at in micReannounceMs) {
+                delay(at - last); last = at
+                if (!micOn || !state.spaces.value.containsKey(spaceName)) return@launch
+                announceMic(spaceName)
+            }
+        }
+    }
+
+    private fun cancelMicTimer(spaceName: String) { micTimers.remove(spaceName)?.cancel() }
+
     private val spaceMutex = Mutex()
 
     private fun joinSpace(spaceName: String, props: List<String>) {
@@ -197,6 +236,7 @@ open class PusherConnection(
                     // "watch" the space: without this the server never sets up peer connections for us
                     send(ClientToServerMessage(addSpaceFilterMessage = AddSpaceFilterMessage(SpaceFilterMessage(spaceName = spaceName))))
                     _log.tryEmit("joined space $spaceName")
+                    if (micOn) scheduleMicAnnouncements(spaceName)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -211,6 +251,7 @@ open class PusherConnection(
             spaceMutex.withLock {
                 if (!state.spaces.value.containsKey(spaceName)) return@launch // never joined
                 state.removeSpace(spaceName)
+                cancelMicTimer(spaceName)
                 _voiceEvents.tryEmit(VoiceEvent.SpaceLeft(spaceName))
                 send(ClientToServerMessage(removeSpaceFilterMessage = RemoveSpaceFilterMessage(SpaceFilterMessage(spaceName = spaceName))))
                 _log.tryEmit("left space $spaceName")
@@ -376,6 +417,8 @@ open class PusherConnection(
                 } else {
                     val groupBefore = state.groupId.value
                     state.applySub(sub)
+                    // the server has registered us in the space: a safe moment to (re-)announce mic-on, so nobody has us cached as muted
+                    sub.initSpaceUsersMessage?.let { if (micOn && state.spaces.value.containsKey(it.spaceName)) announceMic(it.spaceName) }
                     val groupAfter = state.groupId.value
                     // so a log can answer "did the server put us in a bubble?" from the phone's side
                     if (groupAfter != groupBefore) _log.tryEmit(if (groupAfter != null) "entered bubble $groupAfter" else "left bubble")

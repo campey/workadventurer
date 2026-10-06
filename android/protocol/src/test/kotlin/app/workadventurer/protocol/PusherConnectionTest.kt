@@ -700,6 +700,103 @@ class PusherConnectionTest {
         }
     }
 
+    /** Every updateSpaceUserMessage the client sent within [windowMs], as (spaceName, spaceUserId, microphoneState, maskPaths). */
+    private fun micUpdates(live: LiveFake, windowMs: Long = 600): List<List<Any?>> =
+        generateSequence { live.fake.received.poll(windowMs, TimeUnit.MILLISECONDS) }
+            .mapNotNull { it.updateSpaceUserMessage }
+            .map { listOf(it.spaceName, it.user?.spaceUserId, it.user?.microphoneState, it.updateMask?.paths) }.toList()
+
+    private suspend fun joined(live: LiveFake, conn: PusherConnection, space: String = "sp") {
+        live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = space)))
+        waitFor { conn.state.spaces.value.containsKey(space) }
+    }
+
+    @Test
+    fun turningTheMicOnInASpaceAnnouncesItAtOnceWithTheRightMask() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, micReannounceMs = listOf(0L, 100L, 300L))
+            withTimeout(5_000) { conn.connect() }
+            joined(live, conn)
+            conn.setMicOn(true)
+            val sent = micUpdates(live, 800)
+            assertEquals(listOf("sp", "sp_7", true, listOf("microphoneState")), sent.first())
+            assertEquals(3, sent.count { it[2] == true }, "0, 100 and 300 ms announcements: $sent")
+            conn.close()
+        }
+    }
+
+    @Test
+    fun joiningASpaceWhileTheMicIsOnAnnouncesAndWhileOffDoesNot() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, micReannounceMs = listOf(0L, 100L))
+            withTimeout(5_000) { conn.connect() }
+            joined(live, conn, "off")
+            assertTrue(micUpdates(live, 500).isEmpty(), "announced while the mic was off")
+            conn.setMicOn(true); micUpdates(live, 400)
+            joined(live, conn, "on")
+            val sent = micUpdates(live, 600)
+            assertEquals(listOf("on", "on"), sent.filter { it[0] == "on" }.map { it[0] }, "announced at join and once more: $sent")
+            conn.close()
+        }
+    }
+
+    // Review Focus 2
+    @Test
+    fun mutingAnnouncesOffAtOnceAndStopsPendingOnAnnouncements() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, micReannounceMs = listOf(0L, 400L, 800L))
+            withTimeout(5_000) { conn.connect() }
+            joined(live, conn)
+            conn.setMicOn(true)
+            delay(100)
+            conn.setMicOn(false)
+            val sent = micUpdates(live, 1_500)
+            assertEquals(false, sent.last()[2], "the last word must be mic-off: $sent")
+            assertEquals(1, sent.count { it[2] == true }, "an 'on' timer fired after the mute: $sent")
+            conn.close()
+        }
+    }
+
+    // Review Focus 1
+    @Test
+    fun leavingASpaceStopsItsAnnouncementsAndAnUnknownSpaceIsNeverAnnounced() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, micReannounceMs = listOf(0L, 400L, 800L))
+            withTimeout(5_000) { conn.connect() }
+            joined(live, conn)
+            conn.setMicOn(true)
+            delay(100)
+            live.push(ServerToClientMessage(leaveSpaceRequestMessage = LeaveSpaceRequestMessage(spaceName = "sp")))
+            waitFor { conn.state.spaces.value.isEmpty() }
+            val sent = micUpdates(live, 1_500)
+            assertEquals(1, sent.count { it[0] == "sp" }, "announced after leaving: $sent")
+            conn.setMicOn(false); conn.setMicOn(true) // no spaces now: nothing to announce
+            assertTrue(micUpdates(live, 400).isEmpty())
+            conn.close()
+        }
+    }
+
+    @Test
+    fun theServersSpaceUserListReannouncesWhileTheMicIsOn() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, micReannounceMs = listOf(0L))
+            withTimeout(5_000) { conn.connect() }
+            joined(live, conn)
+            conn.setMicOn(true); micUpdates(live, 300)
+            live.push(batch(SubMessage(initSpaceUsersMessage = app.workadventurer.proto.InitSpaceUsersMessage(spaceName = "sp"))))
+            assertEquals(1, micUpdates(live, 600).count { it[2] == true })
+            conn.setMicOn(false); micUpdates(live, 300)
+            live.push(batch(SubMessage(initSpaceUsersMessage = app.workadventurer.proto.InitSpaceUsersMessage(spaceName = "sp"))))
+            assertTrue(micUpdates(live, 400).isEmpty(), "re-announced while the mic was off")
+            conn.close()
+        }
+    }
+
     // Final review (raised to Important: once the mic exists this would mean speaking into a bubble we were told to leave): a
     // leave that arrives right behind a still-pending join must run AFTER it, not get overtaken and no-op.
     @Test
