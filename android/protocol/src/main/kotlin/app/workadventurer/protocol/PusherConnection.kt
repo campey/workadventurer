@@ -85,7 +85,8 @@ open class PusherConnection(
 
     /** "Invite to discussion": ask [receiverUuid] to come over. The outcome arrives in [RoomState.inviteOutcome]. */
     open fun sendInvite(receiverUuid: String, receiverUserId: Int?) {
-        _log.tryEmit("inviting $receiverUuid (user id $receiverUserId)")
+        // never log the uuid: for logged-in players it is their account email address
+        _log.tryEmit("inviting user id $receiverUserId")
         send(ClientToServerMessage(meetingInvitationRequestMessage = MeetingInvitationRequestMessage(
             receiverUserUuid = receiverUuid, receiverUserId = receiverUserId,
         )))
@@ -93,7 +94,8 @@ open class PusherConnection(
 
     /** Accept or decline an invitation from [senderUuid]; either way it is no longer pending. */
     open fun respondToInvite(senderUuid: String, accept: Boolean) {
-        _log.tryEmit("answering invitation from $senderUuid: ${if (accept) "accept" else "decline"}")
+        val who = state.pendingInvites.value.firstOrNull { it.senderUuid == senderUuid }?.senderName ?: "?"
+        _log.tryEmit("answering invitation from $who: ${if (accept) "accept" else "decline"}")
         send(ClientToServerMessage(meetingInvitationResponseMessage = MeetingInvitationResponseMessage(
             accept = accept, requestSenderUserUuid = senderUuid,
         )))
@@ -135,7 +137,7 @@ open class PusherConnection(
         // behind: an open socket keeps an avatar in the room and, with pings, stays alive indefinitely.
         try {
             val login = anonymLogin(http, cfg)
-            _log.tryEmit("anonymLogin ok (uuid ${login.userUuid})")
+            _log.tryEmit("anonymLogin ok")
             val wam = fetchWamJson(http, cfg)
             val areas = wam?.let { try { parseWam(it) } catch (e: Exception) { emptyList() } }.orEmpty()
             state.areas = areas
