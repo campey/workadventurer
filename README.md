@@ -39,10 +39,9 @@ command auto-starts the daemon if it isn't running.
 
 ```sh
 wa join --detach                  # join the room as "claude"
-wa follow David                   # start following David
-wa status                         # where am I, who's around, am I following anyone
-wa quiet                          # step away to the nearest empty area (pauses the follow)
-wa resume                         # walk back and resume following
+wa to David                       # walk over to David
+wa status                         # where am I, who's around
+wa quiet                          # step away to the nearest empty area
 wa greet Alice                    # walk over to Alice + a "hi Alice" speech bubble
 wa speech-bubble "brb"            # text over the avatar's head
 wa leave                          # disconnect and stop the daemon
@@ -52,11 +51,9 @@ wa leave                          # disconnect and stop the daemon
 |---|---|
 | `wa join [<room-url>] [--detach] [--stt]` | join the room (runs the daemon); `--stt` joins as a listener (transcribes peer audio to the console, a thought bubble and Space chat instead of publishing a mic) |
 | `wa leave` | leave and stop the daemon |
-| `wa status [--json]` | position, area, follow state, visible players |
-| `wa to <player>` | walk next to a player, no follow |
-| `wa follow <player>` | follow continuously (wanders the map to find them if needed) |
-| `wa unfollow` | stop and forget |
-| `wa quiet` / `wa resume` | pause the follow and sit in an empty area / walk back and resume |
+| `wa status [--json]` | position, area, visible players |
+| `wa to <player>` | walk next to a player |
+| `wa quiet` | step away to the nearest empty area (stays put if already in one) |
 | `wa greet <player>` | walk over + "hi" speech bubble (no state change) |
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text bubble |
 | `wa clear-bubble` | dismiss whatever bubble is showing |
@@ -81,8 +78,9 @@ own port.
 ## Claude Code plugin
 
 `plugin/` is a Claude Code plugin that wires the avatar to your session's
-rhythm: while Claude is working the avatar goes and sits somewhere quiet, and
-when Claude finishes it walks back to whoever it was following.
+rhythm: while Claude is working the avatar goes and sits somewhere quiet.
+(It used to walk back to whoever it was following when Claude finished; that
+went with the continuous `wa follow`, which WorkAdventure doesn't have — #81.)
 
 ```sh
 claude --plugin-dir ./plugin        # load it from a checkout
@@ -90,13 +88,12 @@ claude --plugin-dir ./plugin        # load it from a checkout
 claude plugin install workadventure@campey/workadventurer
 ```
 
-Then, in a session, opt in with `wa join --detach && wa follow <yourName>`. Two
-hooks do the rest — `UserPromptSubmit` → `wa quiet`, `Stop` → `wa resume` —
-and both no-op instantly when no daemon is running, so a plain session pays
-nothing. The plugin also ships:
+Then, in a session, opt in with `wa join --detach`. One hook does the rest —
+`UserPromptSubmit` → `wa quiet` — and it no-ops instantly when no daemon is
+running, so a plain session pays nothing. The plugin also ships:
 
 - **`/wa <args>`** — a passthrough to the CLI
-- **the `workadventure` skill** — natural-language steering ("follow David",
+- **the `workadventure` skill** — natural-language steering ("walk to David",
   "who's in the room", "go quiet")
 - **the `workadventure` subagent** — for a long back-and-forth steered session
   you drive with `SendMessage`
@@ -135,11 +132,9 @@ file per port; a daemon only removes its own).
 
 | Call | Effect |
 |---|---|
-| `GET /state` | `{ name, target, pos, facing, area, areas, audio:{…}|null, following:…, lastEmote, lastInvite, lastChatMessage, players:[…] }` |
-| `POST /goto` `{x,y}` or `{player}` | walk there (cancels any follow) |
-| `POST /follow` `{player}` | approach + follow (searches the map if not in view) |
-| `POST /unfollow` | stop and forget |
-| `POST /quiet` / `POST /resume` | pause follow + go to an empty area / walk back and resume |
+| `GET /state` | `{ name, target, pos, facing, area, areas, audio:{…}|null, lastEmote, lastInvite, lastChatMessage, players:[…] }` |
+| `POST /goto` `{x,y}` or `{player}` | walk there |
+| `POST /quiet` | go to the nearest empty area (or stay if already in one) |
 | `POST /greet` `{player}` | walk over + "hi" speech bubble |
 | `POST /speech-bubble` `{text}` / `POST /thought-bubble` `{text}` | text bubble |
 | `POST /clear-bubble` | dismiss whatever bubble is showing |
@@ -151,7 +146,7 @@ file per port; a daemon only removes its own).
 No request maps to it, but the daemon also **auto-accepts WorkAdventure's
 "invite to discussion"** and walks to whoever sent it (`/state.lastInvite`).
 
-The daemon answers WebSocket pings, keeps the follow loop running, and
+The daemon answers WebSocket pings and
 reconnects (bounded retries) if the socket drops. Repeated proximity-bubble /
 invite cycles currently leak memory (issue #29) — restart it every few.
 
