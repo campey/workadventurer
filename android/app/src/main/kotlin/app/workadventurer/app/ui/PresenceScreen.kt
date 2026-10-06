@@ -86,6 +86,24 @@ fun PresenceScreen(
                 ) { Text("Stop") }
             }
         }
+        inviteStatusText(state.inviteStatus)?.let { text ->
+            Text(text, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        }
+        // Incoming invitations come first: they're time-sensitive and someone is waiting on the answer.
+        state.pendingInvites.forEach { invite ->
+            val text = inviteText(invite)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(text, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
+                Button(
+                    onClick = { onCommand(Command.AcceptInvite(invite.senderUuid)) }, enabled = canMove,
+                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Accept invitation from ${invite.senderName.ifBlank { "someone" }}" },
+                ) { Text("Accept") }
+                TextButton(
+                    onClick = { onCommand(Command.DeclineInvite(invite.senderUuid)) }, enabled = canMove,
+                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Decline invitation from ${invite.senderName.ifBlank { "someone" }}" },
+                ) { Text("Decline") }
+            }
+        }
         if (notice != null) Text(notice, color = MaterialTheme.colorScheme.error)
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -104,6 +122,10 @@ fun PresenceScreen(
                         onClick = { onCommand(Command.WalkToPlayer(p.userId)) }, enabled = canMove,
                         modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Walk to $label" },
                     ) { Text("Walk to") }
+                    TextButton(
+                        onClick = { onCommand(Command.InvitePlayer(p.userId)) }, enabled = canMove,
+                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Invite $label to talk" },
+                    ) { Text("Invite") }
                 }
             }
             item {
