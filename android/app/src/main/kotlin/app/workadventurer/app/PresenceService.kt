@@ -67,12 +67,7 @@ class PresenceService : Service() {
                             stopSelf()
                         } else {
                             post(notificationText(s))
-                            // WorkAdventure's own (translated) wording, generated into R.string.wa_*
-                            syncInviteNotifications(
-                                inviteNotifications(s.pendingInvites, getString(R.string.wa_invite_default_responder)) { name ->
-                                    getString(R.string.wa_invite_title, name)
-                                },
-                            )
+                            syncInviteNotifications(inviteNotifications(s.pendingInvites))
                         }
                     }
                 }
