@@ -244,6 +244,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The STT worker no longer outlives its daemon (issue #57).** `stopWorker()`
+  had no callers, and a `kill -9`'d daemon can't clean up anyway, so
+  `stt_worker.py` orphans piled up (one lived 5+ days). The worker is now
+  spawned with a piped stdin and exits on EOF — the OS closes it however the
+  daemon dies — and removes its socket; `shutdown()` also SIGTERMs it, and
+  `stopWorker()` resolves only once it has exited. Each daemon gets its own
+  socket (`.wa-stt.<pid>.sock`), so two daemons no longer unlink and orphan
+  each other's worker. Logic in `src/stt-worker-proc.mjs`. Verified against
+  the real MLX worker: graceful stop exits 0, a SIGKILLed parent takes the
+  worker down within 2 s. (First live attempt failed — the worker's exit-time
+  log hit `BrokenPipeError` on the dead parent's stderr and killed its own
+  watcher thread; exit first, don't log.)
 - **A rejected connect no longer storms (issue #56).** Every reconnect attempt's
   client was wired with the reconnect-on-close handler, so each attempt the
   server rejected (it closes the socket) started another concurrent chain —

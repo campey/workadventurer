@@ -14,64 +14,21 @@ import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
-import { existsSync, unlinkSync } from "node:fs";
+import { createWorkerManager } from "./stt-worker-proc.mjs";
 import { OggOpusMuxStream } from "./ogg-opus-mux.mjs";
 
-const SOCK_PATH = fileURLToPath(new URL("../.wa-stt.sock", import.meta.url));
+// Per daemon process: two daemons must never share (or replace) one worker (#57).
+export const SOCK_PATH = fileURLToPath(new URL(`../.wa-stt.${process.pid}.sock`, import.meta.url));
 const WORKER_SCRIPT = fileURLToPath(new URL("../scripts/stt_worker.py", import.meta.url));
 
-let workerProc = null;
-let workerReady = null; // Promise, resolves once the socket is accepting connections
+const worker = createWorkerManager({
+  command: "python3",
+  args: (sock) => [WORKER_SCRIPT, "--socket", sock],
+  sockPath: SOCK_PATH,
+});
 
-/** Start the resident STT worker if it isn't already running. Idempotent. */
-function ensureWorker(log = () => {}) {
-  if (workerReady) return workerReady;
-  workerReady = new Promise((resolve, reject) => {
-    try {
-      if (existsSync(SOCK_PATH)) unlinkSync(SOCK_PATH);
-    } catch {}
-    const proc = spawn("python3", [WORKER_SCRIPT, "--socket", SOCK_PATH], {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    workerProc = proc;
-    let settled = false;
-    proc.stderr.on("data", (c) => {
-      const line = c.toString().trim();
-      if (line) log(`stt-worker: ${line}`);
-      if (!settled && /listening on/.test(line)) {
-        settled = true;
-        resolve();
-      }
-    });
-    proc.on("error", (e) => {
-      if (!settled) { settled = true; reject(e); }
-    });
-    proc.on("exit", (code) => {
-      log(`stt-worker exited (${code})`);
-      workerProc = null;
-      workerReady = null;
-      if (!settled) { settled = true; reject(new Error(`stt-worker exited ${code} before starting`)); }
-    });
-    setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        reject(new Error("stt-worker startup timeout"));
-        // Don't leave a slow-but-alive process running unaccounted for — the
-        // `exit` handler above resets workerProc/workerReady so the *next*
-        // ensureWorker() call gets a clean retry instead of reusing this
-        // permanently-rejected promise forever.
-        try { proc.kill(); } catch {}
-      }
-    }, 30000);
-  });
-  return workerReady;
-}
-
-export function stopWorker() {
-  workerProc?.kill();
-  workerProc = null;
-  workerReady = null;
-}
+/** Stop the resident worker (daemon shutdown). Resolves once it has exited. */
+export const stopWorker = () => worker.stop();
 
 /**
  * Live-transcribes one peer's inbound audio. Feed Opus RTP packets with
@@ -97,7 +54,7 @@ export class SttStream extends EventEmitter {
   }
 
   async _start(attempt = 1) {
-    await ensureWorker((m) => this.emit("log", m));
+    await worker.ensure((m) => this.emit("log", m));
     if (this._closed) return;
 
     // Occasionally the very first connection attempt right after the worker
