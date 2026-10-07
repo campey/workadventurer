@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { createWorkerManager } from "./stt-worker-proc.mjs";
 import { OggOpusMuxStream } from "./ogg-opus-mux.mjs";
 import { PcmTee } from "./pcm-tee.mjs";
+import { PreQueue } from "./stt-prequeue.mjs";
 
 // Per daemon process: two daemons must never share (or replace) one worker (#57).
 export const SOCK_PATH = fileURLToPath(new URL(`../.wa-stt.${process.pid}.sock`, import.meta.url));
@@ -53,6 +54,9 @@ export class SttStream extends EventEmitter {
     this._buf = "";
     this._closed = false;
     this._gotAnyData = false;
+    // Audio pushed before the pipeline exists (cold worker start) waits here
+    // instead of being dropped (#58): up to 15 s of 48 kHz samples / 16 kHz s16.
+    this._pre = new PreQueue(raw ? 15 * 32000 : 15 * 48000);
     this._start().catch((e) => this.emit("error", e));
   }
 
@@ -76,7 +80,11 @@ export class SttStream extends EventEmitter {
     this.sock.on("error", (e) => this.emit("error", e));
     this.sock.on("data", (chunk) => this._onSockData(chunk));
 
-    if (this.raw) return; // caller feeds PCM straight into the socket via pushPcm()
+    if (this.raw) {
+      // caller feeds PCM straight into the socket via pushPcm()
+      this._pre.drain((pcm) => this._writePcm(pcm));
+      return;
+    }
 
     this.ffmpeg = spawn("ffmpeg", [
       "-v", "error",
@@ -95,6 +103,7 @@ export class SttStream extends EventEmitter {
     this.ffmpeg.stdout.on("data", (c) => this.tee.pcm(c)); // decoded PCM, same bytes the worker gets
     this.ffmpeg.stdout.pipe(this.sock);
     this.ffmpeg.stdin.write(this.mux.headerPages());
+    this._pre.drain((packet) => this._writePacket(packet));
   }
 
   _onSockData(chunk) {
@@ -117,7 +126,15 @@ export class SttStream extends EventEmitter {
 
   /** @param {{data:Buffer, samples:number}} packet a decoded Opus RTP payload */
   push(packet) {
-    if (this._closed || !this.ffmpeg?.stdin?.writable) return;
+    if (this._closed) return;
+    if (!this.ffmpeg?.stdin?.writable) {
+      this._pre.push(packet, packet.samples ?? 960); // pipeline not up yet — hold, don't drop
+      return;
+    }
+    this._writePacket(packet);
+  }
+
+  _writePacket(packet) {
     try {
       this.ffmpeg.stdin.write(this.mux.pushPacket(packet));
     } catch (e) {
@@ -127,7 +144,15 @@ export class SttStream extends EventEmitter {
 
   /** @param {Buffer} pcm  16kHz mono s16le samples (raw mode only) */
   pushPcm(pcm) {
-    if (this._closed || !this.sock?.writable) return;
+    if (this._closed) return;
+    if (!this.sock?.writable) {
+      this._pre.push(pcm, pcm.length);
+      return;
+    }
+    this._writePcm(pcm);
+  }
+
+  _writePcm(pcm) {
     try {
       this.tee.pcm(pcm);
       this.sock.write(pcm);

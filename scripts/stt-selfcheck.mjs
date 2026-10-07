@@ -7,11 +7,12 @@
 // Requires ffmpeg and python3 + mlx_whisper on PATH (the latter installs the
 // tiny model on first run — expect a one-time download).
 
+import { fileURLToPath } from "node:url";
 import { SttStream } from "../src/wa-stt.mjs";
 import { ensureOpus } from "../src/transcode.mjs";
 import { readOggOpus } from "../src/ogg-opus.mjs";
 
-const clip = process.argv[2] ?? "/Users/campey/Code/huggingsesame/claude_intro_v2.wav";
+const clip = process.argv[2] ?? fileURLToPath(new URL("../sounds/claude_intro.wav", import.meta.url));
 
 console.log(`clip: ${clip}`);
 const opusFile = await ensureOpus(clip);
@@ -37,8 +38,10 @@ stream.on("partial", (m) => {
   process.stdout.write(`\r\x1b[K[+${((Date.now() - t0) / 1000).toFixed(2)}s] partial: ${m.text}`);
 });
 let finalText = null;
+const allFinals = [];
 stream.on("final", (m) => {
   finalText = m.text;
+  allFinals.push(m.text);
   console.log(`\n[+${((Date.now() - t0) / 1000).toFixed(2)}s] FINAL: ${m.text}`);
 });
 
@@ -64,5 +67,9 @@ console.log("\n--- result ---");
 console.log(`PASS  first partial at ${firstPartialAt === null ? "never" : (firstPartialAt / 1000).toFixed(2) + "s"}`);
 console.log(`${finalText ? "PASS" : "FAIL"}  final: ${finalText ?? "(none — worker never flushed within 8s of close())"}`);
 console.log(`(last partial seen: ${lastText || "(none)"})`);
-console.log(failed || !finalText ? "\nFAIL" : "\nOK");
-process.exit(failed || !finalText ? 1 : 0);
+// The bundled clip opens with "Hey, I'm Claude…": a final that lacks it means the
+// head of the clip was dropped before the pipeline existed (#58) — a false pass.
+const headOk = !/claude_intro/.test(clip) || /claude/i.test(allFinals.join(" "));
+if (!headOk) console.log("FAIL  head of the clip is missing from the transcript (audio dropped at startup?)");
+console.log(failed || !finalText || !headOk ? "\nFAIL" : "\nOK");
+process.exit(failed || !finalText || !headOk ? 1 : 0);

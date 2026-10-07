@@ -267,6 +267,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`SttStream` no longer drops audio pushed before its pipeline exists (issue #58).**
+  After a cold worker spawn (~2–5 s of MLX import + model warm) the first seconds of
+  speech were silently dropped, and `scripts/stt-selfcheck.mjs` false-passed with a
+  truncated transcript. Early audio is now queued (bounded to 15 s, oldest dropped)
+  and flushed when the pipeline is up; the selfcheck asserts the head of the bundled
+  clip and defaults to `sounds/claude_intro.wav`.
 - **Parallel daemons no longer share discovery files or a log (issue #65).**
   Every daemon wrote the same `daemon.json` / `wa-daemon.json` and every
   detached daemon logged to one `daemon.log`, so a bare `wa status`/`wa leave`
