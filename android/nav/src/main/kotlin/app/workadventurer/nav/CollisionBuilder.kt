@@ -33,7 +33,7 @@ object CollisionBuilder {
     private const val MAX_CELLS = 4_000_000L // real rooms are ~10^4-10^5 cells; this only stops a corrupt or hostile map
 
     /** The grid, or null if the `.tmj` isn't JSON or has no usable `width`/`height`/`tilewidth`. */
-    fun build(wamJson: String, tmjJson: String): NavGrid? {
+    fun build(wamJson: String, tmjJson: String, entityGrids: Map<String, List<List<Int>>?>? = null): NavGrid? {
         val tmj = parse(tmjJson).obj() ?: return null
         val w = tmj["width"].int() ?: return null
         val h = tmj["height"].int() ?: return null
@@ -72,12 +72,28 @@ object CollisionBuilder {
             }
         }
 
-        // (3) furniture entities from the .wam: the tile under the centre, plus 3x3 unless it's a stool/chair
+        // (3) furniture entities from the .wam. With the prefabs' published collision grids, an entity blocks exactly its
+        // prefab's solid cells (and a prefab with no grid blocks nothing); otherwise the old approximation: the tile under the
+        // centre, plus 3x3 unless it's a stool/chair.
         for ((_, e) in parse(wamJson).obj()?.get("entities").obj().orEmpty()) {
             val eo = e.obj() ?: continue
             val x = eo["x"].dbl() ?: continue
             val y = eo["y"].dbl() ?: continue
-            val id = (eo["prefabRef"].obj()?.get("id").str() ?: "").lowercase()
+            val rawId = eo["prefabRef"].obj()?.get("id").str() ?: ""
+            if (entityGrids != null && entityGrids.containsKey(rawId)) {
+                val grid = entityGrids[rawId] ?: continue // a prefab with no collision shape is not solid
+                val ox = floor((x + tile / 2.0) / tile).toInt()
+                val oy = floor((y + tile / 2.0) / tile).toInt()
+                grid.forEachIndexed { r, row ->
+                    row.forEachIndexed { c, v ->
+                        val tx = ox + c
+                        val ty = oy + r
+                        if (v == 1 && tx in 0 until w && ty in 0 until h) blocked[ty * w + tx] = true
+                    }
+                }
+                continue
+            }
+            val id = rawId.lowercase()
             val r = if (SMALL_PROP.containsMatchIn(id)) 0 else 1
             val cx = floor((x + tile / 2.0) / tile).toInt()
             val cy = floor((y + tile / 2.0) / tile).toInt()
