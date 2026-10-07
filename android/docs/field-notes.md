@@ -50,6 +50,31 @@ Phone joined as `g3-voice`, the user (David, in a browser) walked next to it, th
   after nothing answered the first, since this build only logs and ignores them).
 - Walking away: `left space`, `left bubble`, then `webRtcDisconnect` from the peer, in that order.
 
+## G3 M3 live check, speaking, mute, meeting areas (2026-10-06 / 07)
+
+Measured live against browser peers on the S25 Ultra unless marked.
+
+- **Two-way audio works, both roles.** Phone as answerer and as offerer. Offerer role matters: connect took 1.25 s as offerer
+  vs ~21 s waiting for the browser's own timeout and the server's role swap.
+- **No red mic.** The mic track is shared and always sending; mute is `setMicrophoneMute`, which zero-fills the capture buffer,
+  so RTP keeps flowing (silence) and the browser's indicator stays correct. Mute/unmute shows properly in the browser.
+- **Browser that joins muted** needs a second negotiation when its user unmutes. As answerer it sends `{type:"renegotiate"}`
+  and waits for the initiator to offer again: we must re-offer (offerer only). As offerer it re-offers itself and we must answer
+  a second offer on the live connection (`attachMic` and answering are repeatable). Both were bugs found live and are pinned by
+  on-device tests (`BrowserLikeOfferTest`).
+- **Mic-in-use indicator while muted (decision, not measured on device):** capture keeps running while muted
+  (`setMicrophoneMute` does not stop `AudioRecord`), so Android's mic indicator stays lit and capture costs some battery while
+  the UI says "muted". Stopping capture would end the zero-RTP stream and bring back the red mic. Kept, deliberately.
+- **Meeting areas** join after a 1.5 s dwell and leave after 2.5 s outside; space name is `slugify(shortHash(roomUrl)-name)`,
+  from the room URL exactly as typed (a trailing slash or `#entry` hashes differently and lands in an empty space).
+- **Not handled yet:** `livekitInvitationMessage` (G4) — in a large area meeting the server moves everyone to LiveKit and the
+  phone would sit in the space announcing mic-on with no media; `transceiverRequest`; the same browser reachable through both an
+  area space and a bubble (two PeerConnections, mic sent twice) — supersede is keyed on (space, peer).
+- **Review finding fixed:** libwebrtc objects were read by the 5 s stats loop on another thread while the mesh coroutine
+  negotiated or disposed them (`getTransceivers()` disposes the previous wrappers). Stats now run on the mesh coroutine.
+  Rule: only the mesh coroutine touches a `PeerConnection`.
+- **Not yet checked live:** speaking with the screen locked, mute from the notification, mute surviving a reconnect.
+
 ## G3 M2 live check, hearing a browser peer (2026-10-06)
 
 The phone (`g3-voice`) walked to the user's browser avatar (David, mic on); the user heard David's voice come out of the
@@ -75,7 +100,7 @@ phone, then with the screen locked, then across four bubble leave/enter rounds. 
   reported the audio connecting "much quicker", against about 21 s before. The offerer creates the `simplepeer` data channel
   and a receive-only audio transceiver (no microphone until M3). An on-device loopback test (our offerer and our answerer
   negotiating in one process) reaches "connected" 3 runs out of 3. One browser signal right after the offer was logged as
-  "unparseable or unsupported" and ignored (probably `renegotiate`/`transceiverRequest`, harmless here); worth logging its
+  "unparseable or unsupported" and ignored (`renegotiate` (a browser that joined muted: it needs a re-offer from us, see the M3 section) or `transceiverRequest` (still unhandled)); worth logging its
   `type` next time.
 - Clean teardown every round: `left space`, `left bubble`, then the peer's `webRtcDisconnect`. App memory did not grow
   across the rounds (PSS about 151 MB before, about 96 MB after).

@@ -2,7 +2,11 @@ package app.workadventurer.voice
 
 import app.workadventurer.protocol.VoiceEvent
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.merge
 
 interface PeerLink {
     /** The answer SDP for [offerSdp], or null if it can't be used (for example zero ICE candidates). */
@@ -39,6 +43,9 @@ class MeshSession(
     private class Entry(val spaceName: String, val peer: String, val link: PeerLink) {
         /** True when the server made us the initiator of this connection: only the initiator can answer a renegotiate request. */
         @Volatile var offerer = false
+
+        /** True once we sent an answer: a later offer on this connection is a renegotiation, and a failure must not kill the link. */
+        @Volatile var answered = false
     }
 
     private val active = LinkedHashMap<String, Entry>()
@@ -46,10 +53,17 @@ class MeshSession(
 
     val activeConnections: Set<String> get() = synchronized(active) { active.keys.toSet() }
 
-    suspend fun run(events: Flow<VoiceEvent>) {
+    /**
+     * [statsEveryMs] > 0 reports [statsSummary] lines to [onStats] on this same coroutine, between events: libwebrtc objects
+     * must never be read from another thread while a negotiation or a teardown may be using or disposing them.
+     */
+    suspend fun run(events: Flow<VoiceEvent>, statsEveryMs: Long = 0, onStats: (String) -> Unit = {}) {
+        val ticks = if (statsEveryMs > 0) flow<VoiceEvent?> { while (true) { delay(statsEveryMs); emit(null) } } else emptyFlow()
         try {
-            events.collect { e ->
-                try { handle(e) } catch (c: CancellationException) { throw c } catch (t: Throwable) { log("voice event failed: ${t.message}") }
+            merge(events, ticks).collect { e ->
+                try {
+                    if (e == null) statsSummary().forEach(onStats) else handle(e)
+                } catch (c: CancellationException) { throw c } catch (t: Throwable) { log("voice event failed: ${t.message}") }
             }
         } finally {
             // On this coroutine, after any in-flight negotiation has returned: a teardown racing from another thread could
@@ -126,10 +140,17 @@ class MeshSession(
 
     private suspend fun answer(e: VoiceEvent.Signal, offer: PeerSignal.Offer) {
         val l = link(e.spaceName, e.peerSpaceUserId, e.connectionId)
+        val entry = synchronized(active) { active[e.connectionId] }
+        val again = entry?.answered == true
         val sdp = try { l.acceptOffer(offer.sdp) } catch (c: CancellationException) { throw c } catch (t: Throwable) {
             log("[${e.connectionId}] offer failed: ${t.message}"); null
         }
-        if (sdp == null) { log("[${e.connectionId}] no usable answer, tearing down"); drop(e.connectionId); return }
+        if (sdp == null) {
+            // A first offer we can't answer is a dead connection; a re-offer we can't answer leaves the working one alone.
+            if (again) { log("[${e.connectionId}] no usable answer to a re-offer, keeping the connection"); return }
+            log("[${e.connectionId}] no usable answer, tearing down"); drop(e.connectionId); return
+        }
+        entry?.answered = true
         sink.send(e.spaceName, e.peerSpaceUserId, e.connectionId, SimplePeerSignal.answer(sdp))
         log("[${e.connectionId}] answered")
     }

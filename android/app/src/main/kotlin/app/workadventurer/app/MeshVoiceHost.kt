@@ -78,8 +78,8 @@ class MeshVoiceHost(private val context: Context) : (PusherConnection) -> VoiceH
                 mesh = m
                 // Every 5 s, per live connection: audio packets sent/received, ICE state, negotiated direction, mic on/off.
                 // Counts and states only. Answers "is audio leaving the phone?" when a browser shows a red mic.
-                launch { while (true) { delay(5_000); m.statsSummary().forEach { Log.i("WaVoice", it) } } }
-                m.run(inbox.receiveAsFlow())
+                // Taken on the mesh coroutine itself, not a second thread: libwebrtc objects aren't safe to read mid-negotiation or teardown.
+                m.run(inbox.receiveAsFlow(), statsEveryMs = 5_000, onStats = { Log.i("WaVoice", it) })
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {

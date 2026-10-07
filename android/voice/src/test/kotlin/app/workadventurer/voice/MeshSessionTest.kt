@@ -4,6 +4,7 @@ import app.workadventurer.protocol.VoiceEvent
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -251,6 +252,43 @@ class MeshSessionTest {
         assertEquals(2, lines.size)
         assertTrue(lines.all { it.startsWith("[") && "stats-of-" in it }, lines.toString())
         job.cancel()
+    }
+
+    // Review: libwebrtc objects must only be touched from the mesh coroutine; a stats tick on another thread raced a re-offer.
+    @Test
+    fun statsAreTakenOnTheMeshCoroutineNeverDuringANegotiation() = runTest {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var negotiating = false; var statsDuringNegotiation = false
+        val link = object : PeerLink {
+            override suspend fun acceptOffer(offerSdp: String): String? { negotiating = true; gate.await(); negotiating = false; return "A" }
+            override suspend fun createOffer(): String? = null
+            override suspend fun renegotiate(): String? = null
+            override fun acceptAnswer(answerSdp: String) {}
+            override fun addRemoteCandidate(candidate: PeerSignal.Candidate) {}
+            override fun close() {}
+            override suspend fun statsSummary(): String { if (negotiating) statsDuringNegotiation = true; return "stats" }
+        }
+        val lines = mutableListOf<String>()
+        val mesh = MeshSession({ link }, { _, _, _, _ -> }, {})
+        val events = MutableSharedFlow<VoiceEvent>(extraBufferCapacity = 16)
+        val job = backgroundScope.launch { mesh.run(events, statsEveryMs = 1_000, onStats = { lines += it }) }; runCurrent()
+        events.emit(offer()); runCurrent()
+        advanceTimeBy(3_500); runCurrent()
+        assertEquals(false, statsDuringNegotiation); assertTrue(lines.isEmpty(), "no stats while a negotiation is in flight")
+        gate.complete(Unit); runCurrent(); advanceTimeBy(1_100); runCurrent()
+        assertTrue(lines.isNotEmpty() && lines.all { it.endsWith("stats") }, lines.toString()); job.cancel()
+    }
+
+    // Review: a re-offer we cannot use must not kill the audio that already works (the first answer did).
+    @Test
+    fun aSecondOfferThatFailsKeepsTheWorkingConnection() = runTest {
+        val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        r.events.emit(offer()); runCurrent()
+        assertEquals(1, r.sent.size)
+        r.made.getValue("c1").answer = null
+        r.events.emit(offer()); runCurrent()
+        assertEquals(setOf("c1"), r.mesh.activeConnections); assertEquals(false, r.made.getValue("c1").closed)
+        assertEquals(1, r.sent.size); job.cancel()
     }
 
     @Test
