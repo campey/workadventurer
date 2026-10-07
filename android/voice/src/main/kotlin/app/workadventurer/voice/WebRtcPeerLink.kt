@@ -129,7 +129,15 @@ internal class WebRtcPeerLink(
             .filter { it.mediaType == livekit.org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO }
             .joinToString(",") { "${it.direction}/${it.currentDirection}" }
         return "audio sent=${audioPacketsSent()} recv=${audioPacketsReceived()} ice=${pc.iceConnectionState()} " +
+            "conn=${pc.connectionState()} signaling=${pc.signalingState()} dtls=${transportState("dtlsState")} " +
             "dir=$dirs mic=${if (localTrack.enabled()) "on" else "off"}"
+    }
+
+    /** A field of the transport stats (for example `dtlsState`): ICE can be connected while the encrypted media layer is not. */
+    private suspend fun transportState(key: String): String {
+        val out = CompletableDeferred<String>()
+        pc.getStats { report -> out.complete(report.statsMap.values.firstOrNull { it.type == "transport" }?.members?.get(key)?.toString() ?: "none") }
+        return withTimeoutOrNull(3_000) { out.await() } ?: "timeout"
     }
 
     internal suspend fun audioPacketsSent() = audioStat("outbound-rtp", "packetsSent")
