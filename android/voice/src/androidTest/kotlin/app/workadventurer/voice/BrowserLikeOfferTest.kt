@@ -108,6 +108,92 @@ class BrowserLikeOfferTest {
         }
     }
 
+    /** A browser that joins a connection the phone offers, muted: it answers with no audio track, and may add one later. */
+    private class BrowserLikeAnswerer(private val engine: VoiceEngine) {
+        private val connected = CompletableDeferred<Unit>()
+        private val firstCandidate = CompletableDeferred<Unit>()
+        val pc: PeerConnection = engine.factory.createPeerConnection(
+            PeerConnection.RTCConfiguration(listOf(PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()))
+                .apply { sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN },
+            object : PeerConnection.Observer {
+                override fun onSignalingChange(s: PeerConnection.SignalingState) {}
+                override fun onIceConnectionChange(s: PeerConnection.IceConnectionState) {
+                    if (s == PeerConnection.IceConnectionState.CONNECTED || s == PeerConnection.IceConnectionState.COMPLETED) connected.complete(Unit)
+                }
+                override fun onIceConnectionReceivingChange(b: Boolean) {}
+                override fun onIceGatheringChange(s: PeerConnection.IceGatheringState) {}
+                override fun onIceCandidate(c: IceCandidate) { firstCandidate.complete(Unit) }
+                override fun onIceCandidatesRemoved(c: Array<out IceCandidate>) {}
+                override fun onAddStream(s: MediaStream) {}
+                override fun onRemoveStream(s: MediaStream) {}
+                override fun onDataChannel(d: DataChannel) {}
+                override fun onRenegotiationNeeded() {}
+                override fun onAddTrack(r: RtpReceiver, s: Array<out MediaStream>) {}
+            },
+        )!!
+
+        private class Done(val done: CompletableDeferred<Unit>) : SdpObserver {
+            override fun onCreateSuccess(d: SessionDescription) {}
+            override fun onSetSuccess() { done.complete(Unit) }
+            override fun onCreateFailure(e: String) { done.completeExceptionally(IllegalStateException(e)) }
+            override fun onSetFailure(e: String) { done.completeExceptionally(IllegalStateException(e)) }
+        }
+
+        /** The user unmutes: the track is added locally; the answer to the phone's next offer then carries it. */
+        fun addAudioTrack() { pc.addTrack(engine.micTrack, listOf("browser-stream")) }
+
+        suspend fun answer(offerSdp: String): String {
+            val remote = CompletableDeferred<Unit>()
+            pc.setRemoteDescription(Done(remote), SessionDescription(SessionDescription.Type.OFFER, offerSdp)); remote.await()
+            val created = CompletableDeferred<SessionDescription>()
+            pc.createAnswer(object : SdpObserver {
+                override fun onCreateSuccess(d: SessionDescription) { created.complete(d) }
+                override fun onSetSuccess() {}
+                override fun onCreateFailure(e: String) { created.completeExceptionally(IllegalStateException(e)) }
+                override fun onSetFailure(e: String) {}
+            }, MediaConstraints())
+            val local = CompletableDeferred<Unit>()
+            pc.setLocalDescription(Done(local), created.await()); local.await()
+            withTimeoutOrNull(4_000) { firstCandidate.await() }
+            delay(1_000)
+            return pc.localDescription.description
+        }
+
+        suspend fun awaitConnected(ms: Long) = withTimeoutOrNull(ms) { connected.await() } != null
+
+        suspend fun inboundAudioPackets(): Long {
+            val out = CompletableDeferred<Long>()
+            pc.getStats { r -> out.complete((r.statsMap.values.firstOrNull { it.type == "inbound-rtp" && it.members["kind"] == "audio" }?.members?.get("packetsReceived") as? Number)?.toLong() ?: 0L) }
+            return withTimeoutOrNull(3_000) { out.await() } ?: 0L
+        }
+    }
+
+    // The other half of the live bug, in a bubble where the PHONE offers: the browser joined muted so its answer has no audio;
+    // when its user unmutes it asks us to renegotiate (`{type: renegotiate}`, captured live) and, without a fresh offer from us,
+    // its voice never reached the phone.
+    @Test
+    fun aMutedBrowserWeOfferedToIsHeardAfterWeReOfferWhenItUnmutes() = runBlocking {
+        val engine = VoiceEngine(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            engine.setMuted(false)
+            val ice = listOf(IceServerInfo(listOf("stun:stun.l.google.com:19302"), null, null))
+            val phone = engine.newLink("c1", ice) as WebRtcPeerLink
+            val browser = BrowserLikeAnswerer(engine)
+            phone.acceptAnswer(browser.answer(withTimeout(15_000) { phone.createOffer() }!!)) // joined muted: no audio track
+            assertTrue(phone.awaitConnected(15_000) && browser.awaitConnected(15_000), "no connection")
+
+            browser.addAudioTrack() // the user unmutes, the browser asks us to renegotiate
+            val reOffer = withTimeout(15_000) { phone.renegotiate() }
+            assertTrue(reOffer != null, "no re-offer")
+            phone.acceptAnswer(browser.answer(reOffer!!))
+            delay(3_000)
+            val summary = phone.statsSummary()
+            assertTrue(phone.audioPacketsReceived() > 30, "the phone never heard the browser after it unmuted: $summary")
+            assertTrue(browser.inboundAudioPackets() > 30, "the browser never heard the phone: $summary")
+            phone.close(); browser.pc.close()
+        } finally { engine.close() }
+    }
+
     // The live bug: a browser that joined MUTED made a first offer without audio; when the user unmuted it offered again on the same
     // connection, our answer path tried to add the microphone a second time ("addTrack failed"), tore the link down, and the
     // browser showed a red mic and unresponsive mute until the server restarted the connection about 16 s later.

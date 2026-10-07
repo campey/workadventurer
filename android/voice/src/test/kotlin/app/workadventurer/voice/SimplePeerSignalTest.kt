@@ -17,10 +17,16 @@ class SimplePeerSignalTest {
         assertEquals(PeerSignal.Candidate("candidate:1 1 udp 1 1.2.3.4 5 typ host", "1", 1), s)
     }
 
+    // Captured live from a browser that joined muted and then unmuted: the non-initiator asks the initiator to offer again.
+    @Test
+    fun parsesTheRenegotiateRequestABrowserSendsWhenItUnmutes() {
+        assertEquals(PeerSignal.Renegotiate, SimplePeerSignal.parse("""{"type":"renegotiate","renegotiate":true}"""))
+        assertEquals(PeerSignal.Renegotiate, SimplePeerSignal.parse("""{"type":"renegotiate"}"""))
+    }
+
     // Review Focus 5: nothing we don't understand may throw.
     @Test
-    fun ignoresRenegotiateUnknownAndGarbage() {
-        assertNull(SimplePeerSignal.parse("""{"type":"renegotiate"}"""))
+    fun ignoresUnknownAndGarbage() {
         assertNull(SimplePeerSignal.parse("""{"transceiverRequest":{"kind":"video"}}"""))
         assertNull(SimplePeerSignal.parse("""{"type":"offer"}""")) // no sdp
         assertNull(SimplePeerSignal.parse("{{{ not json"))

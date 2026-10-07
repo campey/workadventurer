@@ -97,6 +97,19 @@ internal class WebRtcPeerLink(
         synchronized(keepAlive) { if (channel != null) keepAlive += channel }
         // a send-and-receive audio transceiver carrying our microphone (created once; later offers reuse it)
         if (audioTransceivers().isEmpty()) pc.addTrack(localTrack, listOf(STREAM_ID)) else attachMic()
+        return makeOffer()
+    }
+
+    /**
+     * The peer (a browser that joined muted, now unmuting) asked for another offer on this connection. Same connection, same data
+     * channel: just make a fresh offer so the audio line it can now use is negotiated.
+     */
+    override suspend fun renegotiate(): String? {
+        attachMic()
+        return makeOffer()
+    }
+
+    private suspend fun makeOffer(): String? {
         val created = CompletableDeferred<SessionDescription>()
         pc.createOffer(object : SdpObserver {
             override fun onCreateSuccess(d: SessionDescription) { created.complete(d) }

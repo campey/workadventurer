@@ -10,6 +10,8 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
 sealed interface PeerSignal {
+    /** The non-initiator asking the initiator to offer again (a browser that joined muted sends it when its user unmutes). */
+    data object Renegotiate : PeerSignal
     data class Offer(val sdp: String) : PeerSignal
     data class Answer(val sdp: String) : PeerSignal
     data class Candidate(val candidate: String, val sdpMid: String?, val sdpMLineIndex: Int) : PeerSignal
@@ -30,7 +32,8 @@ object SimplePeerSignal {
                 val line = c["candidate"].str() ?: return null
                 PeerSignal.Candidate(line, c["sdpMid"].str(), (c["sdpMLineIndex"] as? JsonPrimitive)?.intOrNull ?: 0)
             }
-            else -> null // renegotiate, transceiverRequest, unknown
+            "renegotiate" -> PeerSignal.Renegotiate
+            else -> null // transceiverRequest and anything else we have not seen: logged by shape, not acted on
         }
     }
 

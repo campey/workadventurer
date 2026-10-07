@@ -11,6 +11,9 @@ interface PeerLink {
     /** We are the offerer: the offer SDP to send, or null if it can't be used (for example zero ICE candidates). */
     suspend fun createOffer(): String?
 
+    /** We are the offerer and the peer asked for another offer on the same connection: the new offer SDP, or null if unusable. */
+    suspend fun renegotiate(): String?
+
     /** The remote peer's answer to the offer we created. */
     fun acceptAnswer(answerSdp: String)
 
@@ -33,7 +36,10 @@ class MeshSession(
     private val sink: SignalSink,
     private val log: (String) -> Unit,
 ) {
-    private class Entry(val spaceName: String, val peer: String, val link: PeerLink)
+    private class Entry(val spaceName: String, val peer: String, val link: PeerLink) {
+        /** True when the server made us the initiator of this connection: only the initiator can answer a renegotiate request. */
+        @Volatile var offerer = false
+    }
 
     private val active = LinkedHashMap<String, Entry>()
     private val closedIds = LinkedHashSet<String>() // late signals for these are dropped, never resurrected
@@ -69,6 +75,7 @@ class MeshSession(
                         val l = synchronized(active) { active[e.connectionId] }?.link
                         if (l == null) log("[${e.connectionId}] answer for an unknown connection, ignored") else l.acceptAnswer(s.sdp)
                     }
+                    PeerSignal.Renegotiate -> renegotiate(e)
                     null -> log("[${e.connectionId}] unsupported signal ignored: ${SimplePeerSignal.describe(e.signal)}")
                 }
             }
@@ -91,12 +98,30 @@ class MeshSession(
         val isNew = synchronized(active) { e.connectionId !in active }
         val l = link(e.spaceName, e.peerSpaceUserId, e.connectionId)
         if (!isNew) return // a duplicate start: the offer is already out
+        synchronized(active) { active[e.connectionId]?.offerer = true }
         val sdp = try { l.createOffer() } catch (c: CancellationException) { throw c } catch (t: Throwable) {
             log("[${e.connectionId}] offer failed: ${t.message}"); null
         }
         if (sdp == null) { log("[${e.connectionId}] no usable offer, tearing down"); drop(e.connectionId); return }
         sink.send(e.spaceName, e.peerSpaceUserId, e.connectionId, SimplePeerSignal.offer(sdp))
         log("[${e.connectionId}] offered")
+    }
+
+    /**
+     * A browser that joined muted has no audio in the first negotiation; when its user unmutes it sends `{type: renegotiate}`
+     * and waits for the initiator to offer again. We only act when we are the initiator; as the answerer the browser re-offers
+     * by itself. A re-offer we can't use keeps the working connection rather than tearing it down.
+     */
+    private suspend fun renegotiate(e: VoiceEvent.Signal) {
+        val entry = synchronized(active) { active[e.connectionId] }
+        if (entry == null) { log("[${e.connectionId}] renegotiate for an unknown connection, ignored"); return }
+        if (!entry.offerer) { log("[${e.connectionId}] renegotiate request while we answer: the peer offers by itself, ignored"); return }
+        val sdp = try { entry.link.renegotiate() } catch (c: CancellationException) { throw c } catch (t: Throwable) {
+            log("[${e.connectionId}] re-offer failed: ${t.message}"); null
+        }
+        if (sdp == null) { log("[${e.connectionId}] no usable re-offer, keeping the connection"); return }
+        sink.send(e.spaceName, e.peerSpaceUserId, e.connectionId, SimplePeerSignal.offer(sdp))
+        log("[${e.connectionId}] re-offered")
     }
 
     private suspend fun answer(e: VoiceEvent.Signal, offer: PeerSignal.Offer) {

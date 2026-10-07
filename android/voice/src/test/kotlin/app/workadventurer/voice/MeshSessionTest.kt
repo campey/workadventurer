@@ -24,6 +24,9 @@ class MeshSessionTest {
         override fun addRemoteCandidate(candidate: PeerSignal.Candidate) { candidates += candidate }
         override fun close() { closed = true }
         override suspend fun statsSummary(): String = "stats-of-$id"
+        var reOffer: String? = "RE-OFFER-SDP"
+        var renegotiations = 0
+        override suspend fun renegotiate(): String? { renegotiations++; return reOffer }
     }
 
     private class Rig {
@@ -156,6 +159,7 @@ class MeshSessionTest {
         assertEquals(listOf(PeerSignal.Candidate("candidate:1", "1", 1)), r.made.getValue("c1").candidates)
         val boom = MeshSession({ object : PeerLink {
             override suspend fun createOffer(): String? = null
+            override suspend fun renegotiate(): String? = null
             override fun acceptAnswer(answerSdp: String) {}
             override suspend fun acceptOffer(offerSdp: String): String? = throw IllegalStateException("libwebrtc said no")
             override fun addRemoteCandidate(candidate: PeerSignal.Candidate) {}
@@ -196,6 +200,45 @@ class MeshSessionTest {
         r.events.emit(offer("c1")); r.events.emit(offer("c2", "sp_8")); runCurrent()
         job.cancel(); runCurrent()
         assertTrue(r.made.values.all { it.closed }); assertTrue(r.mesh.activeConnections.isEmpty())
+    }
+
+    // Live: a browser that joined muted asks us (the offerer) to renegotiate when its user unmutes; ignoring it left it inaudible.
+    private val renegotiate = """{"type":"renegotiate","renegotiate":true}"""
+
+    @Test
+    fun theOffererReOffersWhenThePeerAsksToRenegotiate() = runTest {
+        val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        r.events.emit(VoiceEvent.Start("sp", "sp_9", "c1", initiator = true)); runCurrent()
+        r.events.emit(VoiceEvent.Signal("sp", "sp_9", "c1", renegotiate)); runCurrent()
+        assertEquals(1, r.made.getValue("c1").renegotiations)
+        assertEquals(2, r.sent.size)
+        assertEquals(listOf("sp", "sp_9", "c1", """{"type":"offer","sdp":"RE-OFFER-SDP"}"""), r.sent.last())
+        r.events.emit(VoiceEvent.Signal("sp", "sp_9", "c1", renegotiate)); runCurrent()
+        assertEquals(3, r.sent.size) // each request gets its own offer
+        assertEquals(setOf("c1"), r.mesh.activeConnections); job.cancel()
+    }
+
+    // As the answerer the browser is the initiator and offers by itself.
+    @Test
+    fun theAnswererIgnoresARenegotiateRequest() = runTest {
+        val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        r.events.emit(offer()); runCurrent()
+        val before = r.sent.size
+        r.events.emit(VoiceEvent.Signal("sp", "sp_9", "c1", renegotiate)); runCurrent()
+        assertEquals(0, r.made.getValue("c1").renegotiations); assertEquals(before, r.sent.size); job.cancel()
+    }
+
+    @Test
+    fun aRenegotiateForAnUnknownOrClosedConnectionIsIgnoredAndAnUnusableReOfferKeepsTheLink() = runTest {
+        val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        r.events.emit(VoiceEvent.Signal("sp", "sp_9", "ghost", renegotiate)); runCurrent()
+        assertTrue(r.made.isEmpty() && r.sent.isEmpty())
+        r.events.emit(VoiceEvent.Start("sp", "sp_9", "c1", initiator = true)); runCurrent()
+        r.made.getValue("c1").reOffer = null
+        r.events.emit(VoiceEvent.Signal("sp", "sp_9", "c1", renegotiate)); runCurrent()
+        assertEquals(1, r.sent.size) // only the first offer: nothing sent for the unusable one
+        assertEquals(setOf("c1"), r.mesh.activeConnections) // the working connection survives a failed re-offer
+        job.cancel()
     }
 
     // For the live "red mic" investigation: one line per connection (never SDP, ids or addresses), from each link.
