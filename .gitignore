@@ -23,6 +23,12 @@ dist-ssr
 *.sln
 *.sw?
 
+__pycache__/
+
+# STT corpus: real call audio is people's voices — local only (#61)
+.stt-tee/
+test/fixtures/stt-real/
+
 # Claude Code worktrees (EnterWorktree)
 .claude/worktrees/
 

@@ -1,19 +1,16 @@
 // Long-running WorkAdventure presence with a localhost HTTP control API.
 //
 // The `wa` CLI (and anything else that can POST JSON) drives the avatar through
-// this; the daemon is what actually stays connected — answering pings, running
-// the follow loop, reconnecting after a drop — between commands.
+// this; the daemon is what actually stays connected — answering pings and
+// reconnecting after a drop — between commands.
 //
 //   node src/wa-daemon.mjs                 # foreground
 //   WA_DAEMON_PORT=8787 WA_NAME=claude node src/wa-daemon.mjs
 //
 // Control API (http://127.0.0.1:<port>, JSON bodies):
-//   GET  /state                    -> { name, target, pos, facing, area, following:{name,paused}|null, players }
-//   POST /goto           {x,y}|{player}  -> walk there (cancels any follow)
-//   POST /follow         {player}        -> approach + follow continuously
-//   POST /unfollow                       -> stop and forget the follow subject
-//   POST /quiet                          -> step away to the nearest empty area; pause (remember) the follow
-//   POST /resume                         -> walk back to the follow subject and resume
+//   GET  /state                    -> { name, target, pos, facing, area, players }
+//   POST /goto           {x,y}|{player}  -> walk there
+//   POST /quiet                          -> step away to the nearest empty area (or stay if already quiet)
 //   POST /greet          {player}        -> walk over + "hi" speech bubble (no state change)
 //   POST /speech-bubble  {text}          -> speech bubble over the avatar
 //   POST /thought-bubble {text}          -> thinking cloud over the avatar
@@ -27,29 +24,25 @@
 // Also: when another player invites the avatar over (WorkAdventure's "invite
 // to discussion" on the woka), it auto-accepts and walks to them — no request.
 //
-// Advertises itself at $TMPDIR/wa-daemon.json and ~/.workadventurer/daemon.json.
+// Advertises itself as daemon-<port>.json in $TMPDIR and ~/.workadventurer/ (#65).
 
 import http from "node:http";
-import os from "node:os";
 import fs from "node:fs";
-import path from "node:path";
 import { WorkAdventureClient } from "./wa-client.mjs";
 import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
 import { resolveClip } from "./resolve-clip.mjs";
 import { makeSttRoomOutput } from "./stt-room-output.mjs";
 import { stopWorker } from "./wa-stt.mjs";
+import { createRegistry } from "./daemon-registry.mjs";
+import { goQuiet } from "./quiet.mjs";
 import { createReconnector } from "./reconnect.mjs";
 import { ServerRejectedError } from "./server-rejected.mjs";
 
 const cfg = resolveConfig();
 const PORT = cfg.port;
-const QUIET_EXCLUDE = /board\s*room|podium|audience/i;
-
-const INFO_FILES = [
-  path.join(os.tmpdir(), "wa-daemon.json"),
-  path.join(os.homedir(), ".workadventurer", "daemon.json"),
-];
+// One advertisement per port; we only ever remove our own (#65).
+const registry = createRegistry();
 
 const ts = () => new Date().toISOString().slice(11, 19);
 const log = (...a) => {
@@ -61,7 +54,6 @@ const log = (...a) => {
 
 let wa;
 let audio; // WaAudio, bound to the current client
-let follow = null; // { name, userId, controller, paused }
 let deliberateShutdown = false;
 
 let sttLineOpen = false; // a provisional partial line is currently on the terminal, unterminated
@@ -109,7 +101,6 @@ function attachAudio(client) {
 
 const findByName = (needle) => wa.findPlayer(needle);
 const liveById = (id) => wa.players.get(id) || null;
-const liveFollowTarget = () => (follow ? liveById(follow.userId) : null);
 
 let lastEmote = null; // { userId, name, emote, at }
 let lastInvite = null; // { name, uuid, at, walking }
@@ -149,9 +140,7 @@ function wireClient(client) {
       return;
     }
     log(`invite from ${sender.name} → walking over`);
-    stopFollow().then(() =>
-      walkToPlayer(sender, 90_000).then((r) => log("invite walk:", JSON.stringify(r)))
-    );
+    walkToPlayer(sender, 90_000).then((r) => log("invite walk:", JSON.stringify(r)));
   });
   client.on("close", (c) => log("socket closed", c.code, c.reason || ""));
 }
@@ -169,131 +158,6 @@ function watchLive(client) {
       shutdown(1);
     });
   });
-}
-
-// Aborting a follow task's controller only *schedules* its awaits to unwind
-// as microtasks — it does not synchronously release wa._navBusy. A caller
-// that aborts and then immediately (same synchronous turn) issues a new
-// navTo()/follow() reliably loses the race and gets back {reason:"busy"},
-// because none of those unwind microtasks have had a chance to run yet.
-// awaitTaskStop lets a caller actually wait for the old task to finish
-// settling before starting new movement. Bounded as a safety net — the task
-// should always resolve promptly once aborted; this just guards against a bug
-// turning into a hang.
-async function awaitTaskStop(task) {
-  if (!task) return;
-  await Promise.race([
-    task.catch(() => {}),
-    new Promise((r) => setTimeout(r, 2000)),
-  ]);
-}
-
-async function stopFollow() {
-  if (follow) {
-    const task = follow.task;
-    follow.controller.abort();
-    follow = null;
-    await awaitTaskStop(task);
-  }
-}
-
-/** Abort the in-flight follow task but keep the follow subject, marked
- * paused, so resume() can pick it back up. Waits for the task to actually
- * stop (see awaitTaskStop) before returning. */
-async function pauseFollow() {
-  if (follow && !follow.paused) {
-    const task = follow.task;
-    follow.controller.abort();
-    follow.paused = true;
-    await awaitTaskStop(task);
-  }
-}
-
-/** Start (or restart) the approach + continuous-follow task for `follow`. */
-function runFollowTask() {
-  if (!follow) return;
-  const { controller, userId, name } = follow;
-  const current = follow;
-  current.task = (async () => {
-    const t = liveById(userId);
-    if (t) {
-      await wa.navTo(t.x, t.y, {
-        stopWithin: 96,
-        getTarget: () => liveById(userId),
-        timeoutMs: 90_000,
-        signal: controller.signal,
-      });
-    }
-    if (controller.signal.aborted) return;
-    await wa.follow(() => liveById(userId), { spacing: 80, signal: controller.signal });
-    // Only clear the follow subject if this run ended on its own (target
-    // gone, etc). If `quiet()` paused us, it already set `follow.paused =
-    // true` on this same object — don't stomp that back to null, or
-    // `resume()` finds nothing (#found during CLI verification).
-    if (follow && follow.controller === controller && !follow.paused) follow = null;
-  })().catch((e) => log(`follow task error (${name}):`, e.message));
-}
-
-// A short wander sweep so we can pick up a player who isn't in view yet.
-const SEARCH_SPOTS = [
-  [1600, 1520], [2400, 1000], [1900, 1800], [900, 1600], [1300, 900], [2200, 1500],
-];
-async function searchFor(nameNeedle, signal) {
-  for (const [x, y] of SEARCH_SPOTS) {
-    if (signal?.aborted) return null;
-    const hit = findByName(nameNeedle);
-    if (hit) return hit;
-    await wa.navTo(x, y, { stopWithin: 80, timeoutMs: 12_000, signal });
-  }
-  return findByName(nameNeedle);
-}
-
-async function startFollow(nameNeedle) {
-  await stopFollow();
-  const controller = new AbortController();
-  follow = { name: nameNeedle, userId: -1, controller, paused: false, searching: true };
-
-  let p = findByName(nameNeedle);
-  if (!p) {
-    log(`"${nameNeedle}" not visible — searching…`);
-    p = await searchFor(nameNeedle, controller.signal);
-  }
-  if (controller.signal.aborted) return { ok: false, error: "cancelled" };
-  if (!p) {
-    follow = null;
-    return { ok: false, error: `could not find a player matching "${nameNeedle}"` };
-  }
-  if (follow?.controller !== controller) return { ok: false, error: "superseded" };
-  follow = { name: p.name, userId: p.userId, controller, paused: false };
-  runFollowTask();
-  return { ok: true, following: p.name };
-}
-
-async function quiet() {
-  await pauseFollow();
-  const players = wa.listPlayers();
-  const here = wa.nav?.areaAt(wa.pos.x, wa.pos.y);
-  if (
-    here &&
-    !QUIET_EXCLUDE.test(here.name) &&
-    players.every((pl) => !wa.nav._rectContains(here, pl.x, pl.y, 48))
-  ) {
-    return { ok: true, quietSpot: here.name, alreadyQuiet: true, followPaused: follow?.paused ?? false };
-  }
-  const area = wa.nav?.nearestEmptyArea(wa.pos.x, wa.pos.y, players, { excludeRe: QUIET_EXCLUDE });
-  if (!area) return { ok: true, quietSpot: null, followPaused: follow?.paused ?? false };
-  wa.navTo(area.x, area.y, { stopWithin: 64, timeoutMs: 60_000 }).then((r) =>
-    log(`quiet -> "${area.name}"`, JSON.stringify(r))
-  );
-  return { ok: true, quietSpot: area.name, followPaused: follow?.paused ?? false };
-}
-
-function resume() {
-  if (!follow) return { ok: true, nothingToResume: true };
-  if (!follow.paused) return { ok: true, following: follow.name, alreadyFollowing: true };
-  const name = follow.name;
-  startFollow(name).then((r) => log("resume:", JSON.stringify(r)));
-  return { ok: true, resuming: name };
 }
 
 // How far to stand from a player when we deliberately walk over to them
@@ -359,7 +223,6 @@ async function greet(nameNeedle) {
 }
 
 function state() {
-  const t = liveFollowTarget();
   return {
     name: cfg.name,
     room: wa.cfg.roomUrl,
@@ -387,14 +250,6 @@ function state() {
     lastEmote,
     lastInvite,
     lastChatMessage,
-    following: follow
-      ? {
-          name: follow.name,
-          paused: follow.paused,
-          pos: t ? { x: t.x | 0, y: t.y | 0 } : null,
-          area: t ? wa.nav?.areaAt(t.x, t.y)?.name ?? null : null,
-        }
-      : null,
     players: wa.listPlayers().map((p) => ({
       name: p.name,
       userId: p.userId,
@@ -426,17 +281,10 @@ const reconnector = createReconnector({
     return client;
   },
   onConnected: (client) => {
-    const prevFollow = follow ? { name: follow.name, paused: follow.paused } : null;
     wa = client;
     watchLive(client);
     attachAudio(wa);
     log(`reconnected as userId ${wa.myUserId}`);
-    follow = null;
-    if (prevFollow && !prevFollow.paused) {
-      startFollow(prevFollow.name).then((r) => log("post-reconnect follow:", JSON.stringify(r)));
-    } else if (prevFollow) {
-      follow = { name: prevFollow.name, userId: -1, controller: new AbortController(), paused: true };
-    }
   },
   log,
   isStopped: () => deliberateShutdown,
@@ -466,7 +314,6 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       switch (url.pathname) {
         case "/goto": {
-          await stopFollow();
           let gx = body.x;
           let gy = body.y;
           if (body.player) {
@@ -482,18 +329,8 @@ const server = http.createServer(async (req, res) => {
           );
           return send(202, { ok: true, goingTo: { x: Math.round(gx), y: Math.round(gy) } });
         }
-        case "/follow": {
-          if (!body.player) return send(400, { ok: false, error: "need {player}" });
-          startFollow(body.player).then((r) => log("follow:", JSON.stringify(r)));
-          return send(202, { ok: true, following: body.player, note: "approaching (searching if not yet visible)" });
-        }
-        case "/unfollow":
-          await stopFollow();
-          return send(200, { ok: true, following: null });
         case "/quiet":
-          return send(200, await quiet());
-        case "/resume":
-          return send(200, resume());
+          return send(200, await goQuiet(wa, { log }));
         case "/greet": {
           const r = await greet(body.player);
           return send(r.ok ? 200 : 404, r);
@@ -572,7 +409,7 @@ const server = http.createServer(async (req, res) => {
 
 function shutdown(code) {
   deliberateShutdown = true;
-  for (const f of INFO_FILES) { try { fs.unlinkSync(f); } catch {} }
+  registry.withdraw(PORT);
   try { server.close(); } catch {}
   try { wa?.close(); } catch {}
   disposeLiveKitRuntime().catch(() => {}); // no-op unless a LiveKit room was ever created (#8)
@@ -587,7 +424,7 @@ process.on("unhandledRejection", (e) => log("unhandledRejection:", e?.stack || S
 
 server.on("error", (e) => {
   if (e.code === "EADDRINUSE") {
-    log(`port ${PORT} in use — a daemon is probably already running (see ${INFO_FILES[0]})`);
+    log(`port ${PORT} in use — a daemon is probably already running (try \`wa status --port ${PORT}\`)`);
     process.exit(3);
   }
   throw e;
@@ -612,20 +449,6 @@ attachAudio(wa);
 log(`joined as userId ${wa.myUserId}; spawn (${wa.pos.x | 0},${wa.pos.y | 0})`);
 
 server.listen(PORT, "127.0.0.1", () => {
-  const info = JSON.stringify({
-    pid: process.pid,
-    port: PORT,
-    room: wa.cfg.roomUrl,
-    name: cfg.name,
-    startedAt: new Date().toISOString(),
-  });
-  for (const f of INFO_FILES) {
-    try {
-      fs.mkdirSync(path.dirname(f), { recursive: true });
-      fs.writeFileSync(f, info);
-    } catch (e) {
-      log(`could not write ${f}: ${e.message}`);
-    }
-  }
+  registry.advertise({ port: PORT, room: wa.cfg.roomUrl, name: cfg.name });
   log(`control API on http://127.0.0.1:${PORT}`);
 });

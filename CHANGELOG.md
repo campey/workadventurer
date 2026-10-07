@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **STT hallucination mitigation + quality corpus (issue #61).** The worker decodes
+  greedily (`temperature=0`, repeatable), drops filler-only finals on faint audio
+  (`STT_FILLER_MAX_RMS`, default 0.06), collapses no-space loops and strips `U+FFFD`
+  garbage, pins `STT_LANGUAGE=en` by default (`auto` restores detection; removes wrong-script
+  output) and exposes `STT_*_THRESHOLD` decode knobs (unset by default). New: `scripts/stt-eval.mjs`
+  + synthetic corpus in `test/fixtures/stt/`, `STT_TEE_DIR` live-call capture,
+  `scripts/stt-eval-matrix.sh`. Findings and numbers in `docs/field-notes.md`.
 - **STT to Space chat (issue #41).** In `--stt` listen mode the daemon now
   posts each final transcript to Space chat as one `Name: text` line (to every
   Space joined; chat is append-only and the displayed name is fixed per
@@ -242,8 +249,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `walkToPlayer()`. Closes #4. (Later refined to stand in the player's eyeline
   — see Added.)
 
+### Removed
+
+- **BREAKING: `wa follow`, `wa unfollow` and `wa resume` (issue #81).** They
+  were a client-side loop that kept walking toward a player; WorkAdventure has
+  no such thing (its real follow is negotiated in a bubble — #76). Gone with
+  them: `POST /follow|/unfollow|/resume`, the follow state, the `following`
+  field in `/state` and the "following …" line in `wa status`. The removed
+  commands now exit 1 with a pointer to `wa to <player>` (exit 0 under
+  `--if-running`, so an already-installed plugin's old `Stop` hook is not a
+  blocking error). `wa quiet` stays as a
+  standalone command (nearest empty area, or stay put if already quiet) and no
+  longer pauses anything. **The Claude Code plugin loses its `Stop` hook**
+  (`wa resume`) — it now only steps the avatar away while Claude works; it no
+  longer walks back afterwards. `WorkAdventureClient.follow()` (library API, used
+  by `src/find-player.mjs`) is untouched.
+
 ### Fixed
 
+- **Parallel daemons no longer share discovery files or a log (issue #65).**
+  Every daemon wrote the same `daemon.json` / `wa-daemon.json` and every
+  detached daemon logged to one `daemon.log`, so a bare `wa status`/`wa leave`
+  addressed whichever daemon started last, an exiting daemon deleted a
+  survivor's advertisement, and `wa join --port N` could report "already
+  joined" for a different daemon. Now: `daemon-<port>.json` / `daemon-<port>.log`
+  (`src/daemon-registry.mjs`); a daemon removes only its own file; advertisements
+  with a dead pid are pruned (a `kill -9`'d daemon used to leave a stale one).
+  The CLI uses an explicit port if given, else the single running daemon, else
+  the default — and with several running it refuses and lists them rather than
+  guessing. `wa join` never discovers. **Behaviour change:** scripts that read
+  `~/.workadventurer/daemon.log` / `daemon.json` must use the per-port names.
 - **The STT worker no longer outlives its daemon (issue #57).** `stopWorker()`
   had no callers, and a `kill -9`'d daemon can't clean up anyway, so
   `stt_worker.py` orphans piled up (one lived 5+ days). The worker is now

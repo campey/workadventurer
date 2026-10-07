@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
 import androidx.core.app.ServiceCompat
 import app.workadventurer.app.session.Command
 import app.workadventurer.app.session.Connection
@@ -66,11 +67,24 @@ class PresenceService : Service() {
                             stopSelf()
                         } else {
                             post(notificationText(s), s.muted)
+                            syncInviteNotifications(inviteNotifications(s.pendingInvites))
                         }
                     }
                 }
             }
             ACTION_TOGGLE_MUTE -> session.dispatch(Command.SetMuted(!session.state.value.muted))
+            ACTION_ACCEPT_INVITE, ACTION_DECLINE_INVITE -> {
+                // The notification carries only its own id; the sender's uuid (an email) stays inside the session.
+                val id = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
+                inviteForNotificationId(session.state.value.pendingInvites, id)?.let {
+                    session.dispatch(
+                        if (intent.action == ACTION_ACCEPT_INVITE) Command.AcceptInvite(it.senderUuid)
+                        else Command.DeclineInvite(it.senderUuid),
+                    )
+                }
+                // the observer cancels it once the invite leaves the pending list; this is just immediate feedback
+                getSystemService(NotificationManager::class.java).cancel(id)
+            }
             ACTION_LEAVE -> {
                 deactivate()
                 session.dispatch(Command.Leave)
@@ -93,10 +107,59 @@ class PresenceService : Service() {
         if (active) getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(text, muted))
     }
 
-    /** After this returns no notification can be posted, and ours is gone. */
+    private val postedInvites = mutableSetOf<Int>() // guarded by postLock
+
+    /** Post what is pending (updating in place) and cancel what no longer is. */
+    private fun syncInviteNotifications(current: List<InviteNotification>) = synchronized(postLock) {
+        if (!active) return@synchronized
+        val nm = getSystemService(NotificationManager::class.java)
+        for (id in staleInviteNotificationIds(postedInvites, current)) nm.cancel(id)
+        postedInvites.clear()
+        for (n in current) {
+            nm.notify(n.id, inviteNotification(n))
+            postedInvites += n.id
+        }
+    }
+
+    /** After this returns no notification can be posted, and ours are gone. */
     private fun deactivate() = synchronized(postLock) {
         active = false
-        getSystemService(NotificationManager::class.java).cancel(NOTIF_ID)
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.cancel(NOTIF_ID)
+        postedInvites.forEach { nm.cancel(it) }
+        postedInvites.clear()
+    }
+
+    /**
+     * Styled as an incoming call: Accept and Decline, high importance. Android requires a call-style notification to be
+     * a foreground-service notification or carry a full-screen intent; this one is separate from the service's, so it
+     * carries one (opening the app). Where the full-screen permission isn't granted it still shows as a heads-up.
+     */
+    private fun inviteNotification(n: InviteNotification): Notification {
+        fun action(name: String, requestCode: Int) = PendingIntent.getService(
+            this, requestCode,
+            Intent(this, PresenceService::class.java).setAction(name).putExtra(EXTRA_NOTIFICATION_ID, n.id),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val open = PendingIntent.getActivity(
+            this, n.id, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val caller = Person.Builder().setName(n.title).setImportant(true).build()
+        return NotificationCompat.Builder(this, INVITE_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentText(n.text)
+            .setContentIntent(open)
+            .setFullScreenIntent(open, true)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setStyle(
+                NotificationCompat.CallStyle.forIncomingCall(
+                    caller, action(ACTION_DECLINE_INVITE, n.id * 2), action(ACTION_ACCEPT_INVITE, n.id * 2 + 1),
+                ),
+            )
+            .setAutoCancel(true)
+            .build()
     }
 
     private fun notification(text: String, muted: Boolean = true): Notification {
@@ -127,15 +190,29 @@ class PresenceService : Service() {
                 NotificationChannel(CHANNEL_ID, "Presence", NotificationManager.IMPORTANCE_LOW),
             )
         }
+        // Earlier builds used other channel ids (one with a ringtone); a channel's sound can't be changed once created.
+        nm.deleteNotificationChannel(OLD_INVITE_CHANNEL_ID)
+        nm.deleteNotificationChannel(RINGING_INVITE_CHANNEL_ID)
+        if (nm.getNotificationChannel(INVITE_CHANNEL_ID) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(INVITE_CHANNEL_ID, "Invitations", NotificationManager.IMPORTANCE_HIGH),
+            )
+        }
     }
 
     companion object {
         const val ACTION_JOIN = "app.workadventurer.action.JOIN"
         const val ACTION_LEAVE = "app.workadventurer.action.LEAVE"
         const val ACTION_TOGGLE_MUTE = "app.workadventurer.action.TOGGLE_MUTE"
+        const val ACTION_ACCEPT_INVITE = "app.workadventurer.action.ACCEPT_INVITE"
+        const val ACTION_DECLINE_INVITE = "app.workadventurer.action.DECLINE_INVITE"
         const val EXTRA_NAME = "name"
         const val EXTRA_ROOM = "room"
+        const val EXTRA_NOTIFICATION_ID = "notificationId"
         private const val CHANNEL_ID = "presence"
-        private const val NOTIF_ID = 1
+        private const val INVITE_CHANNEL_ID = "invitations-v3"
+        private const val OLD_INVITE_CHANNEL_ID = "invitations"
+        private const val RINGING_INVITE_CHANNEL_ID = "invitations-ring"
+        private const val NOTIF_ID = PRESENCE_NOTIFICATION_ID
     }
 }

@@ -36,5 +36,9 @@ Rules for spinning up a `wa` daemon / avatar for manual testing:
   (`--port` / `WA_DAEMON_PORT`) — never the shared default `8787`, which is
   reserved for the primary checkout's daemon. Check what's already listening
   first: `lsof -iTCP -sTCP:LISTEN -P | grep node`.
+- **Addressing it**: once more than one daemon is running, a bare `wa status` /
+  `wa leave` refuses and lists them — always pass `--port` (or set
+  `WA_DAEMON_PORT`) for your worktree's daemon. Its log is
+  `~/.workadventurer/daemon-<port>.log`.
 - **Clean up**: `wa leave` (or kill the process) when done testing. Don't
   leave test daemons or avatars running past the task that needed them.
