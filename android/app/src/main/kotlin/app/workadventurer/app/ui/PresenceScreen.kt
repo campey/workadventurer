@@ -1,6 +1,7 @@
 package app.workadventurer.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,12 +11,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -64,8 +68,26 @@ fun PresenceScreen(
         OutlinedTextField(
             value = room, onValueChange = { room = it }, enabled = !inRoom,
             label = { Text("Room URL") }, singleLine = true,
+            supportingText = presetNameFor(room)?.let { known -> { Text(known) } },
             modifier = Modifier.fillMaxWidth(),
         )
+        // Frequent rooms, one tap. The field stays editable for anything else.
+        var picking by remember { mutableStateOf(false) }
+        Box {
+            TextButton(
+                onClick = { picking = true }, enabled = !inRoom,
+                modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Choose a frequent room" },
+            ) { Text("Frequent rooms ▾") }
+            DropdownMenu(expanded = picking, onDismissRequest = { picking = false }) {
+                ROOM_PRESETS.forEach { p ->
+                    DropdownMenuItem(
+                        text = { Text(p.name) },
+                        onClick = { room = p.url; picking = false },
+                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Join room ${p.name}" },
+                    )
+                }
+            }
+        }
         Button(
             onClick = { if (inRoom) onLeave() else onJoin(name.trim(), room.trim()) },
             enabled = inRoom || name.isNotBlank(),
