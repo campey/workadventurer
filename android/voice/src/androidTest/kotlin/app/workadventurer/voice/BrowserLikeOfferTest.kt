@@ -62,11 +62,22 @@ class BrowserLikeOfferTest {
             override fun onSetFailure(e: String) { done.completeExceptionally(IllegalStateException(e)) }
         }
 
-        suspend fun createOffer(): String {
+        /** [withAudio] false is a browser that joined muted: no audio track yet, so its first offer has nothing to say about audio. */
+        suspend fun createOffer(withAudio: Boolean = true): String {
             // video first (mid 0), then audio, then the data channel: the browser's m-line order
             pc.addTransceiver(MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY))
-            pc.addTrack(track, listOf("browser-stream"))
+            if (withAudio) pc.addTrack(track, listOf("browser-stream"))
             pc.createDataChannel("simplepeer", DataChannel.Init())
+            return offerNow()
+        }
+
+        /** The user unmutes: the track is added to the existing connection and the browser offers again. */
+        suspend fun renegotiateWithAudio(): String {
+            pc.addTrack(track, listOf("browser-stream"))
+            return offerNow()
+        }
+
+        private suspend fun offerNow(): String {
             val created = CompletableDeferred<SessionDescription>()
             pc.createOffer(object : SdpObserver {
                 override fun onCreateSuccess(d: SessionDescription) { created.complete(d) }
@@ -95,6 +106,33 @@ class BrowserLikeOfferTest {
             pc.getStats { r -> out.complete((r.statsMap.values.firstOrNull { it.type == "inbound-rtp" && it.members["kind"] == "audio" }?.members?.get("packetsReceived") as? Number)?.toLong() ?: 0L) }
             return withTimeoutOrNull(3_000) { out.await() } ?: 0L
         }
+    }
+
+    // The live bug: a browser that joined MUTED made a first offer without audio; when the user unmuted it offered again on the same
+    // connection, our answer path tried to add the microphone a second time ("addTrack failed"), tore the link down, and the
+    // browser showed a red mic and unresponsive mute until the server restarted the connection about 16 s later.
+    @Test
+    fun aBrowserThatJoinedMutedAndLaterAddsAudioIsHeardWithoutTheLinkBreaking() = runBlocking {
+        val engine = VoiceEngine(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            engine.setMuted(false)
+            val ice = listOf(IceServerInfo(listOf("stun:stun.l.google.com:19302"), null, null))
+            val phone = engine.newLink("c1", ice) as WebRtcPeerLink
+            val browser = BrowserLike(engine)
+            val first = browser.createOffer(withAudio = false)
+            browser.acceptAnswer(withTimeout(15_000) { phone.acceptOffer(first) }!!)
+            assertTrue(browser.awaitConnected(15_000) && phone.awaitConnected(15_000), "no connection after the audio-less first offer")
+
+            val second = browser.renegotiateWithAudio() // the user unmutes
+            val answer = withTimeout(15_000) { phone.acceptOffer(second) }
+            assertTrue(answer != null, "the second offer must be answered, not break the link")
+            browser.acceptAnswer(answer!!)
+            delay(3_000)
+            val summary = phone.statsSummary()
+            assertTrue(phone.audioPacketsReceived() > 30, "the phone never heard the browser after it unmuted: $summary")
+            assertTrue(browser.inboundAudioPackets() > 30, "the browser never heard the phone: $summary")
+            phone.close(); browser.pc.close()
+        } finally { engine.close() }
     }
 
     @Test

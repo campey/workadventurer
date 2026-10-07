@@ -66,8 +66,11 @@ internal class WebRtcPeerLink(
         pc.transceivers
             .filter { it.mediaType == livekit.org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO }
             .forEach { it.direction = livekit.org.webrtc.RtpTransceiver.RtpTransceiverDirection.INACTIVE }
-        // Send our microphone too: addTrack reuses the receive-only audio transceiver the browser's offer created.
-        pc.addTrack(localTrack, listOf(STREAM_ID))
+        // Send our microphone too. Repeatable: a browser that joined muted offers without audio first and offers AGAIN on the same
+        // connection when its user unmutes, so every offer attaches the mic to whichever audio lines still lack it. (Calling
+        // addTrack once per offer failed on the second one: "C++ addTrack failed", the link was torn down, and the browser
+        // showed a red mic and unresponsive mute until the server restarted the connection.)
+        attachMic()
 
         val created = CompletableDeferred<SessionDescription>()
         pc.createAnswer(object : SdpObserver {
@@ -92,7 +95,8 @@ internal class WebRtcPeerLink(
     override suspend fun createOffer(): String? {
         val channel = pc.createDataChannel("simplepeer", DataChannel.Init())
         synchronized(keepAlive) { if (channel != null) keepAlive += channel }
-        pc.addTrack(localTrack, listOf(STREAM_ID)) // a send-and-receive audio transceiver carrying our microphone
+        // a send-and-receive audio transceiver carrying our microphone (created once; later offers reuse it)
+        if (audioTransceivers().isEmpty()) pc.addTrack(localTrack, listOf(STREAM_ID)) else attachMic()
         val created = CompletableDeferred<SessionDescription>()
         pc.createOffer(object : SdpObserver {
             override fun onCreateSuccess(d: SessionDescription) { created.complete(d) }
@@ -104,6 +108,21 @@ internal class WebRtcPeerLink(
         pc.setLocalDescription(SetObserver(localSet), created.await())
         localSet.await()
         return localDescriptionWithCandidates()
+    }
+
+    private fun audioTransceivers() = pc.transceivers.filter {
+        it.mediaType == livekit.org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO && !it.isStopped
+    }
+
+    /** Put our microphone on every live audio line that doesn't carry it yet, and let it send. Safe to call on every offer. */
+    private fun attachMic() {
+        for (t in audioTransceivers()) {
+            if (t.sender.track() == null) {
+                t.sender.setTrack(localTrack, false)
+                t.sender.setStreams(listOf(STREAM_ID))
+            }
+            t.direction = livekit.org.webrtc.RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+        }
     }
 
     override fun acceptAnswer(answerSdp: String) {
