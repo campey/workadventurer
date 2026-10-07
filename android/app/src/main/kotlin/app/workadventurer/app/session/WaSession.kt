@@ -123,6 +123,8 @@ class WaSession(
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 }, // monotonic: a clock change must not stretch walk deadlines
     private val stableAfterMs: Long = 30_000,
     private val voiceHost: VoiceHost = { object : VoiceHandle { override fun setMuted(muted: Boolean) {}; override fun close() {} } },
+    /** Why connections drop or fail (messages only: no ids, no uuids). Goes to logcat in the app. */
+    private val log: (String) -> Unit = {},
 ) {
     private val _state = MutableStateFlow(SessionState())
     val state: StateFlow<SessionState> = _state.asStateFlow()
@@ -313,7 +315,10 @@ class WaSession(
                 coroutineScope {
                     // A child of this run, so it can't outlive it or leak past a Leave.
                     val mirror = launch { mirrorState(c, gen) }
-                    try { c.closed.await() } finally { mirror.cancel() }
+                    try {
+                        val closed = c.closed.await()
+                        log("connection dropped: ${closed.code} ${closed.reason}") // so "Reconnecting" always has a reason on record
+                    } finally { mirror.cancel() }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -323,8 +328,10 @@ class WaSession(
                     return
                 }
                 // After an earlier success a join failure is treated as transient: retry below.
+                log("join failed after an earlier success, retrying: ${e.message}")
             } catch (e: Exception) {
                 // transient: retry below
+                log("connection attempt failed, retrying: ${e.javaClass.simpleName}: ${e.message}")
             } finally {
                 synchronized(lock) { if (gen == generation) stopMovement() }
                 synchronized(lock) { if (voiceHandle === voice) voiceHandle = null }

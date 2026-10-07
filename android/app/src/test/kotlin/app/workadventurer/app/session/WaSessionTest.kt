@@ -116,6 +116,27 @@ class WaSessionTest {
         assertEquals(listOf("p2"), session.state.value.players.map { it.name })
     }
 
+    // A drop used to be silent: a phone that lost its network for 10 s showed "Reconnecting" with no reason anywhere.
+    @Test
+    fun aFailedConnectionAttemptIsLoggedWithItsReason() = runTest {
+        val logs = mutableListOf<String>()
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { throw java.io.IOException("net down") } },
+            nowMs = { testScheduler.currentTime }, log = { logs += it })
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertTrue(logs.any { "net down" in it && "IOException" in it }, logs.toString())
+    }
+
+    @Test
+    fun aDropAfterBeingConnectedIsLoggedAsAReconnect() = runTest {
+        val logs = mutableListOf<String>()
+        var conn: FakeConn? = null
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { }.also { conn = it } },
+            nowMs = { testScheduler.currentTime }, log = { logs += it })
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        conn!!.fakeClosed.complete(Closed(1011, "server went away")); runCurrent()
+        assertTrue(logs.any { "1011" in it && "server went away" in it }, logs.toString())
+    }
+
     @Test
     fun repeatedFailuresBackOffAndCapAtThirtySeconds() = runTest {
         val session = WaSession(backgroundScope, { c -> FakeConn(c) { throw java.io.IOException("net down") } })
