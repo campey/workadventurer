@@ -5,10 +5,11 @@ import app.workadventurer.protocol.Wa133
 /** A room worth one tap on the join screen. History and deep links are the fuller version (issue #93). */
 data class RoomPreset(val name: String, val url: String)
 
-/** First is the default a fresh install joins. Staging needs its own server settings first (issue #93). */
+/** First is the default a fresh install joins. Staging runs a newer server; per-room server settings are issue #93. */
 val ROOM_PRESETS = listOf(
     RoomPreset("Afrolabs open space", Wa133.DEFAULT_ROOM),
     RoomPreset("Lean Iterator campus", "https://play.workadventu.re/@/levelup-npc/lean-iterator/campus"),
+    RoomPreset("WorkAdventure staging village", "https://play.staging.workadventu.re/@/tcm/workadventure/wa-village"),
 )
 
 /** The preset whose link is in the field (ignoring surrounding spaces), if any. */
