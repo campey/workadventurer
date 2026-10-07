@@ -113,6 +113,34 @@ class CollisionBuilderTest {
         assertEquals(listOf(0), g.blockedIndices().toList())
     }
 
+    // On the campus map, blocking every piece of furniture as a fixed 3x3 split the walkable space into 20 islands (largest
+    // 2,515 tiles of 5,881), so the avatar had no route to anyone and degraded to walking straight through walls. WorkAdventure
+    // publishes each prefab's real collision shape; with those, the campus is one region of 5,337 tiles again.
+    private val sofa = """{"entities":{"a":{"x":64,"y":32,"prefabRef":{"id":"C:Sofa:#fff:Down"}}}}"""
+
+    @Test
+    fun anEntityBlocksExactlyItsPrefabsCollisionGridFromItsTopLeftTile() {
+        // x=64,y=32 -> origin tile (2,1); grid [[0,0],[1,1]] blocks (2,2) and (3,2) = indices 12 and 13 on a 5-wide map
+        val g = CollisionBuilder.build(sofa, tmj("[]"), mapOf("C:Sofa:#fff:Down" to listOf(listOf(0, 0), listOf(1, 1))))!!
+        assertEquals(listOf(12, 13), g.blockedIndices().toList())
+    }
+
+    @Test
+    fun aPrefabWithNoCollisionGridIsNotSolid() {
+        val g = CollisionBuilder.build(sofa, tmj("[]"), mapOf("C:Sofa:#fff:Down" to null))!!
+        assertTrue(g.blockedIndices().toList().isEmpty())
+    }
+
+    @Test
+    fun aPrefabTheCollectionsDoNotKnowKeepsTheOldBlockAndGridCellsOffTheMapAreIgnored() {
+        val unknown = CollisionBuilder.build(sofa, tmj("[]"), mapOf("Other:Thing:#000:Up" to null))!!
+        assertEquals(9, unknown.blockedIndices().toList().size) // legacy 3x3 around the entity's centre tile
+        val edge = """{"entities":{"a":{"x":128,"y":96,"prefabRef":{"id":"C:Big:#fff:Down"}}}}"""
+        val g = CollisionBuilder.build(edge, tmj("[]"), mapOf("C:Big:#fff:Down" to List(3) { List(3) { 1 } }))!!
+        assertTrue(g.blockedIndices().all { it in 0 until 20 }) // origin (4,3): only (4,3) is on the 5x4 map
+        assertEquals(listOf(19), g.blockedIndices().toList())
+    }
+
     // A hostile or corrupt map must not be able to ask for gigabytes (or overflow width*height into a negative size).
     @Test
     fun anAbsurdlyLargeMapGivesNullInsteadOfAllocatingIt() {
