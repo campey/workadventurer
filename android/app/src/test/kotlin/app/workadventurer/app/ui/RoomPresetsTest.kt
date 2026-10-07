@@ -16,6 +16,7 @@ class RoomPresetsTest {
         val urls = ROOM_PRESETS.map { it.url }
         assertTrue("https://play.workadventu.re/@/afrolabs/afrolabs/open-space" in urls)
         assertTrue("https://play.workadventu.re/@/levelup-npc/lean-iterator/campus" in urls)
+        assertTrue("https://play.staging.workadventu.re/@/tcm/workadventure/wa-village" in urls)
     }
 
     // A malformed preset would fail only at join time, in front of the user; catch it here.
@@ -25,7 +26,7 @@ class RoomPresetsTest {
         assertEquals(ROOM_PRESETS.size, ROOM_PRESETS.map { it.name }.toSet().size, "duplicate name")
         for (p in ROOM_PRESETS) {
             assertTrue(p.name.isNotBlank(), "blank name for ${p.url}")
-            assertTrue(Regex("""^https://play\.workadventu\.re/@/[^/\s]+/[^/\s]+/[^/\s]+$""").matches(p.url), "not a room link: ${p.url}")
+            assertTrue(Regex("""^https://play\.(staging\.)?workadventu\.re/@/[^/\s]+/[^/\s]+/[^/\s]+$""").matches(p.url), "not a room link: ${p.url}")
         }
     }
 

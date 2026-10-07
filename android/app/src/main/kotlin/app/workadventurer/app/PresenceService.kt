@@ -51,7 +51,7 @@ class PresenceService : Service() {
                 ServiceCompat.startForeground(
                     this, NOTIF_ID, notification("Connecting…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
                 )
-                val cfg = RoomConfig(
+                val cfg = RoomConfig.forRoom(
                     name = intent.getStringExtra(EXTRA_NAME).orEmpty(),
                     roomUrl = intent.getStringExtra(EXTRA_ROOM) ?: Wa133.DEFAULT_ROOM,
                 )
