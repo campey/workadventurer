@@ -621,6 +621,25 @@ class PusherConnectionTest {
         }
     }
 
+    // A room whose .wam has no start area (the campus map): the join must carry a tile of the map's "start" layer, not the
+    // fixed (320,320) fallback, or the avatar lands in a corner, sees nobody, and has no route to anyone.
+    @Test
+    fun aRoomWithOnlyATileStartLayerJoinsOnThatTile() = runBlocking<Unit> {
+        val start = (0 until 144).joinToString(",") { if (it == 3 * 12 + 5) "9" else "0" }
+        val zeros = (0 until 144).joinToString(",") { "0" }
+        val tmj = """{"width":12,"height":12,"tilewidth":32,"tilesets":[],"layers":[
+            {"type":"tilelayer","name":"start","data":[$start]},{"type":"tilelayer","name":"collisions","data":[$zeros]}]}"""
+        val fake = joiningFake()
+        serverWithMap(fake, tmj).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(10_000) { conn.connect() }
+            val pos = generateSequence { fake.received.poll(2, TimeUnit.SECONDS) }.first { it.joinRoomFrontMessage != null }
+                .joinRoomFrontMessage!!.positionMessage!!
+            assertEquals(5 * 32 + 16, pos.x); assertEquals(3 * 32 + 16, pos.y)
+            conn.close()
+        }
+    }
+
     private fun spaceFake(onLeaveQuery: () -> Unit = {}) = LiveFake { ws, msg ->
         msg.queryMessage?.let { q ->
             when {

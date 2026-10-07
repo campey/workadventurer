@@ -305,6 +305,11 @@ open class PusherConnection(
             val areas = wam?.let { try { parseWam(it) } catch (e: Exception) { emptyList() } }.orEmpty()
             state.areas = areas
             spawn = pickSpawn(areas)
+            if (areas.none { it.isStart }) {
+                // No start AREA in the .wam: WorkAdventure starts players on a tile of the map's "start" layer instead. Without
+                // this the avatar lands at the fixed fallback corner, sees no one, and has no route to anyone.
+                wam?.let { loadMapText(http, it, cacheDir) }?.let { pickTmjSpawn(it) }?.let { spawn = it }
+            }
             state.setMyPosition(spawn.x, spawn.y)
             _log.tryEmit("loaded ${areas.size} map areas; spawn ${spawn.x},${spawn.y}${spawn.area?.let { " in \"$it\"" } ?: ""}")
 
