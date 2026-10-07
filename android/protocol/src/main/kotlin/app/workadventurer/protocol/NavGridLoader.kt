@@ -57,6 +57,44 @@ suspend fun loadNavGrid(
     }
 }
 
+/**
+ * The room's `.tmj` text: from the disk cache when it is fresh, else downloaded and cached. The same cache entry [loadNavGrid]
+ * reads, so a room that needs its map before joining (to find a tile start layer) does not download it a second time. Only a
+ * body that is a JSON object is cached or returned, so an HTML error page served with a 200 can never poison the cache.
+ */
+suspend fun loadMapText(
+    http: OkHttpClient,
+    wamJson: String,
+    cacheDir: File? = null,
+    nowMs: () -> Long = System::currentTimeMillis,
+    ttlMs: Long = DAY_MS,
+): String? = withContext(Dispatchers.IO) {
+    try {
+        val mapUrl = Json.parseToJsonElement(wamJson).jsonObject["mapUrl"]?.jsonPrimitive?.contentOrNull
+            ?: return@withContext null
+        val file = cacheDir?.let { File(it, sha1(mapUrl) + ".tmj") }
+        val cached = file?.takeIf { it.isFile }?.readText()?.takeIf { isJsonObject(it) }
+        if (cached != null && nowMs() - file.lastModified() < ttlMs) return@withContext cached
+        val fresh = download(http, mapUrl)?.takeIf { isJsonObject(it) }
+        if (fresh != null) {
+            if (file != null) runCatching {
+                file.parentFile.mkdirs()
+                val tmp = File(file.parentFile, file.name + ".part")
+                tmp.writeText(fresh)
+                tmp.renameTo(file)
+            }
+            return@withContext fresh
+        }
+        cached // a stale map beats no map
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
+}
+
+private fun isJsonObject(s: String) = try { Json.parseToJsonElement(s) is kotlinx.serialization.json.JsonObject } catch (e: Exception) { false }
+
 private const val DOWNLOAD_TIMEOUT_S = 60L
 
 private fun download(http: OkHttpClient, url: String): String? = try {
