@@ -18,6 +18,7 @@ import app.workadventurer.app.ui.PresenceScreen
 class MainActivity : ComponentActivity() {
     private val notice = mutableStateOf<String?>(null)
     private var pendingJoin: Pair<String, String>? = null
+    private val lastName by lazy { LastName(PrefsStore(this)) }
 
     private val permissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
@@ -35,6 +36,7 @@ class MainActivity : ComponentActivity() {
                 PresenceScreen(
                     state = state,
                     notice = notice.value,
+                    initialName = lastName.get(),
                     onJoin = ::requestJoin,
                     // Movement goes straight to the session; only Join/Leave go through the foreground service.
                     onCommand = { session.dispatch(it) },
@@ -49,6 +51,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestJoin(name: String, room: String) {
         notice.value = null
+        lastName.remember(name)
         pendingJoin = name to room
         val needed = buildList {
             add(Manifest.permission.RECORD_AUDIO)

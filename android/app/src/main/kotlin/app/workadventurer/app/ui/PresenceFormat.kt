@@ -16,8 +16,11 @@ fun statusText(c: Connection): String = when (c) {
 }
 
 /** Text for the ongoing foreground-service notification. */
+fun micText(muted: Boolean): String = if (muted) "Microphone muted" else "Microphone on"
+
 fun notificationText(s: SessionState): String = when (s.connection) {
-    Connection.Connected -> "Connected · ${s.players.size} ${if (s.players.size == 1) "player" else "players"}"
+    Connection.Connected ->
+        "Connected · ${s.players.size} ${if (s.players.size == 1) "player" else "players"} · mic ${if (s.muted) "muted" else "on"}"
     else -> statusText(s.connection)
 }
 

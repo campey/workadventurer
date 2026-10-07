@@ -11,6 +11,14 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class PresenceFormatTest {
+    @Test
+    fun theMicStateReadsPlainlyAndIsPartOfTheNotificationText() {
+        assertEquals("Microphone muted", micText(true)); assertEquals("Microphone on", micText(false))
+        val s = SessionState(connection = Connection.Connected, players = emptyList(), muted = false)
+        assertEquals("Connected · 0 players · mic on", notificationText(s))
+        assertEquals("Connected · 0 players · mic muted", notificationText(s.copy(muted = true)))
+    }
+
     @Test fun statusTextCoversEveryState() {
         assertEquals("Not in a room", statusText(Connection.Disconnected))
         assertEquals("Connecting…", statusText(Connection.Connecting))
@@ -24,9 +32,9 @@ class PresenceFormatTest {
             connection = c,
             players = List(players) { Player(it, "p$it", "u$it", 0, 0, PositionMessage.Direction.DOWN) },
         )
-        assertEquals("Connected · 0 players", notificationText(state(Connection.Connected, 0)))
-        assertEquals("Connected · 1 player", notificationText(state(Connection.Connected, 1)))
-        assertEquals("Connected · 3 players", notificationText(state(Connection.Connected, 3)))
+        assertEquals("Connected · 0 players · mic muted", notificationText(state(Connection.Connected, 0)))
+        assertEquals("Connected · 1 player · mic muted", notificationText(state(Connection.Connected, 1)))
+        assertEquals("Connected · 3 players · mic muted", notificationText(state(Connection.Connected, 3)))
         // Disconnected must not read "Connecting…" (seen on a real phone after Leave).
         assertEquals("Not in a room", notificationText(state(Connection.Disconnected)))
         assertEquals("Connecting…", notificationText(state(Connection.Connecting)))

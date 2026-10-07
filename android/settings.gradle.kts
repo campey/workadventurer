@@ -8,5 +8,6 @@ dependencyResolutionManagement {
 rootProject.name = "workadventure-app"
 include(":protocol")
 include(":nav")
+include(":voice")
 include(":wa-cli")
 include(":app")

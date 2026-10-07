@@ -2,8 +2,26 @@ package app.workadventurer.protocol
 
 import app.workadventurer.nav.Facing
 import app.workadventurer.nav.Pt
+import app.workadventurer.proto.AnswerMessage
 import app.workadventurer.proto.AskPositionMessage
 import app.workadventurer.proto.BatchMessage
+import app.workadventurer.proto.ErrorMessage
+import app.workadventurer.proto.FilterType
+import app.workadventurer.proto.IceServer
+import app.workadventurer.proto.IceServersAnswer
+import app.workadventurer.proto.IceServersQuery
+import app.workadventurer.proto.JoinSpaceAnswer
+import app.workadventurer.proto.JoinSpaceQuery
+import app.workadventurer.proto.JoinSpaceRequestMessage
+import app.workadventurer.proto.LeaveSpaceRequestMessage
+import app.workadventurer.proto.MuteAudioPrivateMessage
+import app.workadventurer.proto.PrivateEventPusherToFront
+import app.workadventurer.proto.PrivateSpaceEvent
+import app.workadventurer.proto.QueryMessage
+import app.workadventurer.proto.SpaceUser
+import app.workadventurer.proto.WebRtcDisconnectMessage
+import app.workadventurer.proto.WebRtcSignal
+import app.workadventurer.proto.WebRtcStartMessage
 import app.workadventurer.proto.ClientToServerMessage
 import app.workadventurer.proto.ErrorScreenMessage
 import app.workadventurer.proto.LocatePositionMessage
@@ -42,6 +60,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -214,7 +233,7 @@ class PusherConnectionTest {
     }
 
     /** A pusher that also serves /map -> wam -> tmj, so the background grid load can run. */
-    private fun serverWithMap(fake: Fake, tmj: String?, tmjRequests: AtomicInteger = AtomicInteger()): MockWebServer {
+    private fun serverWithMap(fake: Fake, tmj: String?, tmjRequests: AtomicInteger = AtomicInteger(), areasJson: String = "[]"): MockWebServer {
         val s = MockWebServer()
         s.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -222,7 +241,7 @@ class PusherConnectionTest {
                 return when {
                     request.path!!.startsWith("/anonymLogin") -> MockResponse().setBody("""{"authToken":"TOK","userUuid":"me"}""")
                     request.path!!.startsWith("/map") -> MockResponse().setBody("""{"wamUrl":"$base/the.wam"}""")
-                    request.path == "/the.wam" -> MockResponse().setBody("""{"mapUrl":"$base/the.tmj","entities":{},"areas":[]}""")
+                    request.path == "/the.wam" -> MockResponse().setBody("""{"mapUrl":"$base/the.tmj","entities":{},"areas":$areasJson}""")
                     request.path == "/the.tmj" -> {
                         tmjRequests.incrementAndGet()
                         if (tmj != null) MockResponse().setBody(tmj) else MockResponse().setResponseCode(500)
@@ -535,6 +554,73 @@ class PusherConnectionTest {
         }
     }
 
+    @Test
+    fun aQueryResolvesWithTheAnswerThatCarriesItsId() = runBlocking<Unit> {
+        val live = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q ->
+                ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, joinSpaceAnswer = JoinSpaceAnswer(spaceUserId = "sp_${q.id}")))))
+            }
+        }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            val a = conn.query { id -> QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(spaceName = "a")) }
+            val b = conn.query { id -> QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(spaceName = "b")) }
+            assertNotEquals(a.id, b.id)
+            assertEquals("sp_${a.id}", a.joinSpaceAnswer!!.spaceUserId)
+            conn.close()
+        }
+    }
+
+    @Test
+    fun aServerErrorAnswerFailsTheQuery() = runBlocking<Unit> {
+        val live = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q -> ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, error = ErrorMessage(message = "nope"))))) }
+        }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            val e = assertFailsWith<QueryFailed> { conn.query { id -> QueryMessage(id = id, iceServersQuery = IceServersQuery()) } }
+            assertEquals("nope", e.message)
+            conn.close()
+        }
+    }
+
+    // Review Focus 6: a query nobody answers times out, and its late answer must not disturb the next query.
+    @Test
+    fun anUnansweredQueryTimesOutAndALateAnswerIsHarmless() = runBlocking<Unit> {
+        val seen = AtomicInteger()
+        val live = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q ->
+                if (seen.incrementAndGet() > 1) ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, joinSpaceAnswer = JoinSpaceAnswer(spaceUserId = "ok")))))
+                else Thread { Thread.sleep(500); ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, joinSpaceAnswer = JoinSpaceAnswer(spaceUserId = "late"))))) }.start()
+            }
+        }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertFailsWith<QueryTimeout> { // a plain exception, NOT a CancellationException (see the next test)
+                conn.query(timeoutMs = 200) { id -> QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(spaceName = "x")) }
+            }
+            delay(700) // the late answer for the first query arrives now
+            assertEquals("ok", conn.query { id -> QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(spaceName = "y")) }.joinSpaceAnswer!!.spaceUserId)
+            conn.close()
+        }
+    }
+
+    // Final review, Critical: a timed-out query used to surface as a CancellationException, which iceServers() rethrew, so the
+    // voice host's ICE-servers task was silently cancelled and every later voice event was dropped until the next reconnect.
+    @Test
+    fun anIceServersQueryTheServerNeverAnswersFallsBackToStunInsteadOfCancelling() = runBlocking<Unit> {
+        val live = LiveFake() // never answers queries
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertEquals(listOf(IceServerInfo(listOf("stun:stun.l.google.com:19302"), null, null)), conn.iceServers(timeoutMs = 200))
+            conn.close()
+        }
+    }
+
     // A room whose .wam has no start area (the campus map): the join must carry a tile of the map's "start" layer, not the
     // fixed (320,320) fallback, or the avatar lands in a corner, sees nobody, and has no route to anyone.
     @Test
@@ -551,6 +637,331 @@ class PusherConnectionTest {
                 .joinRoomFrontMessage!!.positionMessage!!
             assertEquals(5 * 32 + 16, pos.x); assertEquals(3 * 32 + 16, pos.y)
             withTimeout(5_000) { while (conn.grid.value == null) delay(10) } // let the background map load finish before the server closes
+            conn.close()
+        }
+    }
+
+    private fun spaceFake(onLeaveQuery: () -> Unit = {}) = LiveFake { ws, msg ->
+        msg.queryMessage?.let { q ->
+            when {
+                q.joinSpaceQuery != null -> ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, joinSpaceAnswer = JoinSpaceAnswer(spaceUserId = "${q.joinSpaceQuery!!.spaceName}_7")))))
+                q.leaveSpaceQuery != null -> onLeaveQuery()
+            }
+        }
+    }
+
+    @Test
+    fun aJoinSpaceRequestJoinsWithTheAdapterValuesThenWatchesTheSpace() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "open-space_bubble1")))
+            waitFor { conn.state.spaces.value.containsKey("open-space_bubble1") }
+            assertEquals("open-space_bubble1_7", conn.state.spaces.value["open-space_bubble1"])
+            val sent = generateSequence { live.fake.received.poll(2, TimeUnit.SECONDS) }.take(40).toList()
+            val join = sent.mapNotNull { it.queryMessage?.joinSpaceQuery }.single()
+            assertEquals(FilterType.ALL_USERS, join.filterType)
+            assertEquals(listOf("cameraState", "microphoneState", "screenSharingState"), join.propertiesToSync)
+            assertEquals("open-space_bubble1", sent.mapNotNull { it.addSpaceFilterMessage }.single().spaceFilterMessage!!.spaceName)
+            conn.close()
+        }
+    }
+
+    @Test
+    fun theServersOwnPropertiesToSyncWinOverTheDefaults() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp", propertiesToSync = listOf("microphoneState"))))
+            waitFor { conn.state.spaces.value.containsKey("sp") }
+            val join = generateSequence { live.fake.received.poll(2, TimeUnit.SECONDS) }.take(40).mapNotNull { it.queryMessage?.joinSpaceQuery }.first()
+            assertEquals(listOf("microphoneState"), join.propertiesToSync)
+            conn.close()
+        }
+    }
+
+    // Review Focus 7: a second join request for a space we are in, and a leave for one we never joined, are harmless.
+    @Test
+    fun repeatedJoinsAndUnknownLeavesAreHarmless() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp")))
+            waitFor { conn.state.spaces.value.containsKey("sp") }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp")))
+            live.push(ServerToClientMessage(leaveSpaceRequestMessage = LeaveSpaceRequestMessage(spaceName = "never")))
+            delay(300)
+            val sent = generateSequence { live.fake.received.poll(300, TimeUnit.MILLISECONDS) }.toList()
+            assertEquals(1, sent.count { it.queryMessage?.joinSpaceQuery != null })
+            assertEquals(0, sent.count { it.removeSpaceFilterMessage != null })
+            assertEquals(setOf("sp"), conn.state.spaces.value.keys)
+            conn.close()
+        }
+    }
+
+    @Test
+    fun aLeaveSpaceRequestUnwatchesAndLeaves() = runBlocking<Unit> {
+        val left = java.util.concurrent.CountDownLatch(1)
+        val live = spaceFake { left.countDown() }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp")))
+            waitFor { conn.state.spaces.value.containsKey("sp") }
+            live.push(ServerToClientMessage(leaveSpaceRequestMessage = LeaveSpaceRequestMessage(spaceName = "sp")))
+            waitFor { conn.state.spaces.value.isEmpty() }
+            assertTrue(left.await(3, TimeUnit.SECONDS), "leaveSpaceQuery never sent")
+            val sent = generateSequence { live.fake.received.poll(300, TimeUnit.MILLISECONDS) }.toList()
+            assertEquals("sp", sent.mapNotNull { it.removeSpaceFilterMessage }.single().spaceFilterMessage!!.spaceName)
+            conn.close()
+        }
+    }
+
+    /** Every updateSpaceUserMessage the client sent within [windowMs], as (spaceName, spaceUserId, microphoneState, maskPaths). */
+    private fun micUpdates(live: LiveFake, windowMs: Long = 600): List<List<Any?>> =
+        generateSequence { live.fake.received.poll(windowMs, TimeUnit.MILLISECONDS) }
+            .mapNotNull { it.updateSpaceUserMessage }
+            .map { listOf(it.spaceName, it.user?.spaceUserId, it.user?.microphoneState, it.updateMask?.paths) }.toList()
+
+    private suspend fun joined(live: LiveFake, conn: PusherConnection, space: String = "sp") {
+        live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = space)))
+        waitFor { conn.state.spaces.value.containsKey(space) }
+    }
+
+    @Test
+    fun turningTheMicOnInASpaceAnnouncesItAtOnceWithTheRightMask() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, micReannounceMs = listOf(0L, 100L, 300L))
+            withTimeout(5_000) { conn.connect() }
+            joined(live, conn)
+            conn.setMicOn(true)
+            val sent = micUpdates(live, 800)
+            assertEquals(listOf("sp", "sp_7", true, listOf("microphoneState")), sent.first())
+            assertEquals(3, sent.count { it[2] == true }, "0, 100 and 300 ms announcements: $sent")
+            conn.close()
+        }
+    }
+
+    @Test
+    fun joiningASpaceWhileTheMicIsOnAnnouncesAndWhileOffDoesNot() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, micReannounceMs = listOf(0L, 100L))
+            withTimeout(5_000) { conn.connect() }
+            joined(live, conn, "off")
+            assertTrue(micUpdates(live, 500).isEmpty(), "announced while the mic was off")
+            conn.setMicOn(true); micUpdates(live, 400)
+            joined(live, conn, "on")
+            val sent = micUpdates(live, 600)
+            assertEquals(listOf("on", "on"), sent.filter { it[0] == "on" }.map { it[0] }, "announced at join and once more: $sent")
+            conn.close()
+        }
+    }
+
+    // Review Focus 2
+    @Test
+    fun mutingAnnouncesOffAtOnceAndStopsPendingOnAnnouncements() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, micReannounceMs = listOf(0L, 400L, 800L))
+            withTimeout(5_000) { conn.connect() }
+            joined(live, conn)
+            conn.setMicOn(true)
+            delay(100)
+            conn.setMicOn(false)
+            val sent = micUpdates(live, 1_500)
+            assertEquals(false, sent.last()[2], "the last word must be mic-off: $sent")
+            assertEquals(1, sent.count { it[2] == true }, "an 'on' timer fired after the mute: $sent")
+            conn.close()
+        }
+    }
+
+    // Review Focus 1
+    @Test
+    fun leavingASpaceStopsItsAnnouncementsAndAnUnknownSpaceIsNeverAnnounced() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, micReannounceMs = listOf(0L, 400L, 800L))
+            withTimeout(5_000) { conn.connect() }
+            joined(live, conn)
+            conn.setMicOn(true)
+            delay(100)
+            live.push(ServerToClientMessage(leaveSpaceRequestMessage = LeaveSpaceRequestMessage(spaceName = "sp")))
+            waitFor { conn.state.spaces.value.isEmpty() }
+            val sent = micUpdates(live, 1_500)
+            assertEquals(1, sent.count { it[0] == "sp" }, "announced after leaving: $sent")
+            conn.setMicOn(false); conn.setMicOn(true) // no spaces now: nothing to announce
+            assertTrue(micUpdates(live, 400).isEmpty())
+            conn.close()
+        }
+    }
+
+    @Test
+    fun theServersSpaceUserListReannouncesWhileTheMicIsOn() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, micReannounceMs = listOf(0L))
+            withTimeout(5_000) { conn.connect() }
+            joined(live, conn)
+            conn.setMicOn(true); micUpdates(live, 300)
+            live.push(batch(SubMessage(initSpaceUsersMessage = app.workadventurer.proto.InitSpaceUsersMessage(spaceName = "sp"))))
+            assertEquals(1, micUpdates(live, 600).count { it[2] == true })
+            conn.setMicOn(false); micUpdates(live, 300)
+            live.push(batch(SubMessage(initSpaceUsersMessage = app.workadventurer.proto.InitSpaceUsersMessage(spaceName = "sp"))))
+            assertTrue(micUpdates(live, 400).isEmpty(), "re-announced while the mic was off")
+            conn.close()
+        }
+    }
+
+    // Final review (raised to Important: once the mic exists this would mean speaking into a bubble we were told to leave): a
+    // leave that arrives right behind a still-pending join must run AFTER it, not get overtaken and no-op.
+    @Test
+    fun aLeaveRightBehindASlowJoinLeavesTheSpaceAfterJoiningIt() = runBlocking<Unit> {
+        val live = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q ->
+                if (q.joinSpaceQuery != null) Thread {
+                    Thread.sleep(300)
+                    ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, joinSpaceAnswer = JoinSpaceAnswer(spaceUserId = "sp_7")))))
+                }.start()
+            }
+        }
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp")))
+            live.push(ServerToClientMessage(leaveSpaceRequestMessage = LeaveSpaceRequestMessage(spaceName = "sp")))
+            val sent = mutableListOf<ClientToServerMessage>()
+            withTimeout(5_000) {
+                while (sent.none { it.removeSpaceFilterMessage != null }) { live.fake.received.poll(100, TimeUnit.MILLISECONDS)?.let { sent += it } }
+            }
+            val add = sent.indexOfFirst { it.addSpaceFilterMessage != null }
+            val remove = sent.indexOfFirst { it.removeSpaceFilterMessage != null }
+            assertTrue(add in 0 until remove, "the space must be watched, then unwatched (add=$add, remove=$remove)")
+            assertTrue(conn.state.spaces.value.isEmpty(), "still a member of a space we were told to leave")
+            conn.close()
+        }
+    }
+
+    // Meeting-room areas: the server never invites a headless client to one the way it does for proximity bubbles, so the client
+    // must join the area's space itself when it dwells inside (the phone only ever joined bubbles).
+    private val fireAreas = """[{"id":"a1","name":"Fire pit","x":1000,"y":1000,"width":200,"height":200,
+        "properties":[{"id":"p1","type":"livekitRoomProperty","roomName":"Fire pit"}]}]"""
+
+    @Test
+    fun dwellingInAMeetingAreaJoinsItsSpaceAndLeavingItLeavesAfterTheLinger() = runBlocking<Unit> {
+        val live = spaceFake()
+        serverWithMap(live.fake, tmj = null, areasJson = fireAreas).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, meetingDwellMs = 200, meetingLingerMs = 300)
+            withTimeout(10_000) { conn.connect() }
+            assertTrue(conn.state.spaces.value.isEmpty(), "the fallback spawn is outside the area")
+            conn.move(1100.0, 1100.0, Facing.DOWN, false)
+            waitFor { conn.state.spaces.value.containsKey("9ida9r-fire-pit") } // shortHash(room url) + room name, as the web client names it
+            conn.move(0.0, 0.0, Facing.DOWN, false)
+            waitFor { conn.state.spaces.value.isEmpty() }
+            conn.close()
+        }
+    }
+
+    @Test
+    fun walkingThroughAMeetingAreaWithoutDwellingJoinsNothing() = runBlocking<Unit> {
+        val live = spaceFake()
+        serverWithMap(live.fake, tmj = null, areasJson = fireAreas).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, meetingDwellMs = 600, meetingLingerMs = 300)
+            withTimeout(10_000) { conn.connect() }
+            conn.move(1100.0, 1100.0, Facing.DOWN, false)
+            delay(100)
+            conn.move(0.0, 0.0, Facing.DOWN, false)
+            delay(1_000)
+            assertTrue(conn.state.spaces.value.isEmpty())
+            val sent = generateSequence { live.fake.received.poll(200, TimeUnit.MILLISECONDS) }.toList()
+            assertEquals(0, sent.count { it.queryMessage?.joinSpaceQuery != null }, "joined a space we only walked through")
+            conn.close()
+        }
+    }
+
+    private fun batch(vararg subs: SubMessage) = ServerToClientMessage(batchMessage = BatchMessage(payload = subs.toList()))
+    private fun privateEvent(sender: String, ev: PrivateSpaceEvent) = SubMessage(privateEvent = PrivateEventPusherToFront(
+        spaceName = "sp", receiverUserId = "me", sender = SpaceUser(spaceUserId = sender), spaceEvent = ev))
+
+    @Test
+    fun webRtcPrivateEventsBecomeVoiceEvents() = runBlocking<Unit> {
+        val live = LiveFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            val events = java.util.concurrent.CopyOnWriteArrayList<VoiceEvent>()
+            val collector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { conn.voiceEvents.collect { events += it } }
+            withTimeout(5_000) { conn.connect() }
+            live.push(batch(
+                privateEvent("sp_9", PrivateSpaceEvent(webRtcStartMessage = WebRtcStartMessage(userId = "x", initiator = false, connectionId = "c1"))),
+                privateEvent("sp_9", PrivateSpaceEvent(webRtcSignal = WebRtcSignal(signal = "{\"type\":\"offer\"}", connectionId = "c1"))),
+                privateEvent("sp_9", PrivateSpaceEvent(webRtcDisconnectMessage = WebRtcDisconnectMessage(userId = "x"))),
+            ))
+            waitFor { events.size == 3 }
+            assertEquals(VoiceEvent.Start("sp", "sp_9", "c1", false), events[0])
+            assertEquals(VoiceEvent.Signal("sp", "sp_9", "c1", "{\"type\":\"offer\"}"), events[1])
+            assertEquals(VoiceEvent.Disconnect("sp", "sp_9"), events[2])
+            collector.cancel(); conn.close()
+        }
+    }
+
+    @Test
+    fun otherPrivateEventsAreIgnoredAndLeavingASpaceEmitsSpaceLeft() = runBlocking<Unit> {
+        val live = spaceFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            val events = java.util.concurrent.CopyOnWriteArrayList<VoiceEvent>()
+            val collector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { conn.voiceEvents.collect { events += it } }
+            withTimeout(5_000) { conn.connect() }
+            live.push(batch(privateEvent("sp_9", PrivateSpaceEvent(muteAudio = MuteAudioPrivateMessage()))))
+            live.push(ServerToClientMessage(joinSpaceRequestMessage = JoinSpaceRequestMessage(spaceName = "sp")))
+            waitFor { conn.state.spaces.value.containsKey("sp") }
+            live.push(ServerToClientMessage(leaveSpaceRequestMessage = LeaveSpaceRequestMessage(spaceName = "sp")))
+            waitFor { events.isNotEmpty() }
+            assertEquals(listOf<VoiceEvent>(VoiceEvent.SpaceLeft("sp")), events.toList())
+            collector.cancel(); conn.close()
+        }
+    }
+
+    @Test
+    fun sendSignalAddressesTheRightPeerAndConnection() = runBlocking<Unit> {
+        val live = LiveFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            conn.sendSignal("sp", "sp_9", "c1", "{\"type\":\"answer\",\"sdp\":\"x\"}")
+            val pe = generateSequence { live.fake.received.poll(2, TimeUnit.SECONDS) }.first { it.privateEvent != null }.privateEvent!!
+            assertEquals("sp", pe.spaceName); assertEquals("sp_9", pe.receiverUserId)
+            assertEquals("c1", pe.spaceEvent!!.webRtcSignal!!.connectionId)
+            assertEquals("{\"type\":\"answer\",\"sdp\":\"x\"}", pe.spaceEvent!!.webRtcSignal!!.signal)
+            conn.close()
+        }
+    }
+
+    @Test
+    fun iceServersComeFromTheServerAndFallBackToStunWhenItFails() = runBlocking<Unit> {
+        val ok = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q ->
+                if (q.iceServersQuery != null) ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id,
+                    iceServersAnswer = IceServersAnswer(iceServers = listOf(IceServer(urls = listOf("turn:t.example:3478"), username = "u", credential = "c")))))))
+            }
+        }
+        server(ok.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertEquals(listOf(IceServerInfo(listOf("turn:t.example:3478"), "u", "c")), conn.iceServers())
+            conn.close()
+        }
+        val bad = LiveFake { ws, msg ->
+            msg.queryMessage?.let { q -> ws.send(s2c(ServerToClientMessage(answerMessage = AnswerMessage(id = q.id, error = ErrorMessage(message = "no"))))) }
+        }
+        server(bad.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertEquals(listOf(IceServerInfo(listOf("stun:stun.l.google.com:19302"), null, null)), conn.iceServers())
             conn.close()
         }
     }

@@ -38,6 +38,7 @@ sealed interface Command {
     data class InvitePlayer(val userId: Int) : Command
 
     /** Answer yes to an invitation we received, then walk to whoever sent it. */
+    data class SetMuted(val muted: Boolean) : Command
     data class AcceptInvite(val senderUuid: String) : Command { override fun toString() = "AcceptInvite" } // uuid is an email
     data class DeclineInvite(val senderUuid: String) : Command { override fun toString() = "DeclineInvite" }
 }
@@ -73,9 +74,19 @@ data class SessionState(
     val activity: Activity = Activity.Idle,
     val pendingInvites: List<Invite> = emptyList(), // invitations we received and haven't answered
     val inviteStatus: InviteStatus? = null,
+    /** The microphone. Every join starts muted: the phone never broadcasts from a pocket by surprise. */
+    val muted: Boolean = true,
 )
 
 typealias ConnectionFactory = (RoomConfig) -> PusherConnection
+
+/** Started once per live connection after it is Connected; the returned handle is closed when that connection ends. */
+typealias VoiceHost = (PusherConnection) -> VoiceHandle
+
+/** What the session can ask of a running voice mesh. */
+interface VoiceHandle : AutoCloseable {
+    fun setMuted(muted: Boolean)
+}
 
 // WorkAdventure (v1.34.0 defaults, back/src/Enum/EnvironmentVariableValidator.ts): two players form a bubble at
 // <= MINIMUM_DISTANCE = 64 px, and you join an existing bubble at <= GROUP_RADIUS = 48 px. "Walk to a player" must
@@ -111,6 +122,9 @@ class WaSession(
     private val backoffMs: (attempt: Int) -> Long = { minOf(30_000L, 1_000L shl (it - 1).coerceAtMost(5)) },
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 }, // monotonic: a clock change must not stretch walk deadlines
     private val stableAfterMs: Long = 30_000,
+    private val voiceHost: VoiceHost = { object : VoiceHandle { override fun setMuted(muted: Boolean) {}; override fun close() {} } },
+    /** Why connections drop or fail (messages only: no ids, no uuids). Goes to logcat in the app. */
+    private val log: (String) -> Unit = {},
 ) {
     private val _state = MutableStateFlow(SessionState())
     val state: StateFlow<SessionState> = _state.asStateFlow()
@@ -121,6 +135,13 @@ class WaSession(
     private var conn: PusherConnection? = null
     private var moveJob: Job? = null
     private var moveSeq = 0
+    private var voiceHandle: VoiceHandle? = null
+
+    /** Caller holds [lock]. The mic follows the mute choice on both the connection (announcements) and the voice (capture). */
+    private fun applyMute(muted: Boolean) {
+        conn?.setMicOn(!muted)
+        voiceHandle?.setMuted(muted)
+    }
 
     fun dispatch(cmd: Command) {
         synchronized(lock) {
@@ -157,6 +178,11 @@ class WaSession(
                         val centre = Pt(a.x + a.w / 2.0, a.y + a.h / 2.0)
                         nav.navTo(c.grid.value?.snapToFree(centre.x, centre.y) ?: centre, stopWithin = 24.0)
                     }
+                }
+                is Command.SetMuted -> {
+                    // Remembered either way; only applied to a live connection. A Join resets it (muted), see SessionState.
+                    _state.update { it.copy(muted = cmd.muted) }
+                    if (_state.value.connection == Connection.Connected) applyMute(cmd.muted)
                 }
                 Command.StopMoving -> stopMovement()
                 is Command.InvitePlayer -> {
@@ -277,15 +303,22 @@ class WaSession(
             val c = factory(cfg)
             if (!adopt(gen, c)) { c.close(); return }
             var upAt = -1L
+            var voice: VoiceHandle? = null
             try {
                 c.connect()
                 everConnected = true
                 upAt = nowMs()
                 setState(gen) { it.copy(connection = Connection.Connected, areas = c.state.areas) }
+                voice = try { voiceHost(c) } catch (e: Exception) { null } // voice must never take presence down with it
+                val handle = voice
+                synchronized(lock) { if (gen == generation) { voiceHandle = handle; applyMute(_state.value.muted) } }
                 coroutineScope {
                     // A child of this run, so it can't outlive it or leak past a Leave.
                     val mirror = launch { mirrorState(c, gen) }
-                    try { c.closed.await() } finally { mirror.cancel() }
+                    try {
+                        val closed = c.closed.await()
+                        log("connection dropped: ${closed.code} ${closed.reason}") // so "Reconnecting" always has a reason on record
+                    } finally { mirror.cancel() }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -295,10 +328,14 @@ class WaSession(
                     return
                 }
                 // After an earlier success a join failure is treated as transient: retry below.
+                log("join failed after an earlier success, retrying: ${e.message}")
             } catch (e: Exception) {
                 // transient: retry below
+                log("connection attempt failed, retrying: ${e.javaClass.simpleName}: ${e.message}")
             } finally {
                 synchronized(lock) { if (gen == generation) stopMovement() }
+                synchronized(lock) { if (voiceHandle === voice) voiceHandle = null }
+                try { voice?.close() } catch (e: Exception) { /* never let voice cleanup break the reconnect loop */ }
                 c.close()
                 c.state.clear()
             }

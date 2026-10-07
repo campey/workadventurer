@@ -2,7 +2,12 @@ package app.workadventurer.protocol
 
 import app.workadventurer.nav.Facing
 import app.workadventurer.proto.GroupDeleteMessage
+import app.workadventurer.proto.AddSpaceUserMessage
 import app.workadventurer.proto.GroupUpdateMessage
+import app.workadventurer.proto.InitSpaceUsersMessage
+import app.workadventurer.proto.RemoveSpaceUserPusherToFrontMessage
+import app.workadventurer.proto.SpaceUser
+import app.workadventurer.proto.UpdateSpaceUserPusherToFrontMessage
 import app.workadventurer.proto.PositionMessage
 import app.workadventurer.proto.SubMessage
 import app.workadventurer.proto.UserJoinedMessage
@@ -122,5 +127,37 @@ class RoomStateTest {
         assertEquals(false, p.toString().contains(email), p.toString())
         assertEquals(false, i.toString().contains(email), i.toString())
         assertEquals(true, p.toString().contains("Ada"))
+    }
+
+    @Test
+    fun spaceMembershipIsTrackedAndRemoved() {
+        val s = RoomState()
+        s.addSpace("open-space", "open-space_7")
+        assertEquals(mapOf("open-space" to "open-space_7"), s.spaces.value)
+        s.removeSpace("open-space")
+        assertEquals(emptyMap(), s.spaces.value)
+        s.removeSpace("never-joined") // harmless
+    }
+
+    @Test
+    fun spaceUserNamesFollowInitAddUpdateAndRemove() {
+        val s = RoomState()
+        s.applySub(SubMessage(initSpaceUsersMessage = InitSpaceUsersMessage(spaceName = "sp", users = listOf(
+            SpaceUser(spaceUserId = "sp_1", name = "Ada"), SpaceUser(spaceUserId = "sp_2", name = "Bob")))))
+        assertEquals(mapOf("sp_1" to "Ada", "sp_2" to "Bob"), s.spaceUserNames.value)
+        s.applySub(SubMessage(addSpaceUserMessage = AddSpaceUserMessage(spaceName = "sp", user = SpaceUser(spaceUserId = "sp_3", name = "Cy"))))
+        s.applySub(SubMessage(updateSpaceUserMessage = UpdateSpaceUserPusherToFrontMessage(spaceName = "sp", user = SpaceUser(spaceUserId = "sp_1", name = "Ada L"))))
+        s.applySub(SubMessage(updateSpaceUserMessage = UpdateSpaceUserPusherToFrontMessage(spaceName = "sp", user = SpaceUser(spaceUserId = "sp_2", name = "")))) // no name in the update: keep
+        s.applySub(SubMessage(removeSpaceUserMessage = RemoveSpaceUserPusherToFrontMessage(spaceName = "sp", spaceUserId = "sp_3")))
+        assertEquals(mapOf("sp_1" to "Ada L", "sp_2" to "Bob"), s.spaceUserNames.value)
+    }
+
+    @Test
+    fun clearForgetsSpaces() {
+        val s = RoomState()
+        s.addSpace("sp", "sp_1")
+        s.applySub(SubMessage(addSpaceUserMessage = AddSpaceUserMessage(spaceName = "sp", user = SpaceUser(spaceUserId = "sp_2", name = "Bob"))))
+        s.clear()
+        assertEquals(true, s.spaces.value.isEmpty() && s.spaceUserNames.value.isEmpty())
     }
 }

@@ -12,6 +12,104 @@ anything here that contradicts it means the spec gets revised first.
 - The Gradle wrapper was generated from a one-off Gradle 8.10.2 download (avoids
   `brew install gradle`, which pulls a from-source `openjdk` on macOS 14).
 
+## G3 — voice: library spike, step 1 (2026-10-06)
+
+Question: does LiveKit's libwebrtc build run on the phone and produce the audio offer a WorkAdventure browser peer needs?
+Throwaway probe: `voice/src/androidTest/.../WebRtcSpikeTest.kt`, run on the S25 Ultra with
+`./gradlew :voice:connectedDebugAndroidTest`. Measured on the phone, not unit-tested.
+
+- **Which artifact.** `livekit-android` 2.29.0 depends on `io.github.webrtc-sdk:android-prefixed:144.7559.14`, the
+  *prefixed* build (classes are `livekit.org.webrtc.*`, not `org.webrtc.*`). The mesh uses that exact artifact and
+  version directly, so G4's `livekit-android` shares one native stack. (The plain `io.github.webrtc-sdk:android` artifact
+  is a different build; mixing the two would put two copies of libwebrtc in the app.)
+- **It runs.** `PeerConnectionFactory` initialises, an audio track plus a `simplepeer` data channel produce an offer with
+  `m=audio` (Opus 111, red, G722, PCMU/A, telephone-event), `m=application` (SCTP data channel), DTLS `actpass`.
+- **Needs `ACCESS_NETWORK_STATE`, or the whole process aborts.** libwebrtc's network monitor calls
+  `ConnectivityManager.getActiveNetworkInfo`; without the permission it throws and a native `CHECK` in `jvm.cc` kills the
+  process (SIGABRT on `network_thread`, nothing catchable). Declared in `voice/src/main/AndroidManifest.xml` along with
+  INTERNET, MODIFY_AUDIO_SETTINGS, RECORD_AUDIO.
+- **Gathering started right after the factory is created finds no network.** Offer created immediately: 0 candidates and
+  "gathering complete" within milliseconds. After a 1.5 s pause: 2 host + 2 srflx candidates, all in the offer. libwebrtc
+  learns the network list asynchronously. Production must create the engine early (at join, not at the first bubble) and
+  must not trust a very fast "complete" with zero candidates, the same guard the Node client has (`candidateCount === 0`
+  tears down).
+- **Not yet tried:** answering a real browser offer (with its `m=video`), being offered to, the microphone and echo
+  cancellation, the WorkAdventure space/signalling path (the Android client has no space handling yet).
+
+## G3 M1 live check, space join (2026-10-06)
+
+Phone joined as `g3-voice`, the user (David, in a browser) walked next to it, then away. From the phone's own log:
+- 17 s after joining, within a second of David arriving: `entered bubble 1637`, `joined space <room url>#1637#<timestamp>`,
+  `webRtcStart conn=<uuid> initiator=true`. No `joinSpace ... failed`.
+- The space name is the room URL plus the bubble's group id and a timestamp, not a fixed name.
+- **Who gets `initiator=true`.** When a browser avatar walks up to a phone that is already standing there, the phone is the
+  *existing* member and is told to send the offer. So being the offerer (M4) is the common case whenever people come to the
+  phone; answering (M2) only happens when the phone walks into someone else's bubble. The M2 live check therefore has the
+  phone do the walking.
+- Two more `webRtcStart` arrived 20 s and 41 s later with `initiator=false` and fresh connection ids (the server's retry
+  after nothing answered the first, since this build only logs and ignores them).
+- Walking away: `left space`, `left bubble`, then `webRtcDisconnect` from the peer, in that order.
+
+## G3 M3 live check, speaking, mute, meeting areas (2026-10-06 / 07)
+
+Measured live against browser peers on the S25 Ultra unless marked.
+
+- **Two-way audio works, both roles.** Phone as answerer and as offerer. Offerer role matters: connect took 1.25 s as offerer
+  vs ~21 s waiting for the browser's own timeout and the server's role swap.
+- **No red mic.** The mic track is shared and always sending; mute is `setMicrophoneMute`, which zero-fills the capture buffer,
+  so RTP keeps flowing (silence) and the browser's indicator stays correct. Mute/unmute shows properly in the browser.
+- **Browser that joins muted** needs a second negotiation when its user unmutes. As answerer it sends `{type:"renegotiate"}`
+  and waits for the initiator to offer again: we must re-offer (offerer only). As offerer it re-offers itself and we must answer
+  a second offer on the live connection (`attachMic` and answering are repeatable). Both were bugs found live and are pinned by
+  on-device tests (`BrowserLikeOfferTest`).
+- **Mic-in-use indicator while muted (decision, not measured on device):** capture keeps running while muted
+  (`setMicrophoneMute` does not stop `AudioRecord`), so Android's mic indicator stays lit and capture costs some battery while
+  the UI says "muted". Stopping capture would end the zero-RTP stream and bring back the red mic. Kept, deliberately.
+- **Meeting areas** join after a 1.5 s dwell and leave after 2.5 s outside; space name is `slugify(shortHash(roomUrl)-name)`,
+  from the room URL exactly as typed (a trailing slash or `#entry` hashes differently and lands in an empty space).
+- **Not handled yet:** `livekitInvitationMessage` (G4) — in a large area meeting the server moves everyone to LiveKit and the
+  phone would sit in the space announcing mic-on with no media; `transceiverRequest`; the same browser reachable through both an
+  area space and a bubble (two PeerConnections, mic sent twice) — supersede is keyed on (space, peer).
+- **Review finding fixed:** libwebrtc objects were read by the 5 s stats loop on another thread while the mesh coroutine
+  negotiated or disposed them (`getTransceivers()` disposes the previous wrappers). Stats now run on the mesh coroutine.
+  Rule: only the mesh coroutine touches a `PeerConnection`.
+- **Not yet checked live:** speaking with the screen locked, mute from the notification, mute surviving a reconnect.
+
+## G3 M2 live check, hearing a browser peer (2026-10-06)
+
+The phone (`g3-voice`) walked to the user's browser avatar (David, mic on); the user heard David's voice come out of the
+phone, then with the screen locked, then across four bubble leave/enter rounds. From the phone's own log:
+- **It works against a real browser.** `webRtcStart … initiator=false`, then `answered` 0.3-0.5 s later, audio plays,
+  also with the screen locked (`mWakefulness=Dozing`), no crash, no `AndroidRuntime`/native abort.
+- **The server tells the PHONE to initiate first, in both directions.** Each of the 4 rounds began with `initiator=true`
+  (ignored: the offerer role is M4), and about **21 s later** (21.0, 20.7, 21.3, 21.0 s) a second `webRtcStart` arrived
+  with a new connection id and `initiator=false`, which we answered. In the first M1 run the phone was the one stood still
+  and got `true` first as well; here the phone walked into the browser's bubble and still got `true` first. So the earlier
+  reading "existing members get initiator=true, the newcomer answers" does not predict who is told to offer.
+  **Mechanism, from the server source** (`back/src/Model/Strategies/WebRTCCommunicationStrategy.ts`, v1.34.0):
+  `establishConnection(user1, user2)` sends `initiator=true` to the user who was already watching the space and
+  `initiator=false` to the one who just started watching. The phone joins and watches within milliseconds of the bubble
+  forming, a browser takes longer, so the phone is nearly always the "existing" member and is told to offer. We ignored that,
+  so the browser waited for an offer that never came, hit its own connection timeout (~20 s), and sent
+  `meetingConnectionRestartMessage`; `handleMeetingConnectionRestartMessage` then re-sends both starts with the roles swapped,
+  which is the second `webRtcStart` (`initiator=false`) we answered.
+  Result: **audio started about 21 s after entering a bubble.** M4 (the phone as offerer) removes that wait; it is needed
+  for usable voice, not optional.
+- **The offerer role fixes the wait (Task 11, measured).** With the phone offering when told `initiator=true`: start at
+  23:30:35.189, `offered` at 23:30:36.435 (1.25 s, mostly the engine's 1.5 s warm-up and ICE gathering), and the user
+  reported the audio connecting "much quicker", against about 21 s before. The offerer creates the `simplepeer` data channel
+  and a receive-only audio transceiver (no microphone until M3). An on-device loopback test (our offerer and our answerer
+  negotiating in one process) reaches "connected" 3 runs out of 3. One browser signal right after the offer was logged as
+  "unparseable or unsupported" and ignored (`renegotiate` (a browser that joined muted: it needs a re-offer from us, see the M3 section) or `transceiverRequest` (still unhandled)); worth logging its
+  `type` next time.
+- Clean teardown every round: `left space`, `left bubble`, then the peer's `webRtcDisconnect`. App memory did not grow
+  across the rounds (PSS about 151 MB before, about 96 MB after).
+- libwebrtc build findings (see the unit and instrumented tests): the factory needs video codecs registered (software
+  encoder/decoder factories) or it aborts the process natively on a real browser offer ("`front()` called on an empty
+  vector"); with them registered the answer includes the video section as `recvonly` rather than rejecting it. And ICE
+  gathering `COMPLETE` can arrive before the first candidate is delivered (2 of 3 answers had no candidates), so
+  `WebRtcPeerLink` waits for a first candidate, then up to 1 s for the rest.
+
 ## G2 — movement (2026-10-05 / 06)
 
 **Verdict: walk-to and invitations (both directions, including locating a player outside the viewport) work on a real

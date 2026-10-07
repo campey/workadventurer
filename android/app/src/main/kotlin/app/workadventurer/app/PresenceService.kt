@@ -66,12 +66,13 @@ class PresenceService : Service() {
                             ServiceCompat.stopForeground(this@PresenceService, ServiceCompat.STOP_FOREGROUND_REMOVE)
                             stopSelf()
                         } else {
-                            post(notificationText(s))
+                            post(notificationText(s), s.muted)
                             syncInviteNotifications(inviteNotifications(s.pendingInvites))
                         }
                     }
                 }
             }
+            ACTION_TOGGLE_MUTE -> session.dispatch(Command.SetMuted(!session.state.value.muted))
             ACTION_ACCEPT_INVITE, ACTION_DECLINE_INVITE -> {
                 // The notification carries only its own id; the sender's uuid (an email) stays inside the session.
                 val id = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
@@ -102,8 +103,8 @@ class PresenceService : Service() {
         super.onDestroy()
     }
 
-    private fun post(text: String) = synchronized(postLock) {
-        if (active) getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(text))
+    private fun post(text: String, muted: Boolean) = synchronized(postLock) {
+        if (active) getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(text, muted))
     }
 
     private val postedInvites = mutableSetOf<Int>() // guarded by postLock
@@ -161,10 +162,15 @@ class PresenceService : Service() {
             .build()
     }
 
-    private fun notification(text: String): Notification {
+    private fun notification(text: String, muted: Boolean = true): Notification {
         val leave = PendingIntent.getService(
             this, 0,
             Intent(this, PresenceService::class.java).setAction(ACTION_LEAVE),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        val toggleMute = PendingIntent.getService(
+            this, 1,
+            Intent(this, PresenceService::class.java).setAction(ACTION_TOGGLE_MUTE),
             PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -172,6 +178,7 @@ class PresenceService : Service() {
             .setContentTitle("WorkAdventure")
             .setContentText(text)
             .setOngoing(true)
+            .addAction(android.R.drawable.ic_btn_speak_now, if (muted) "Unmute" else "Mute", toggleMute)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Leave", leave)
             .build()
     }
@@ -196,6 +203,7 @@ class PresenceService : Service() {
     companion object {
         const val ACTION_JOIN = "app.workadventurer.action.JOIN"
         const val ACTION_LEAVE = "app.workadventurer.action.LEAVE"
+        const val ACTION_TOGGLE_MUTE = "app.workadventurer.action.TOGGLE_MUTE"
         const val ACTION_ACCEPT_INVITE = "app.workadventurer.action.ACCEPT_INVITE"
         const val ACTION_DECLINE_INVITE = "app.workadventurer.action.DECLINE_INVITE"
         const val EXTRA_NAME = "name"

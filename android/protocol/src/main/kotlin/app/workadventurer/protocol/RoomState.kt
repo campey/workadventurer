@@ -32,6 +32,17 @@ class RoomState {
     private val _pose = MutableStateFlow(Pose(0.0, 0.0, Facing.DOWN))
     private val _invites = MutableStateFlow<List<Invite>>(emptyList())
     private val _inviteOutcome = MutableStateFlow<InviteOutcome?>(null)
+    private val _spaces = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val _spaceUserNames = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    /** Spaces we are a member of: space name to our space-user id. */
+    val spaces: StateFlow<Map<String, String>> = _spaces.asStateFlow()
+
+    /** Display names of space members, by space-user id. Names only: never a uuid. */
+    val spaceUserNames: StateFlow<Map<String, String>> = _spaceUserNames.asStateFlow()
+
+    fun addSpace(spaceName: String, spaceUserId: String) { _spaces.update { it + (spaceName to spaceUserId) } }
+    fun removeSpace(spaceName: String) { _spaces.update { it - spaceName } }
 
     val players: StateFlow<Map<Int, Player>> = _players.asStateFlow()
     val myUserId: StateFlow<Int?> = _myUserId.asStateFlow()
@@ -86,6 +97,13 @@ class RoomState {
             else if (_groupId.value == g.groupId) _groupId.value = null
         }
         sub.groupDeleteMessage?.let { g -> if (_groupId.value == g.groupId) _groupId.value = null }
+        sub.initSpaceUsersMessage?.let { m ->
+            _spaceUserNames.update { cur -> cur + m.users.filter { it.name.isNotBlank() }.associate { it.spaceUserId to it.name } }
+        }
+        (sub.addSpaceUserMessage?.user ?: sub.updateSpaceUserMessage?.user)?.let { u ->
+            if (u.name.isNotBlank()) _spaceUserNames.update { it + (u.spaceUserId to u.name) }
+        }
+        sub.removeSpaceUserMessage?.let { r -> _spaceUserNames.update { it - r.spaceUserId } }
     }
 
     /** Reset live room state (players/group/identity) for a reconnect. Areas are per-room and kept. */
@@ -95,5 +113,7 @@ class RoomState {
         _groupId.value = null
         _invites.value = emptyList()
         _inviteOutcome.value = null
+        _spaces.value = emptyMap()
+        _spaceUserNames.value = emptyMap()
     }
 }

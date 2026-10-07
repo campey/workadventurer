@@ -4,19 +4,36 @@ import app.workadventurer.nav.Facing
 import app.workadventurer.nav.MovementSink
 import app.workadventurer.nav.NavGrid
 import app.workadventurer.nav.Pt
+import app.workadventurer.proto.AddSpaceFilterMessage
+import app.workadventurer.proto.AnswerMessage
 import app.workadventurer.proto.AskPositionMessage
 import app.workadventurer.proto.AvailabilityStatus
 import app.workadventurer.proto.ClientToServerMessage
+import app.workadventurer.proto.FilterType
+import app.workadventurer.proto.IceServersQuery
+import app.workadventurer.proto.JoinSpaceQuery
+import app.workadventurer.proto.LeaveSpaceQuery
+import app.workadventurer.proto.RemoveSpaceFilterMessage
+import app.workadventurer.proto.SpaceFilterMessage
+import app.workadventurer.proto.SpaceUser
+import app.workadventurer.proto.UpdateSpaceUserMessage
 import app.workadventurer.proto.JoinRoomFrontMessage
 import app.workadventurer.proto.MeetingInvitationRequestMessage
 import app.workadventurer.proto.MeetingInvitationResponseMessage
 import app.workadventurer.proto.PingMessage
 import app.workadventurer.proto.PositionMessage
+import app.workadventurer.proto.PrivateEventFrontToPusher
+import app.workadventurer.proto.PrivateEventPusherToFront
+import app.workadventurer.proto.PrivateSpaceEvent
+import app.workadventurer.proto.QueryMessage
 import app.workadventurer.proto.ServerToClientMessage
 import app.workadventurer.proto.UserMovesMessage
 import app.workadventurer.proto.ViewportMessage
+import app.workadventurer.proto.WebRtcSignal
+import com.google.protobuf.FieldMask
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +48,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -42,6 +61,7 @@ import okio.ByteString.Companion.toByteString
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 class JoinFailed(message: String) : Exception(message)
@@ -58,6 +78,9 @@ open class PusherConnection(
     private val keepAliveMs: Long = 5_000,
     private val joinTimeoutMs: Long = 20_000,
     private val cacheDir: File? = null,
+    private val micReannounceMs: List<Long> = listOf(0L, 1_000L, 3_000L),
+    private val meetingDwellMs: Long = 1_500L,
+    private val meetingLingerMs: Long = 2_500L,
 ) : MovementSink {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val seq = AtomicLong(1)
@@ -105,6 +128,162 @@ open class PusherConnection(
             accept = accept, requestSenderUserUuid = senderUuid,
         )))
         state.removeInvite(senderUuid)
+    }
+
+    private val pendingQueries = ConcurrentHashMap<Int, CompletableDeferred<AnswerMessage>>()
+    private val queryIds = AtomicInteger(1)
+
+    /** Send a query and wait for the answer that carries its id. */
+    open suspend fun query(timeoutMs: Long = 10_000, build: (id: Int) -> QueryMessage): AnswerMessage {
+        val id = queryIds.getAndIncrement()
+        val answer = CompletableDeferred<AnswerMessage>()
+        pendingQueries[id] = answer
+        try {
+            send(ClientToServerMessage(queryMessage = build(id)))
+            val a = withTimeoutOrNull(timeoutMs) { answer.await() } ?: throw QueryTimeout("no answer to query $id within $timeoutMs ms")
+            a.error?.let { throw QueryFailed(it.message) }
+            return a
+        } finally {
+            pendingQueries.remove(id, answer)
+        }
+    }
+
+    private val _voiceEvents = MutableSharedFlow<VoiceEvent>(extraBufferCapacity = 64)
+
+    /** WebRTC start/signal/disconnect from other space members, and "we left a space". */
+    open val voiceEvents: SharedFlow<VoiceEvent> get() = _voiceEvents.asSharedFlow()
+
+    open fun sendSignal(spaceName: String, peerSpaceUserId: String, connectionId: String, signal: String) {
+        send(ClientToServerMessage(privateEvent = PrivateEventFrontToPusher(
+            spaceName = spaceName, receiverUserId = peerSpaceUserId,
+            spaceEvent = PrivateSpaceEvent(webRtcSignal = WebRtcSignal(signal = signal, connectionId = connectionId)),
+        )))
+    }
+
+    open suspend fun iceServers(timeoutMs: Long = 10_000): List<IceServerInfo> = try {
+        query(timeoutMs) { id -> QueryMessage(id = id, iceServersQuery = IceServersQuery()) }
+            .iceServersAnswer?.iceServers.orEmpty()
+            .map { IceServerInfo(it.urls, it.username, it.credential) }
+            .ifEmpty { FALLBACK_ICE }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        _log.tryEmit("iceServersQuery failed (${e.message}); using default STUN")
+        FALLBACK_ICE
+    }
+
+    private fun onPrivateEvent(p: PrivateEventPusherToFront) {
+        val peer = p.sender?.spaceUserId.orEmpty()
+        val ev = p.spaceEvent ?: return
+        ev.webRtcStartMessage?.let {
+            _log.tryEmit("webRtcStart conn=${it.connectionId} initiator=${it.initiator}")
+            _voiceEvents.tryEmit(VoiceEvent.Start(p.spaceName, peer, it.connectionId, it.initiator))
+        }
+        ev.webRtcSignal?.let { _voiceEvents.tryEmit(VoiceEvent.Signal(p.spaceName, peer, it.connectionId, it.signal)) }
+        ev.webRtcDisconnectMessage?.let {
+            _log.tryEmit("webRtcDisconnect from a peer in ${p.spaceName}")
+            _voiceEvents.tryEmit(VoiceEvent.Disconnect(p.spaceName, peer))
+        }
+    }
+
+    private var meetingTracker: MeetingAreaTracker? = null
+
+    /**
+     * Meeting-room areas (a `livekitRoomProperty`): the server never invites a headless client to one the way it does for
+     * proximity bubbles, so we join the area's space ourselves when we dwell inside it and leave after lingering outside.
+     * Without this the phone only ever joined bubbles and was deaf and mute in area meetings.
+     */
+    private fun startMeetingAreas() {
+        if (state.areas.none { it.meetingRoom != null }) return
+        val tracker = MeetingAreaTracker(scope, meetingDwellMs, meetingLingerMs, { joinSpace(it, emptyList()) }, { leaveSpace(it) })
+        meetingTracker = tracker
+        scope.launch {
+            state.myPose.collect {
+                tracker.update(state.currentAreas().mapNotNull { a -> a.meetingRoom?.let { areaMeetingSpaceName(cfg.roomUrl, it) } }.toSet())
+            }
+        }
+    }
+
+    @Volatile var micOn = false
+        private set
+    private val micTimers = ConcurrentHashMap<String, Job>()
+
+    /** Tell every space we are in whether our mic is live; while it is on, repeat the announcement (see [micReannounceMs]). */
+    open fun setMicOn(on: Boolean) {
+        micOn = on
+        _log.tryEmit("mic ${if (on) "on" else "off"}: announcing to ${state.spaces.value.size} space(s)")
+        for (space in state.spaces.value.keys) if (on) scheduleMicAnnouncements(space) else { cancelMicTimer(space); announceMic(space) }
+    }
+
+    private fun announceMic(spaceName: String) {
+        val mine = state.spaces.value[spaceName] ?: return // never joined, or already left
+        send(ClientToServerMessage(updateSpaceUserMessage = UpdateSpaceUserMessage(
+            spaceName = spaceName,
+            user = SpaceUser(spaceUserId = mine, microphoneState = micOn),
+            updateMask = FieldMask(paths = listOf("microphoneState")),
+        )))
+    }
+
+    // A single announcement right after joining races the server registering us and the peers watching us; if it is missed
+    // they treat us as muted and never play our audio (issue #10). So repeat it, but only while the mic is on.
+    private fun scheduleMicAnnouncements(spaceName: String) {
+        micTimers.remove(spaceName)?.cancel()
+        micTimers[spaceName] = scope.launch {
+            var last = 0L
+            for (at in micReannounceMs) {
+                delay(at - last); last = at
+                if (!micOn || !state.spaces.value.containsKey(spaceName)) return@launch
+                announceMic(spaceName)
+            }
+        }
+    }
+
+    private fun cancelMicTimer(spaceName: String) { micTimers.remove(spaceName)?.cancel() }
+
+    private val spaceMutex = Mutex()
+
+    private fun joinSpace(spaceName: String, props: List<String>) {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { // UNDISPATCHED: take the mutex in arrival order, so a leave can never overtake a join
+            spaceMutex.withLock {
+                if (state.spaces.value.containsKey(spaceName)) return@launch // already a member
+                try {
+                    val answer = query { id ->
+                        QueryMessage(id = id, joinSpaceQuery = JoinSpaceQuery(
+                            spaceName = spaceName, filterType = FilterType.ALL_USERS,
+                            propertiesToSync = props.ifEmpty { DEFAULT_SPACE_PROPS },
+                        ))
+                    }
+                    state.addSpace(spaceName, answer.joinSpaceAnswer?.spaceUserId.orEmpty())
+                    // "watch" the space: without this the server never sets up peer connections for us
+                    send(ClientToServerMessage(addSpaceFilterMessage = AddSpaceFilterMessage(SpaceFilterMessage(spaceName = spaceName))))
+                    _log.tryEmit("joined space $spaceName")
+                    if (micOn) scheduleMicAnnouncements(spaceName)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _log.tryEmit("joinSpace $spaceName failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun leaveSpace(spaceName: String) {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            spaceMutex.withLock {
+                if (!state.spaces.value.containsKey(spaceName)) return@launch // never joined
+                state.removeSpace(spaceName)
+                cancelMicTimer(spaceName)
+                _voiceEvents.tryEmit(VoiceEvent.SpaceLeft(spaceName))
+                send(ClientToServerMessage(removeSpaceFilterMessage = RemoveSpaceFilterMessage(SpaceFilterMessage(spaceName = spaceName))))
+                _log.tryEmit("left space $spaceName")
+            }
+            // fire and forget: the server cleans up our membership either way
+            try {
+                query { id -> QueryMessage(id = id, leaveSpaceQuery = LeaveSpaceQuery(spaceName = spaceName)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) { /* ignored */ }
+        }
     }
 
     private val pendingLocates = ConcurrentHashMap<String, CompletableDeferred<Pt>>()
@@ -165,6 +344,8 @@ open class PusherConnection(
             withTimeoutOrNull(joinTimeoutMs) { joined.await() }
                 ?: throw JoinFailed("timed out waiting for roomJoinedMessage")
 
+            startMeetingAreas()
+
             // The ~1.5 MB map must never delay joining, so the collision grid loads in the background; until it
             // arrives (or forever, if it fails) movement is straight-line.
             wam?.let { text ->
@@ -195,6 +376,7 @@ open class PusherConnection(
 
     /** Idempotent. Completes [closed] right away rather than waiting for the server to echo the close. */
     open fun close() {
+        meetingTracker?.close()
         keepAlive?.cancel()
         ws?.close(1000, "bye")
         _closed.complete(Closed(1000, "closed by client"))
@@ -259,9 +441,13 @@ open class PusherConnection(
             for (sub in b.payload) {
                 if (sub.pingMessage != null) {
                     send(ClientToServerMessage(pingMessage = PingMessage()))
+                } else if (sub.privateEvent != null) {
+                    onPrivateEvent(sub.privateEvent!!)
                 } else {
                     val groupBefore = state.groupId.value
                     state.applySub(sub)
+                    // the server has registered us in the space: a safe moment to (re-)announce mic-on, so nobody has us cached as muted
+                    sub.initSpaceUsersMessage?.let { if (micOn && state.spaces.value.containsKey(it.spaceName)) announceMic(it.spaceName) }
                     val groupAfter = state.groupId.value
                     // so a log can answer "did the server put us in a bubble?" from the phone's side
                     if (groupAfter != groupBefore) _log.tryEmit(if (groupAfter != null) "entered bubble $groupAfter" else "left bubble")
@@ -311,6 +497,9 @@ open class PusherConnection(
             if (p != null) pendingLocates.remove(loc.userUuid)?.complete(Pt(p.x.toDouble(), p.y.toDouble()))
             return
         }
+        m.joinSpaceRequestMessage?.let { joinSpace(it.spaceName, it.propertiesToSync); return }
+        m.leaveSpaceRequestMessage?.let { leaveSpace(it.spaceName); return }
+        m.answerMessage?.let { pendingQueries.remove(it.id)?.complete(it); return }
         m.errorScreenMessage?.let { fail("server error screen: ${it.title} / ${it.details}"); return }
         if (m.invalidCharacterTextureMessage != null) { fail("invalid character texture"); return }
         if (m.tokenExpiredMessage != null) { fail("token expired"); return }
