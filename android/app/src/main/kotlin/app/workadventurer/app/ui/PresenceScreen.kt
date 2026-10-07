@@ -48,8 +48,9 @@ fun PresenceScreen(
     onLeave: () -> Unit,
     onCommand: (Command) -> Unit,
     notice: String? = null,
+    initialName: String = "",
 ) {
-    var name by rememberSaveable { mutableStateOf("") }
+    var name by rememberSaveable { mutableStateOf(initialName) }
     var room by rememberSaveable { mutableStateOf(Wa133.DEFAULT_ROOM) }
     val inRoom = state.connection is Connection.Connecting ||
         state.connection is Connection.Connected ||
