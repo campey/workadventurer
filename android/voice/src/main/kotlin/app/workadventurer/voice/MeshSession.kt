@@ -142,6 +142,8 @@ class MeshSession(
         val l = link(e.spaceName, e.peerSpaceUserId, e.connectionId)
         val entry = synchronized(active) { active[e.connectionId] }
         val again = entry?.answered == true
+        // A browser that joined muted offers without an audio line; then there is nothing to send our mic on (issue #97).
+        log("[${e.connectionId}] audio lines in offer: ${Regex("(?m)^m=audio ").findAll(offer.sdp).count()}${if (again) " (re-offer)" else ""}")
         val sdp = try { l.acceptOffer(offer.sdp) } catch (c: CancellationException) { throw c } catch (t: Throwable) {
             log("[${e.connectionId}] offer failed: ${t.message}"); null
         }

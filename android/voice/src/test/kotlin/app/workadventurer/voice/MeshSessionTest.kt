@@ -279,6 +279,16 @@ class MeshSessionTest {
         assertTrue(lines.isNotEmpty() && lines.all { it.endsWith("stats") }, lines.toString()); job.cancel()
     }
 
+    // Issue #97: a red mic may come from an offer with no audio line (browser joined muted); the log must say which it was.
+    @Test
+    fun theLogSaysWhetherAnOfferCarriesAnAudioLine() = runTest {
+        val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        r.events.emit(VoiceEvent.Signal("sp", "sp_9", "c1", """{"type":"offer","sdp":"v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"}""")); runCurrent()
+        assertTrue(r.logs.any { "audio lines in offer: 0" in it }, r.logs.toString())
+        r.events.emit(VoiceEvent.Signal("sp", "sp_9", "c1", """{"type":"offer","sdp":"v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"}""")); runCurrent()
+        assertTrue(r.logs.any { "audio lines in offer: 1" in it }, r.logs.toString()); job.cancel()
+    }
+
     // Review: a re-offer we cannot use must not kill the audio that already works (the first answer did).
     @Test
     fun aSecondOfferThatFailsKeepsTheWorkingConnection() = runTest {
