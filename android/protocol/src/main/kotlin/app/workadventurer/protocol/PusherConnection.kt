@@ -79,6 +79,8 @@ open class PusherConnection(
     private val joinTimeoutMs: Long = 20_000,
     private val cacheDir: File? = null,
     private val micReannounceMs: List<Long> = listOf(0L, 1_000L, 3_000L),
+    private val meetingDwellMs: Long = 1_500L,
+    private val meetingLingerMs: Long = 2_500L,
 ) : MovementSink {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val seq = AtomicLong(1)
@@ -181,6 +183,24 @@ open class PusherConnection(
         ev.webRtcDisconnectMessage?.let {
             _log.tryEmit("webRtcDisconnect from a peer in ${p.spaceName}")
             _voiceEvents.tryEmit(VoiceEvent.Disconnect(p.spaceName, peer))
+        }
+    }
+
+    private var meetingTracker: MeetingAreaTracker? = null
+
+    /**
+     * Meeting-room areas (a `livekitRoomProperty`): the server never invites a headless client to one the way it does for
+     * proximity bubbles, so we join the area's space ourselves when we dwell inside it and leave after lingering outside.
+     * Without this the phone only ever joined bubbles and was deaf and mute in area meetings.
+     */
+    private fun startMeetingAreas() {
+        if (state.areas.none { it.meetingRoom != null }) return
+        val tracker = MeetingAreaTracker(scope, meetingDwellMs, meetingLingerMs, { joinSpace(it, emptyList()) }, { leaveSpace(it) })
+        meetingTracker = tracker
+        scope.launch {
+            state.myPose.collect {
+                tracker.update(state.currentAreas().mapNotNull { a -> a.meetingRoom?.let { areaMeetingSpaceName(cfg.roomUrl, it) } }.toSet())
+            }
         }
     }
 
@@ -323,6 +343,8 @@ open class PusherConnection(
             withTimeoutOrNull(joinTimeoutMs) { joined.await() }
                 ?: throw JoinFailed("timed out waiting for roomJoinedMessage")
 
+            startMeetingAreas()
+
             // The ~1.5 MB map must never delay joining, so the collision grid loads in the background; until it
             // arrives (or forever, if it fails) movement is straight-line.
             wam?.let { text ->
@@ -353,6 +375,7 @@ open class PusherConnection(
 
     /** Idempotent. Completes [closed] right away rather than waiting for the server to echo the close. */
     open fun close() {
+        meetingTracker?.close()
         keepAlive?.cancel()
         ws?.close(1000, "bye")
         _closed.complete(Closed(1000, "closed by client"))

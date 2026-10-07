@@ -233,7 +233,7 @@ class PusherConnectionTest {
     }
 
     /** A pusher that also serves /map -> wam -> tmj, so the background grid load can run. */
-    private fun serverWithMap(fake: Fake, tmj: String?, tmjRequests: AtomicInteger = AtomicInteger()): MockWebServer {
+    private fun serverWithMap(fake: Fake, tmj: String?, tmjRequests: AtomicInteger = AtomicInteger(), areasJson: String = "[]"): MockWebServer {
         val s = MockWebServer()
         s.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -241,7 +241,7 @@ class PusherConnectionTest {
                 return when {
                     request.path!!.startsWith("/anonymLogin") -> MockResponse().setBody("""{"authToken":"TOK","userUuid":"me"}""")
                     request.path!!.startsWith("/map") -> MockResponse().setBody("""{"wamUrl":"$base/the.wam"}""")
-                    request.path == "/the.wam" -> MockResponse().setBody("""{"mapUrl":"$base/the.tmj","entities":{},"areas":[]}""")
+                    request.path == "/the.wam" -> MockResponse().setBody("""{"mapUrl":"$base/the.tmj","entities":{},"areas":$areasJson}""")
                     request.path == "/the.tmj" -> {
                         tmjRequests.incrementAndGet()
                         if (tmj != null) MockResponse().setBody(tmj) else MockResponse().setResponseCode(500)
@@ -636,6 +636,7 @@ class PusherConnectionTest {
             val pos = generateSequence { fake.received.poll(2, TimeUnit.SECONDS) }.first { it.joinRoomFrontMessage != null }
                 .joinRoomFrontMessage!!.positionMessage!!
             assertEquals(5 * 32 + 16, pos.x); assertEquals(3 * 32 + 16, pos.y)
+            withTimeout(5_000) { while (conn.grid.value == null) delay(10) } // let the background map load finish before the server closes
             conn.close()
         }
     }
@@ -841,6 +842,43 @@ class PusherConnectionTest {
             val remove = sent.indexOfFirst { it.removeSpaceFilterMessage != null }
             assertTrue(add in 0 until remove, "the space must be watched, then unwatched (add=$add, remove=$remove)")
             assertTrue(conn.state.spaces.value.isEmpty(), "still a member of a space we were told to leave")
+            conn.close()
+        }
+    }
+
+    // Meeting-room areas: the server never invites a headless client to one the way it does for proximity bubbles, so the client
+    // must join the area's space itself when it dwells inside (the phone only ever joined bubbles).
+    private val fireAreas = """[{"id":"a1","name":"Fire pit","x":1000,"y":1000,"width":200,"height":200,
+        "properties":[{"id":"p1","type":"livekitRoomProperty","roomName":"Fire pit"}]}]"""
+
+    @Test
+    fun dwellingInAMeetingAreaJoinsItsSpaceAndLeavingItLeavesAfterTheLinger() = runBlocking<Unit> {
+        val live = spaceFake()
+        serverWithMap(live.fake, tmj = null, areasJson = fireAreas).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, meetingDwellMs = 200, meetingLingerMs = 300)
+            withTimeout(10_000) { conn.connect() }
+            assertTrue(conn.state.spaces.value.isEmpty(), "the fallback spawn is outside the area")
+            conn.move(1100.0, 1100.0, Facing.DOWN, false)
+            waitFor { conn.state.spaces.value.containsKey("9ida9r-fire-pit") } // shortHash(room url) + room name, as the web client names it
+            conn.move(0.0, 0.0, Facing.DOWN, false)
+            waitFor { conn.state.spaces.value.isEmpty() }
+            conn.close()
+        }
+    }
+
+    @Test
+    fun walkingThroughAMeetingAreaWithoutDwellingJoinsNothing() = runBlocking<Unit> {
+        val live = spaceFake()
+        serverWithMap(live.fake, tmj = null, areasJson = fireAreas).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000, meetingDwellMs = 600, meetingLingerMs = 300)
+            withTimeout(10_000) { conn.connect() }
+            conn.move(1100.0, 1100.0, Facing.DOWN, false)
+            delay(100)
+            conn.move(0.0, 0.0, Facing.DOWN, false)
+            delay(1_000)
+            assertTrue(conn.state.spaces.value.isEmpty())
+            val sent = generateSequence { live.fake.received.poll(200, TimeUnit.MILLISECONDS) }.toList()
+            assertEquals(0, sent.count { it.queryMessage?.joinSpaceQuery != null }, "joined a space we only walked through")
             conn.close()
         }
     }

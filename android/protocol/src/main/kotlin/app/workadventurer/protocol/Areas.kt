@@ -26,6 +26,8 @@ data class Area(
     val propertyTypes: Set<String>,
     val isStart: Boolean,
     val isDefaultStart: Boolean,
+    /** Set when the area has a `livekitRoomProperty`: being in it means being in that meeting. */
+    val meetingRoom: MeetingRoom? = null,
 ) {
     fun contains(px: Int, py: Int) = px in x..(x + w) && py in y..(y + h)
 }
@@ -51,6 +53,9 @@ fun parseWam(json: String): List<Area> {
             propertyTypes = props.mapNotNull { it["type"]?.jsonPrimitive?.contentOrNull }.toSet(),
             isStart = start.isNotEmpty(),
             isDefaultStart = start.any { it["isDefault"]?.jsonPrimitive?.booleanOrNull == true },
+            meetingRoom = props.firstOrNull { it["type"]?.jsonPrimitive?.contentOrNull == "livekitRoomProperty" }?.let {
+                MeetingRoom(it["id"]?.jsonPrimitive?.contentOrNull, it["roomName"]?.jsonPrimitive?.contentOrNull)
+            },
         )
     }
 }
