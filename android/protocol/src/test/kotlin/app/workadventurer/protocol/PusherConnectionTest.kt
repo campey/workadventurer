@@ -550,6 +550,7 @@ class PusherConnectionTest {
             val pos = generateSequence { fake.received.poll(2, TimeUnit.SECONDS) }.first { it.joinRoomFrontMessage != null }
                 .joinRoomFrontMessage!!.positionMessage!!
             assertEquals(5 * 32 + 16, pos.x); assertEquals(3 * 32 + 16, pos.y)
+            withTimeout(5_000) { while (conn.grid.value == null) delay(10) } // let the background map load finish before the server closes
             conn.close()
         }
     }
