@@ -16,6 +16,9 @@ interface PeerLink {
 
     fun addRemoteCandidate(candidate: PeerSignal.Candidate)
     fun close()
+
+    /** One short line of counts and states for logs (never SDP, ids or addresses); empty if there is nothing to say. */
+    suspend fun statsSummary(): String = ""
 }
 
 fun interface PeerLinkFactory { suspend fun create(connectionId: String): PeerLink }
@@ -118,6 +121,12 @@ class MeshSession(
             if (closedIds.size > 64) closedIds.remove(closedIds.first())
         }
         try { entry?.link?.close() } catch (t: Throwable) { log("[$id] close failed: ${t.message}") }
+    }
+
+    /** `[<connection id>] <link summary>` for each live connection (the connection id is a random uuid, not a person). */
+    suspend fun statsSummary(): List<String> {
+        val live = synchronized(active) { active.map { (id, e) -> id to e.link } }
+        return live.map { (id, link) -> "[$id] ${try { link.statsSummary() } catch (t: Throwable) { "stats failed: ${t.message}" }}" }
     }
 
     fun closeAll() { synchronized(active) { active.keys.toList() }.forEach { drop(it) } }

@@ -23,6 +23,7 @@ class MeshSessionTest {
         override suspend fun acceptOffer(offerSdp: String): String? { offers += offerSdp; return answer }
         override fun addRemoteCandidate(candidate: PeerSignal.Candidate) { candidates += candidate }
         override fun close() { closed = true }
+        override suspend fun statsSummary(): String = "stats-of-$id"
     }
 
     private class Rig {
@@ -195,6 +196,18 @@ class MeshSessionTest {
         r.events.emit(offer("c1")); r.events.emit(offer("c2", "sp_8")); runCurrent()
         job.cancel(); runCurrent()
         assertTrue(r.made.values.all { it.closed }); assertTrue(r.mesh.activeConnections.isEmpty())
+    }
+
+    // For the live "red mic" investigation: one line per connection (never SDP, ids or addresses), from each link.
+    @Test
+    fun theStatsSummaryHasOneLinePerLiveConnection() = runTest {
+        val r = Rig(); val job = backgroundScope.launch { r.mesh.run(r.events) }; runCurrent()
+        assertEquals(emptyList(), r.mesh.statsSummary())
+        r.events.emit(offer("c1")); r.events.emit(offer("c2", "sp_8")); runCurrent()
+        val lines = r.mesh.statsSummary()
+        assertEquals(2, lines.size)
+        assertTrue(lines.all { it.startsWith("[") && "stats-of-" in it }, lines.toString())
+        job.cancel()
     }
 
     @Test

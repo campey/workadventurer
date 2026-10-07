@@ -211,6 +211,7 @@ open class PusherConnection(
     /** Tell every space we are in whether our mic is live; while it is on, repeat the announcement (see [micReannounceMs]). */
     open fun setMicOn(on: Boolean) {
         micOn = on
+        _log.tryEmit("mic ${if (on) "on" else "off"}: announcing to ${state.spaces.value.size} space(s)")
         for (space in state.spaces.value.keys) if (on) scheduleMicAnnouncements(space) else { cancelMicTimer(space); announceMic(space) }
     }
 

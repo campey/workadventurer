@@ -124,6 +124,14 @@ internal class WebRtcPeerLink(
         return withTimeoutOrNull(3_000) { out.await() } ?: 0L
     }
 
+    override suspend fun statsSummary(): String {
+        val dirs = pc.transceivers
+            .filter { it.mediaType == livekit.org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO }
+            .joinToString(",") { "${it.direction}/${it.currentDirection}" }
+        return "audio sent=${audioPacketsSent()} recv=${audioPacketsReceived()} ice=${pc.iceConnectionState()} " +
+            "dir=$dirs mic=${if (localTrack.enabled()) "on" else "off"}"
+    }
+
     internal suspend fun audioPacketsSent() = audioStat("outbound-rtp", "packetsSent")
     internal suspend fun audioPacketsReceived() = audioStat("inbound-rtp", "packetsReceived")
 

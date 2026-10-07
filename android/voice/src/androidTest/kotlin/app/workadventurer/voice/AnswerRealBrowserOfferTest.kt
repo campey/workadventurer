@@ -24,6 +24,10 @@ class AnswerRealBrowserOfferTest {
             println("ANSWER-SDP-BEGIN\n$answer\nANSWER-SDP-END")
             assertTrue(Regex("m=audio [1-9]").containsMatchIn(answer), "audio section not accepted")
             assertTrue("opus/48000" in answer)
+            // When the phone answers a browser it must also SEND: a receive-only audio answer means the browser shows our mic as
+            // on (we announce it) while no audio ever arrives, i.e. a red mic, and mute/unmute change nothing it can hear.
+            val audio = answer.split(Regex("(?m)^(?=m=)")).first { it.startsWith("m=audio") }
+            assertTrue("a=sendrecv" in audio, "the audio answer must be sendrecv, was: ${audio.lines().filter { it.startsWith("a=") && ("only" in it || "send" in it || "inactive" in it) }}")
             // libwebrtc keeps the video section (the m-line order must match the offer) but we never show video, so it must be
             // INACTIVE: a recvonly answer would have a browser peer with its camera on stream video to a backgrounded phone.
             val video = answer.split(Regex("(?m)^(?=m=)")).firstOrNull { it.startsWith("m=video") }

@@ -17,6 +17,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
@@ -75,6 +76,9 @@ class MeshVoiceHost(private val context: Context) : (PusherConnection) -> VoiceH
                     log = { Log.i("WaVoice", it) },
                 )
                 mesh = m
+                // Every 5 s, per live connection: audio packets sent/received, ICE state, negotiated direction, mic on/off.
+                // Counts and states only. Answers "is audio leaving the phone?" when a browser shows a red mic.
+                launch { while (true) { delay(5_000); m.statsSummary().forEach { Log.i("WaVoice", it) } } }
                 m.run(inbox.receiveAsFlow())
             } catch (c: CancellationException) {
                 throw c
