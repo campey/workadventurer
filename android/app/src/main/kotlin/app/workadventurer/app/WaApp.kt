@@ -1,9 +1,12 @@
 package app.workadventurer.app
 
 import android.app.Application
+import android.os.Build
 import android.util.Log
+import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.WaSession
 import app.workadventurer.protocol.PusherConnection
+import app.workadventurer.protocol.WaStaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -12,6 +15,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.io.File
+import java.net.URI
 import java.util.concurrent.TimeUnit
 
 /** Process-wide owner of the one [WaSession]; the service, the UI and (later) media buttons all share it. */
@@ -20,22 +24,60 @@ class WaApp : Application() {
     private val http = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** Where the per-call log files live (see [CallLog]); the share action reads from here. */
+    val logDir: File by lazy { File(filesDir, "logs") }
+
+    /**
+     * Every log line goes to logcat (tags WaConn, WaSession, WaVoice) and, during a call, to that call's file in [logDir]:
+     * logcat only keeps about an hour, and the files are what is left the next day.
+     */
+    val callLog: CallLog by lazy {
+        CallLog(
+            CallLogFiles(logDir),
+            logcat = { tag, msg -> Log.i(tag, msg) },
+            logcatError = { tag, msg -> Log.e(tag, msg) },
+            header = ::logHeader,
+        )
+    }
+
+    private val deviceEvents by lazy { DeviceEvents(this, callLog) }
+
+    private fun logHeader(roomUrl: String): List<String> {
+        val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull()
+        val host = runCatching { URI(roomUrl.trim()).host }.getOrNull().orEmpty()
+        return listOf(
+            "# WorkAdventurer Android $version",
+            "# phone ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (sdk ${Build.VERSION.SDK_INT})",
+            "# room $roomUrl",
+            "# server ${if (host == WaStaging.HOST) "staging" else "prod"}",
+        )
+    }
+
     val session: WaSession by lazy {
         val s = WaSession(
             scope = appScope,
             factory = { cfg ->
                 PusherConnection(http, cfg, cacheDir = File(cacheDir, "nav")).also { c ->
-                    // Every connection event goes to logcat (tag WaConn), so a long soak can answer "did a silent
-                    // reconnect happen, and why?" via: adb logcat -s WaConn:I WaSession:I
-                    val logJob = appScope.launch { c.log.collect { Log.i("WaConn", it) } }
+                    // Every connection event goes to the log (tag WaConn), so a long soak can answer "did a silent
+                    // reconnect happen, and why?" via: adb logcat -s WaConn:I WaSession:I, or the call's log file.
+                    val logJob = appScope.launch { c.log.collect { callLog.i("WaConn", it) } }
                     c.closed.invokeOnCompletion { logJob.cancel() }
                 }
             },
-            voiceHost = MeshVoiceHost(this),
-            log = { Log.i("WaSession", it) },
+            voiceHost = MeshVoiceHost(this, callLog),
+            log = { callLog.i("WaSession", it) },
         )
+        // A call's file opens when a Join sets Connecting and closes on Leave or a failed join; see CallLog.onConnection.
         appScope.launch {
-            s.state.map { it.connection }.distinctUntilChanged().collect { Log.i("WaSession", it.toString()) }
+            s.state.map { it.connection to it.roomName }.distinctUntilChanged().collect { (connection, room) ->
+                callLog.onConnection(connection, room)
+                // Device events only while a call's file is open (the file exists by now: onConnection opened it first).
+                when (connection) {
+                    Connection.Connecting -> deviceEvents.start()
+                    Connection.Disconnected, is Connection.Failed -> deviceEvents.stop()
+                    else -> {}
+                }
+            }
         }
         s
     }

@@ -38,7 +38,7 @@ sealed interface Command {
     data class InvitePlayer(val userId: Int) : Command
 
     /** Answer yes to an invitation we received, then walk to whoever sent it. */
-    data class SetMuted(val muted: Boolean) : Command
+    data class SetMuted(val muted: Boolean, val source: String = "ui") : Command // source only labels the call log
     data class AcceptInvite(val senderUuid: String) : Command { override fun toString() = "AcceptInvite" } // uuid is an email
     data class DeclineInvite(val senderUuid: String) : Command { override fun toString() = "DeclineInvite" }
 }
@@ -182,7 +182,9 @@ class WaSession(
                 is Command.SetMuted -> {
                     // Remembered either way; only applied to a live connection. A Join resets it (muted), see SessionState.
                     _state.update { it.copy(muted = cmd.muted) }
-                    if (_state.value.connection == Connection.Connected) applyMute(cmd.muted)
+                    val live = _state.value.connection == Connection.Connected
+                    log("mic ${if (cmd.muted) "muted" else "unmuted"} (${cmd.source})${if (live) "" else ", not in a call so only remembered"}")
+                    if (live) applyMute(cmd.muted)
                 }
                 Command.StopMoving -> stopMovement()
                 is Command.InvitePlayer -> {

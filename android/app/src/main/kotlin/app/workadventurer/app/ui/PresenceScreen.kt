@@ -49,6 +49,7 @@ fun PresenceScreen(
     onCommand: (Command) -> Unit,
     notice: String? = null,
     initialName: String = "",
+    onShareLogs: () -> Unit = {},
 ) {
     var name by rememberSaveable { mutableStateOf(initialName) }
     var room by rememberSaveable { mutableStateOf(Wa133.DEFAULT_ROOM) }
@@ -94,6 +95,10 @@ fun PresenceScreen(
             enabled = inRoom || name.isNotBlank(),
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
         ) { Text(if (inRoom) "Leave" else "Join") }
+        TextButton(
+            onClick = onShareLogs,
+            modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Share the logs of recent calls" },
+        ) { Text("Share logs") }
 
         Text(
             statusText(state.connection),

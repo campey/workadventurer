@@ -12,6 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.workadventurer.app.ui.PresenceScreen
 
@@ -38,6 +39,7 @@ class MainActivity : ComponentActivity() {
                     notice = notice.value,
                     initialName = lastName.get(),
                     onJoin = ::requestJoin,
+                    onShareLogs = ::shareLogs,
                     // Movement goes straight to the session; only Join/Leave go through the foreground service.
                     onCommand = { session.dispatch(it) },
                     onLeave = {
@@ -47,6 +49,19 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    /** Hands the last few call logs to the share sheet (mail, Drive, a messenger...), so they can leave the phone without adb. */
+    private fun shareLogs() {
+        val files = latestLogFiles((application as WaApp).logDir, SHARED_LOGS)
+        if (files.isEmpty()) { notice.value = "No call logs yet"; return }
+        val uris = ArrayList(files.map { FileProvider.getUriForFile(this, "$packageName.logs", it) })
+        val send = Intent(Intent.ACTION_SEND_MULTIPLE)
+            .setType("text/plain")
+            .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            .putExtra(Intent.EXTRA_SUBJECT, "WorkAdventurer call logs")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(Intent.createChooser(send, "Share call logs"))
     }
 
     private fun requestJoin(name: String, room: String) {
@@ -59,6 +74,8 @@ class MainActivity : ComponentActivity() {
         }.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
         if (needed.isEmpty()) startPresence() else permissions.launch(needed.toTypedArray())
     }
+
+    private companion object { const val SHARED_LOGS = 5 }
 
     private fun startPresence() {
         val (name, room) = pendingJoin ?: return
