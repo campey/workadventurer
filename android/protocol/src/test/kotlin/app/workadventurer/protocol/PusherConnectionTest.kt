@@ -132,9 +132,11 @@ class PusherConnectionTest {
     }
 
     @Test
-    fun theDefaultViewportIsTheOneTheWebClientUses() = runBlocking {
-        assertEquals(1920, RoomConfig(name = "x").viewportHalfWidth)
-        assertEquals(1080, RoomConfig(name = "x").viewportHalfHeight)
+    // Measured on prod (afrolabs, 2026-10-09): from spawn, +-1920x1080 saw 0-2 players and no far bubble; +-6000x4000 and
+    // +-10000x8000 saw the far bubble too. So we ask for a whole map's worth (the biggest maps are ~6400x3840 px).
+    fun theDefaultViewportCoversAWholeMap() = runBlocking {
+        assertEquals(8000, RoomConfig(name = "x").viewportHalfWidth)
+        assertEquals(6000, RoomConfig(name = "x").viewportHalfHeight)
     }
 
     // Issue #77: our own woka picture comes from the server's room-joined message, so no extra request is needed.

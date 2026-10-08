@@ -17,9 +17,13 @@ data class RoomConfig(
     val micOn: Boolean = false,
     /** Override only to probe a server build that has no adapter yet. */
     val apiVersionHash: String = Wa133.API_VERSION_HASHES[0],
-    /** How far around us we ask the server to stream players and bubbles (map pixels). The web client's own box is this size. */
-    val viewportHalfWidth: Int = 1920,
-    val viewportHalfHeight: Int = 1080,
+    /**
+     * How far around us we ask the server to stream players and bubbles (map pixels). The web client's own box is about
+     * 1920x1080, which hides far bubbles; this covers a whole map (the biggest are ~6400x3840) so the Users screen is complete.
+     * Measured on prod: 6000x4000 and 10000x8000 worked. (A first try at 20000x20000 showed nobody; not investigated.)
+     */
+    val viewportHalfWidth: Int = 8000,
+    val viewportHalfHeight: Int = 6000,
 ) {
     companion object {
         /** The config for [roomUrl]: staging rooms get the staging pusher and woka, everything else is prod. */
