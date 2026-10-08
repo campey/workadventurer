@@ -3,6 +3,22 @@
 What we learn building the Android client, per gate. The design is a hypothesis;
 anything here that contradicts it means the spec gets revised first.
 
+## Call logs (issue #98)
+
+Logcat keeps about an hour, so every call also writes its own file: one per join→leave (a drop and reconnect stays in the
+same file), in the app's private `files/logs/`, named `<date>T<time>_<room>.log` (staging rooms start `staging-`). The
+newest 20 files / 20 MB are kept; one file stops at 5 MB. Each starts with `#` header lines (app, phone, room, server), then
+`HH:mm:ss.SSS TAG message` lines: `WaSession` (state, mute and who tapped it), `WaConn` (joins, spaces, mic announcements),
+`WaVoice` (offers, `audio lines in offer`, 5 s audio stats), `WaDevice` (audio devices, screen, network, permissions),
+`WaService`. No uuids, emails, SDP or device names.
+
+- Get them off the phone: **Share logs** in the app (share sheet, last 5 files), or
+  `adb shell run-as app.workadventurer cat files/logs/<file>` (debug builds).
+- Read them: `node android/tools/call-log-summary.mjs <file>...` prints length, drops, per-peer time to first audio, stalls
+  (mic on but nothing sent) and **RED MIC?** suspects (the phone announced mic on and sent nothing for 10 s+; says whether the
+  last offer had an audio line, see #97), plus mute taps, device events and errors.
+- Record a call in `docs/real-world-test-log.md` or `docs/experimental-test-log.md` and name its log file there.
+
 ## Toolchain
 
 - **JDK 17 (Temurin) from a tarball in `~/.jdks`, not the brew cask.** The cask's
