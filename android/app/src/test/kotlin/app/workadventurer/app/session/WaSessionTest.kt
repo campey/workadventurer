@@ -3,6 +3,9 @@ package app.workadventurer.app.session
 import app.workadventurer.nav.Facing
 import app.workadventurer.nav.NavGrid
 import app.workadventurer.nav.Pt
+import app.workadventurer.proto.GroupDeleteMessage
+import app.workadventurer.proto.GroupUpdateMessage
+import app.workadventurer.proto.PointMessage
 import app.workadventurer.proto.PositionMessage
 import app.workadventurer.proto.SubMessage
 import app.workadventurer.proto.UserJoinedMessage
@@ -15,6 +18,7 @@ import app.workadventurer.protocol.InviteOutcome
 import app.workadventurer.protocol.JoinFailed
 import app.workadventurer.protocol.PusherConnection
 import app.workadventurer.protocol.RoomConfig
+import app.workadventurer.protocol.Texture
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
@@ -71,6 +75,51 @@ class WaSessionTest {
     ) = SubMessage(
         userJoinedMessage = UserJoinedMessage(userId = id, name = name, userUuid = uuid, position = PositionMessage(x = x, y = y, direction = dir)),
     )
+
+    // Issue #77: the Users screen needs the bubbles, which one is ours, who we are, and our own woka layers.
+    @Test
+    fun theSessionMirrorsBubblesOurBubbleOurIdAndOurTextures() = runTest {
+        var conn: FakeConn? = null
+        val session = WaSession(backgroundScope, { c ->
+            FakeConn(c) {
+                state.setMyUserId(7)
+                state.setMyTextures(listOf(Texture("w", "https://x/w.png")))
+            }.also { conn = it }
+        }, nowMs = { testScheduler.currentTime })
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(7, session.state.value.myUserId)
+        assertEquals(listOf(Texture("w", "https://x/w.png")), session.state.value.myTextures)
+        assertEquals(emptyList(), session.state.value.groups)
+        assertEquals(null, session.state.value.myGroupId)
+
+        conn!!.state.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 1, position = PointMessage(x = 10, y = 20), userIds = listOf(2, 3))))
+        conn!!.state.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 2, position = PointMessage(x = 30, y = 40), userIds = listOf(7, 4))))
+        runCurrent()
+        assertEquals(listOf(1, 2), session.state.value.groups.map { it.groupId })
+        assertEquals(2, session.state.value.myGroupId)
+
+        conn!!.state.applySub(SubMessage(groupDeleteMessage = GroupDeleteMessage(groupId = 2)))
+        runCurrent()
+        assertEquals(listOf(1), session.state.value.groups.map { it.groupId })
+        assertEquals(null, session.state.value.myGroupId)
+    }
+
+    @Test
+    fun aDropForgetsTheBubblesAndLeaveResetsEverything() = runTest {
+        var conn: FakeConn? = null
+        val session = WaSession(backgroundScope, { c ->
+            FakeConn(c) { state.setMyUserId(7) }.also { conn = it }
+        }, nowMs = { testScheduler.currentTime })
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        conn!!.state.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 1, position = PointMessage(x = 1, y = 1), userIds = listOf(7, 2))))
+        runCurrent()
+        assertEquals(1, session.state.value.myGroupId)
+        conn!!.fakeClosed.complete(Closed(1006, "net")); runCurrent()
+        assertEquals(emptyList(), session.state.value.groups) // a stale bubble must not outlive the connection
+        assertEquals(null, session.state.value.myGroupId)
+        session.dispatch(Command.Leave); runCurrent()
+        assertEquals(SessionState(), session.state.value)
+    }
 
     @Test
     fun joinReachesConnectedAndMirrorsPlayersSorted() = runTest {
