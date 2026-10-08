@@ -27,12 +27,12 @@ data class RoomConfig(
 ) {
     companion object {
         /** The config for [roomUrl]: staging rooms get the staging pusher and woka, everything else is prod. */
-        fun forRoom(name: String, roomUrl: String): RoomConfig {
+        fun forRoom(name: String, roomUrl: String, micOn: Boolean = false): RoomConfig {
             val host = runCatching { java.net.URI(roomUrl.trim()).host }.getOrNull()
             return if (host == WaStaging.HOST) {
-                RoomConfig(roomUrl = roomUrl, name = name, pusherUrl = WaStaging.PUSHER, wokaId = WaStaging.DEFAULT_WOKA)
+                RoomConfig(roomUrl = roomUrl, name = name, micOn = micOn, pusherUrl = WaStaging.PUSHER, wokaId = WaStaging.DEFAULT_WOKA)
             } else {
-                RoomConfig(roomUrl = roomUrl, name = name)
+                RoomConfig(roomUrl = roomUrl, name = name, micOn = micOn)
             }
         }
     }
