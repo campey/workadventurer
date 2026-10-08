@@ -430,6 +430,57 @@ Rapid-fire invites (several in a few seconds) hit issue #29.
 
 ---
 
+## Connecting and listening: quirks seen in live runs
+
+Things that look like bugs (or like nothing happening) when you test a `wa`
+avatar against a real room. Dates are when each was observed.
+
+- **A listener hears nothing from a muted browser, and logs nothing either**
+  (2026-10-08). The P2P link comes up (`pc connected`, `peer connected`) but a
+  muted browser sends no RTP, so no remote track ever arrives, `SttStream` is
+  never created and the worker is never spawned. There is no `stt:` line and
+  no `SCRIBE` line, which is indistinguishable from "STT is broken". Check the
+  speaker's mic before debugging. The worker (and the model warm-up, ~2–5 s)
+  starts lazily on the first audio track, which is the cold-start case #58
+  fixed.
+- **Evidence for #104 (join-muted browser, CLI as initiator).** Same run: the
+  browser joined muted, link `7e50be7d` came up at 18:49:25 with `initiator=true`
+  and stayed up 1 min 42 s with no track (the owner says they were muted until
+  just before the second round). It closed ("left bubble") at 18:51:07 and a
+  fresh link `cde5500a` (again `initiator=true`) had its STT worker running
+  within 2 s of connecting. So audio showed up on a *new* connection, not on
+  the original muted one, which matches the analysis in #104 (we never
+  re-offer on `renegotiate`). Caveats: the exact unmute time wasn't logged and
+  why the bubble closed at 18:51:07 isn't known (the speaker may have
+  re-entered it), so this is consistent with #104, not a clean reproduction.
+- **`wa to <player>` returns at once** (`goingTo: {...}`), not on arrival. The
+  walk itself is quick (about 8 s across the map on 2026-10-08); poll `wa
+  status` for position rather than assuming it has arrived. Audio is a
+  separate matter: it only flows once a voice link exists *and* the speaker is
+  unmuted (see the first bullet), which on that run took minutes.
+- **Name resolution is exact-then-substring, first match wins.**
+  `findPlayer()` returns the first player whose name equals the needle, else
+  the first that contains it. The same name can legitimately appear twice —
+  two browsers (tabs or devices) of the same person were both visible as
+  `:David` on 2026-10-06 — and `wa to` then walks to whichever the player map
+  lists first, with no warning. Check `wa status` and use `wa goto <x> <y>`
+  when it matters. `no player matching "<name>"` just means nobody by that
+  name is visible yet.
+- **Walking through the map joins and leaves things on the way.** Crossing
+  meeting areas fires `area enter`/`area leave` pairs (the dwell debounce
+  covers the Space side), and passing another avatar can set up and tear down
+  a P2P link within the same second (`webRtcStart … initiator=false`, then
+  `closed (left bubble)`). That churn is a side effect of the route taken, not
+  a fault; #102 (routes that avoid walking through map areas) is the fix. #62
+  is the related case of *standing* inside a meeting area.
+- **`daemon-<port>.log` timestamps are UTC**, not local time (2026-10-08: log
+  `18:49` was 20:49 for the owner). Match them against `date -u`.
+- **Env vars on `wa join` reach the detached daemon** (`STT_TEE_DIR`,
+  `STT_LANGUAGE`, `STT_FILLER_MAX_RMS`…): `spawnDaemon` passes the CLI's
+  environment through, so set them on the `wa join` command itself.
+
+---
+
 ## Testing approach
 
 - **`npm test`** (`node --test`) covers pure logic only: adapter resolution,

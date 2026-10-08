@@ -52,7 +52,7 @@ wa leave                          # disconnect and stop the daemon
 | `wa join [<room-url>] [--detach] [--stt]` | join the room (runs the daemon); `--stt` joins as a listener (transcribes peer audio to the console, a thought bubble and Space chat instead of publishing a mic) |
 | `wa leave` | leave and stop the daemon |
 | `wa status [--json]` | position, area, visible players |
-| `wa to <player>` | walk next to a player |
+| `wa to <player>` | walk next to a player (returns at once; poll `wa status` for arrival. Name match is exact-then-substring, first hit wins — see [quirks](docs/field-notes.md#connecting-and-listening-quirks-seen-in-live-runs)) |
 | `wa quiet` | step away to the nearest empty area (stays put if already in one) |
 | `wa greet <player>` | walk over + "hi" speech bubble (no state change) |
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text bubble |
@@ -66,7 +66,7 @@ wa leave                          # disconnect and stop the daemon
 the plugin hooks). Config precedence: flags > env (`WA_ROOM`, `WA_NAME`,
 `WA_DAEMON_PORT`, …) > `~/.config/workadventurer/config.json` > built-in
 defaults. The detached daemon logs to `~/.workadventurer/daemon-<port>.log`
-(one log per port, so parallel daemons don't interleave).
+(one log per port, so parallel daemons don't interleave; timestamps are UTC).
 
 **Several daemons.** Each advertises itself as `daemon-<port>.json`. A command
 that addresses a running daemon uses, in order: an explicit port (`--port`,
