@@ -634,6 +634,20 @@ class WaSessionTest {
         assertEquals(true, voices[0].muteCalls.last()); assertEquals(false, conn!!.micCalls.last())
     }
 
+    // Issue #98: the call log must show who toggled the mic (screen or notification) and whether it reached a live call.
+    @Test
+    fun everyMuteChoiceIsLoggedWithItsSource() = runTest {
+        val logs = mutableListOf<String>()
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { } }, nowMs = { testScheduler.currentTime }, log = { logs += it })
+        session.dispatch(Command.SetMuted(false)); runCurrent() // not joined yet
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        session.dispatch(Command.SetMuted(false, source = "notification")); runCurrent()
+        session.dispatch(Command.SetMuted(true)); runCurrent()
+        assertTrue(logs.any { it == "mic unmuted (ui), not in a call so only remembered" }, logs.toString())
+        assertTrue(logs.any { it == "mic unmuted (notification)" }, logs.toString())
+        assertTrue(logs.any { it == "mic muted (ui)" }, logs.toString())
+    }
+
     // Review Focus 3
     @Test
     fun theMuteChoiceSurvivesAReconnectAndALeaveResetsIt() = runTest {

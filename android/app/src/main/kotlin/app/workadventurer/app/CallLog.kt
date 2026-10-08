@@ -12,10 +12,17 @@ class CallLog(
     private val logcat: (tag: String, message: String) -> Unit,
     /** The first lines of each file: app, phone, room, server. */
     private val header: (roomUrl: String) -> List<String>,
+    private val logcatError: (tag: String, message: String) -> Unit = logcat,
 ) {
     fun i(tag: String, message: String) {
         logcat(tag, message)
         files.append(tag, message)
+    }
+
+    /** An error: red in logcat, and marked `ERROR` in the file so it stands out when scanning a long call. */
+    fun e(tag: String, message: String) {
+        logcatError(tag, message)
+        files.append(tag, "ERROR $message")
     }
 
     fun onConnection(connection: Connection, roomUrl: String) {

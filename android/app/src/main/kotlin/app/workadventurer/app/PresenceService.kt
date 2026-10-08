@@ -40,6 +40,7 @@ class PresenceService : Service() {
     private var active = false
 
     private val session get() = (application as WaApp).session
+    private val callLog get() = (application as WaApp).callLog
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -72,7 +73,7 @@ class PresenceService : Service() {
                     }
                 }
             }
-            ACTION_TOGGLE_MUTE -> session.dispatch(Command.SetMuted(!session.state.value.muted))
+            ACTION_TOGGLE_MUTE -> session.dispatch(Command.SetMuted(!session.state.value.muted, source = "notification"))
             ACTION_ACCEPT_INVITE, ACTION_DECLINE_INVITE -> {
                 // The notification carries only its own id; the sender's uuid (an email) stays inside the session.
                 val id = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
@@ -86,6 +87,7 @@ class PresenceService : Service() {
                 getSystemService(NotificationManager::class.java).cancel(id)
             }
             ACTION_LEAVE -> {
+                callLog.i("WaService", "leave requested")
                 deactivate()
                 session.dispatch(Command.Leave)
                 ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -96,6 +98,7 @@ class PresenceService : Service() {
     }
 
     override fun onDestroy() {
+        callLog.i("WaService", "service destroyed (foreground presence ends)")
         deactivate()
         scope.cancel()
         // Not after a failed join: the service stops itself then, and a reset would wipe "Couldn't join: …".

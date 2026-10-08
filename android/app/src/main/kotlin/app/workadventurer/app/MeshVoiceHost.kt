@@ -2,7 +2,7 @@ package app.workadventurer.app
 
 import android.content.Context
 import android.media.AudioManager
-import android.util.Log
+
 import app.workadventurer.app.session.VoiceHandle
 import app.workadventurer.protocol.PusherConnection
 import app.workadventurer.protocol.VoiceEvent
@@ -33,7 +33,7 @@ import kotlinx.coroutines.withContext
  *   has returned, never from another thread while native code may still be using it;
  * - nothing thrown in here may leave the job uncaught (that would crash the app) or leave the audio mode changed.
  */
-class MeshVoiceHost(private val context: Context) : (PusherConnection) -> VoiceHandle {
+class MeshVoiceHost(private val context: Context, private val log: CallLog) : (PusherConnection) -> VoiceHandle {
     /** Holds the mute choice from the first moment, so one pressed before the engine exists is applied when it does. */
     private class Handle(private val onClose: () -> Unit) : VoiceHandle {
         private var currentlyMuted = true
@@ -52,7 +52,7 @@ class MeshVoiceHost(private val context: Context) : (PusherConnection) -> VoiceH
 
     override fun invoke(conn: PusherConnection): VoiceHandle {
         val scope = CoroutineScope(
-            SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, t -> Log.e("WaVoice", "voice stopped: ${t.message}") },
+            SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, t -> log.e("WaVoice", "voice stopped: ${t.message}") },
         )
         val inbox = Channel<VoiceEvent>(Channel.UNLIMITED)
         scope.launch(start = CoroutineStart.UNDISPATCHED) { conn.voiceEvents.collect { inbox.trySend(it) } }
@@ -73,22 +73,22 @@ class MeshVoiceHost(private val context: Context) : (PusherConnection) -> VoiceH
                 val m = MeshSession(
                     links = { id -> e.newLink(id, ice.await()) },
                     sink = { space, peer, id, signal -> conn.sendSignal(space, peer, id, signal) },
-                    log = { Log.i("WaVoice", it) },
+                    log = { log.i("WaVoice", it) },
                 )
                 mesh = m
                 // Every 5 s, per live connection: audio packets sent/received, ICE state, negotiated direction, mic on/off.
                 // Counts and states only. Answers "is audio leaving the phone?" when a browser shows a red mic.
                 // Taken on the mesh coroutine itself, not a second thread: libwebrtc objects aren't safe to read mid-negotiation or teardown.
-                m.run(inbox.receiveAsFlow(), statsEveryMs = 5_000, onStats = { Log.i("WaVoice", it) })
+                m.run(inbox.receiveAsFlow(), statsEveryMs = 5_000, onStats = { log.i("WaVoice", it) })
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
-                Log.e("WaVoice", "voice failed to start or crashed: ${t.message}")
+                log.e("WaVoice", "voice failed to start or crashed: ${t.message}")
             } finally {
                 withContext(NonCancellable) {
                     handle.detach()
-                    try { mesh?.closeAll() } catch (t: Throwable) { Log.e("WaVoice", "closing links failed: ${t.message}") }
-                    try { engine?.close() } catch (t: Throwable) { Log.e("WaVoice", "closing the engine failed: ${t.message}") }
+                    try { mesh?.closeAll() } catch (t: Throwable) { log.e("WaVoice", "closing links failed: ${t.message}") }
+                    try { engine?.close() } catch (t: Throwable) { log.e("WaVoice", "closing the engine failed: ${t.message}") }
                     audio.mode = previousMode
                 }
             }
