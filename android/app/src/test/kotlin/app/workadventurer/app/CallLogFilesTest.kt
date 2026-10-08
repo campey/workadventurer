@@ -112,6 +112,20 @@ class CallLogFilesTest {
         assertEquals(1, Regex("log full").findAll(text).count())
     }
 
+    // What "Share logs" attaches: the most recent calls, newest first, and nothing that isn't a call log.
+    @Test
+    fun theLatestLogsAreTheNewestCallsNewestFirst() {
+        val f = files()
+        repeat(4) { i ->
+            now += 60_000
+            f.start("https://play.workadventu.re/@/a/b/r$i", emptyList()); f.end()
+        }
+        File(dir, "notes.txt").writeText("not a log")
+        assertEquals(listOf("r3", "r2"), latestLogFiles(dir, 2).map { it.name.removeSuffix(".log").substringAfterLast("-") })
+        assertEquals(4, latestLogFiles(dir, 10).size)
+        assertEquals(emptyList(), latestLogFiles(File(dir, "missing"), 3))
+    }
+
     @Test
     fun roomSlugsAreFilenameSafeAndMarkStaging() {
         assertEquals("afrolabs-afrolabs-open-space", roomSlug("https://play.workadventu.re/@/afrolabs/afrolabs/open-space"))

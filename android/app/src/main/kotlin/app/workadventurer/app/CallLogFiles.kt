@@ -91,6 +91,10 @@ class CallLogFiles(
     private companion object { const val MAX_MESSAGE = 1_000 }
 }
 
+/** The [n] most recent call logs in [dir], newest first (what "Share logs" attaches). */
+fun latestLogFiles(dir: File, n: Int): List<File> =
+    dir.listFiles { f -> f.isFile && f.name.endsWith(".log") }?.sortedByDescending { it.name }?.take(n) ?: emptyList()
+
 /** A filename-safe summary of a room URL: its path words, `staging-` first for the staging server. */
 fun roomSlug(roomUrl: String): String {
     val uri = runCatching { URI(roomUrl.trim()) }.getOrNull() ?: return "room"

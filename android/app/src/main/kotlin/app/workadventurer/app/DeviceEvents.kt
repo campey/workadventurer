@@ -103,6 +103,8 @@ class DeviceEvents(private val context: Context, private val log: CallLog) {
         AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "bluetooth (media)"
         AudioDeviceInfo.TYPE_BLE_HEADSET -> "bluetooth LE headset"
         AudioDeviceInfo.TYPE_HEARING_AID -> "hearing aid"
+        AudioDeviceInfo.TYPE_TELEPHONY -> "telephony"
+        AudioDeviceInfo.TYPE_REMOTE_SUBMIX -> "remote submix"
         else -> "type $type"
     }
 
