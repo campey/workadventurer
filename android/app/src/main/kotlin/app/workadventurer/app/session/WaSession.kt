@@ -6,12 +6,14 @@ import app.workadventurer.nav.Target
 import app.workadventurer.nav.frontOf
 import app.workadventurer.nav.snapToFree
 import app.workadventurer.protocol.Area
+import app.workadventurer.protocol.Group
 import app.workadventurer.protocol.Invite
 import app.workadventurer.protocol.InviteOutcome
 import app.workadventurer.protocol.JoinFailed
 import app.workadventurer.protocol.Player
 import app.workadventurer.protocol.PusherConnection
 import app.workadventurer.protocol.RoomConfig
+import app.workadventurer.protocol.Texture
 import app.workadventurer.protocol.toFacing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -74,6 +76,16 @@ data class SessionState(
     val activity: Activity = Activity.Idle,
     val pendingInvites: List<Invite> = emptyList(), // invitations we received and haven't answered
     val inviteStatus: InviteStatus? = null,
+    /** The name we joined with. */
+    val myName: String = "",
+    /** Our own user id in the room, once the server has told us. */
+    val myUserId: Int? = null,
+    /** The layers of our own woka picture. */
+    val myTextures: List<Texture> = emptyList(),
+    /** Every bubble the server has told us about (it only streams those near us), ordered by group id. */
+    val groups: List<Group> = emptyList(),
+    /** The bubble we are in, one of [groups], or null. */
+    val myGroupId: Int? = null,
     /** The microphone. Every join starts muted: the phone never broadcasts from a pocket by surprise. */
     val muted: Boolean = true,
 )
@@ -149,7 +161,7 @@ class WaSession(
                 is Command.Join -> {
                     val gen = restart()
                     // Set synchronously so observers never see the previous room's (or a stale Failed) state first.
-                    _state.value = SessionState(connection = Connection.Connecting, roomName = cmd.config.roomUrl)
+                    _state.value = SessionState(connection = Connection.Connecting, roomName = cmd.config.roomUrl, myName = cmd.config.name)
                     job = scope.launch { run(cmd.config, gen) }
                 }
                 Command.Leave -> {
@@ -348,13 +360,28 @@ class WaSession(
                 it.copy(
                     connection = Connection.Reconnecting(attempt, wait),
                     players = emptyList(), inAreas = emptyList(), pendingInvites = emptyList(), inviteStatus = null,
+                    groups = emptyList(), myGroupId = null, myUserId = null,
                 )
             }
             delay(wait)
         }
     }
 
-    private suspend fun mirrorState(c: PusherConnection, gen: Int) {
+    private suspend fun mirrorState(c: PusherConnection, gen: Int) = coroutineScope {
+        launch {
+            combine(c.state.groups, c.state.groupId, c.state.myUserId, c.state.myTextures) { groups, mine, id, textures ->
+                listOf(groups, mine, id, textures)
+            }.collect { _ ->
+                setState(gen) {
+                    it.copy(
+                        groups = c.state.groups.value.values.sortedBy { g -> g.groupId },
+                        myGroupId = c.state.groupId.value,
+                        myUserId = c.state.myUserId.value,
+                        myTextures = c.state.myTextures.value,
+                    )
+                }
+            }
+        }
         // Pose too, so `inAreas` follows the avatar as it walks.
         combine(c.state.players, c.state.myPose, c.state.pendingInvites, c.state.inviteOutcome) { players, _, invites, outcome ->
             Triple(players, invites, outcome)

@@ -47,6 +47,19 @@ per-gate sections below have the measurements; this section is the summary to st
   the area's property id))`, using the room URL exactly as typed (a trailing slash or `#entry` hashes differently and lands in an
   empty space). The area carries `livekitRoomProperty`. We join after standing in it 1.5 s and leave 2.5 s after walking out,
   so walking through one joins nothing. [code, ported from the front end; live: joined and held a 1-hour call in one]
+- **Who is where** (#77) [code, live]: the server streams players, and bubbles (`groupUpdateMessage{groupId, position, groupSize,
+  locked, userIds}`, `groupUsersUpdateMessage{groupId, userIds}` with members only, `groupDeleteMessage`), only for what is inside
+  the viewport we send with every move. Each player also carries `availabilityStatus` (`userJoinedMessage`, then
+  `playerDetailsUpdatedMessage`) and the woka layers (`characterTextures`: absolute public PNG URLs, 96x128 sprite sheets); our
+  own layers arrive in `roomJoinedMessage.characterTextures`. We keep all of it now. Other players' space membership is not
+  linked to room user ids (only `SpaceUser.uuid` matches `Player.uuid`), so "who is in which bubble" comes from the group
+  messages, and "who is in an area" from positions (`Area.contains`).
+- **Viewport** [live, prod afrolabs, 2026-10-09]: the default +-1920x1080 box showed 0-2 players and no bubble far from spawn;
+  +-6000x4000 and +-10000x8000 also showed the far bubble (3 players, bubbles). A first +-20000x20000 try showed nobody (not
+  investigated; maybe a server limit, maybe the room was empty that minute). We ask for +-8000x6000, a whole map. Not yet
+  re-measured on staging or on a big room: more people streamed also means more updates.
+- **There is no "leave bubble" message** [code]: a bubble forms and dissolves by distance (the server groups players within about
+  48 px), so leaving one means walking away.
 - A new connection id for a peer we already have a link to **replaces** the old link (the server restarts connections with a new
   id). Keyed on (space, peer). [code]
 

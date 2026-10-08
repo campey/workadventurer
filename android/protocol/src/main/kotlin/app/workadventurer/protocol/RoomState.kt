@@ -1,6 +1,7 @@
 package app.workadventurer.protocol
 
 import app.workadventurer.nav.Facing
+import app.workadventurer.proto.AvailabilityStatus
 import app.workadventurer.proto.PositionMessage
 import app.workadventurer.proto.SubMessage
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -9,6 +10,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlin.math.roundToInt
 
+/** One layer of a woka (avatar) picture: a public PNG sprite sheet, layered in the order the server sends them. */
+data class Texture(val id: String, val url: String)
+
 data class Player(
     val userId: Int,
     val name: String,
@@ -16,10 +20,15 @@ data class Player(
     val x: Int,
     val y: Int,
     val direction: PositionMessage.Direction,
+    val availabilityStatus: AvailabilityStatus = AvailabilityStatus.ONLINE,
+    val textures: List<Texture> = emptyList(),
 ) {
     // uuid is the account email for logged-in players: keep it out of anything that stringifies a player.
     override fun toString() = "Player(userId=$userId, name=$name, x=$x, y=$y, direction=$direction)"
 }
+
+/** A proximity bubble the server told us about: where it is (map pixels) and who is in it. */
+data class Group(val groupId: Int, val x: Int, val y: Int, val userIds: List<Int>)
 
 /** Our own avatar: position in (fractional) map pixels, rounded only when it goes on the wire. */
 data class Pose(val x: Double, val y: Double, val facing: Facing)
@@ -29,6 +38,8 @@ class RoomState {
     private val _players = MutableStateFlow<Map<Int, Player>>(emptyMap())
     private val _myUserId = MutableStateFlow<Int?>(null)
     private val _groupId = MutableStateFlow<Int?>(null)
+    private val _groups = MutableStateFlow<Map<Int, Group>>(emptyMap())
+    private val _myTextures = MutableStateFlow<List<Texture>>(emptyList())
     private val _pose = MutableStateFlow(Pose(0.0, 0.0, Facing.DOWN))
     private val _invites = MutableStateFlow<List<Invite>>(emptyList())
     private val _inviteOutcome = MutableStateFlow<InviteOutcome?>(null)
@@ -47,6 +58,13 @@ class RoomState {
     val players: StateFlow<Map<Int, Player>> = _players.asStateFlow()
     val myUserId: StateFlow<Int?> = _myUserId.asStateFlow()
     val groupId: StateFlow<Int?> = _groupId.asStateFlow()
+
+    /** Every bubble the server has told us about (it only streams those near us), by group id. */
+    val groups: StateFlow<Map<Int, Group>> = _groups.asStateFlow()
+
+    /** The layers of our own woka picture, from the server's room-joined message. */
+    val myTextures: StateFlow<List<Texture>> = _myTextures.asStateFlow()
+    fun setMyTextures(textures: List<Texture>) { _myTextures.value = textures }
     val myPose: StateFlow<Pose> = _pose.asStateFlow()
 
     /** Invitations other players sent us that we haven't answered. */
@@ -80,6 +98,8 @@ class RoomState {
                     x = u.position?.x ?: 0,
                     y = u.position?.y ?: 0,
                     direction = u.position?.direction ?: PositionMessage.Direction.DOWN,
+                    availabilityStatus = u.availabilityStatus.takeUnless { s -> s == AvailabilityStatus.UNCHANGED } ?: AvailabilityStatus.ONLINE,
+                    textures = u.characterTextures.map { t -> Texture(t.id, t.url) },
                 ))
             }
         }
@@ -92,11 +112,23 @@ class RoomState {
         }
         sub.userLeftMessage?.let { l -> _players.update { it - l.userId } }
         sub.groupUpdateMessage?.let { g ->
-            val mine = _myUserId.value?.let { it in g.userIds } ?: false
-            if (mine) _groupId.value = g.groupId
-            else if (_groupId.value == g.groupId) _groupId.value = null
+            _groups.update { it + (g.groupId to Group(g.groupId, g.position?.x ?: 0, g.position?.y ?: 0, g.userIds)) }
+            followMyGroup(g.groupId, g.userIds)
         }
-        sub.groupDeleteMessage?.let { g -> if (_groupId.value == g.groupId) _groupId.value = null }
+        sub.groupUsersUpdateMessage?.let { g ->
+            // Members only: the position stays. An unknown group can't be placed, so it waits for its full update.
+            _groups.update { cur -> cur[g.groupId]?.let { cur + (g.groupId to it.copy(userIds = g.userIds)) } ?: cur }
+            if (_groups.value.containsKey(g.groupId)) followMyGroup(g.groupId, g.userIds)
+        }
+        sub.groupDeleteMessage?.let { g ->
+            _groups.update { it - g.groupId }
+            if (_groupId.value == g.groupId) _groupId.value = null
+        }
+        sub.playerDetailsUpdatedMessage?.let { m ->
+            val status = m.details?.availabilityStatus ?: return@let
+            if (status == AvailabilityStatus.UNCHANGED) return@let // this update was about something else
+            _players.update { cur -> cur[m.userId]?.let { cur + (m.userId to it.copy(availabilityStatus = status)) } ?: cur }
+        }
         sub.initSpaceUsersMessage?.let { m ->
             _spaceUserNames.update { cur -> cur + m.users.filter { it.name.isNotBlank() }.associate { it.spaceUserId to it.name } }
         }
@@ -106,11 +138,20 @@ class RoomState {
         sub.removeSpaceUserMessage?.let { r -> _spaceUserNames.update { it - r.spaceUserId } }
     }
 
+    /** Our own bubble is the group that lists us; when the group still exists but no longer lists us, we left it. */
+    private fun followMyGroup(groupId: Int, userIds: List<Int>) {
+        val mine = _myUserId.value?.let { it in userIds } ?: false
+        if (mine) _groupId.value = groupId
+        else if (_groupId.value == groupId) _groupId.value = null
+    }
+
     /** Reset live room state (players/group/identity) for a reconnect. Areas are per-room and kept. */
     fun clear() {
         _players.value = emptyMap()
         _myUserId.value = null
         _groupId.value = null
+        _groups.value = emptyMap()
+        _myTextures.value = emptyList()
         _invites.value = emptyList()
         _inviteOutcome.value = null
         _spaces.value = emptyMap()

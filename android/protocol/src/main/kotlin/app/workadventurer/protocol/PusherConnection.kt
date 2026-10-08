@@ -390,7 +390,8 @@ open class PusherConnection(
     private fun viewport(): ViewportMessage {
         val (x, y) = state.myPosition()
         return ViewportMessage(
-            left = maxOf(0, x - 1920), top = maxOf(0, y - 1080), right = x + 1920, bottom = y + 1080,
+            left = maxOf(0, x - cfg.viewportHalfWidth), top = maxOf(0, y - cfg.viewportHalfHeight),
+            right = x + cfg.viewportHalfWidth, bottom = y + cfg.viewportHalfHeight,
         )
     }
 
@@ -467,6 +468,7 @@ open class PusherConnection(
         }
         m.roomJoinedMessage?.let { r ->
             state.setMyUserId(r.currentUserId)
+            state.setMyTextures(r.characterTextures.map { Texture(it.id, it.url) })
             _log.tryEmit("joined room as userId ${r.currentUserId}")
             startKeepAlive()
             joined.complete(Unit)

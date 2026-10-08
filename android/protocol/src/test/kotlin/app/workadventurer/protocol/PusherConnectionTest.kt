@@ -22,6 +22,7 @@ import app.workadventurer.proto.SpaceUser
 import app.workadventurer.proto.WebRtcDisconnectMessage
 import app.workadventurer.proto.WebRtcSignal
 import app.workadventurer.proto.WebRtcStartMessage
+import app.workadventurer.proto.CharacterTextureMessage
 import app.workadventurer.proto.ClientToServerMessage
 import app.workadventurer.proto.ErrorScreenMessage
 import app.workadventurer.proto.LocatePositionMessage
@@ -107,6 +108,56 @@ class PusherConnectionTest {
 
     private fun cfg(s: MockWebServer) =
         RoomConfig(pusherUrl = s.url("/").toString().trimEnd('/'), name = "tester")
+
+    // Issue #77: the Users screen wants to know about far-away bubbles, so how much of the map we ask the server for is a setting.
+    @Test
+    fun theViewportWeAskForFollowsTheConfig() = runBlocking {
+        val fake = Fake(
+            onOpen = { ws -> ws.send(s2c(ServerToClientMessage(roomConnectedMessage = RoomConnectedMessage()))) },
+            onFrame = { ws, msg ->
+                if (msg.joinRoomFrontMessage != null) ws.send(s2c(ServerToClientMessage(roomJoinedMessage = RoomJoinedMessage(currentUserId = 7))))
+            },
+        )
+        server(fake).use { s ->
+            val big = cfg(s).copy(viewportHalfWidth = 6000, viewportHalfHeight = 4000)
+            val conn = PusherConnection(OkHttpClient(), big, keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            val join = generateSequence { fake.received.poll(2, TimeUnit.SECONDS) }.first { it.joinRoomFrontMessage != null }.joinRoomFrontMessage!!
+            val v = join.viewportMessage!!
+            assertEquals(6000 + 320, v.right) // centred on the spawn fallback (320, 320)
+            assertEquals(4000 + 320, v.bottom)
+            assertEquals(0, v.left) // never negative
+            conn.close()
+        }
+    }
+
+    @Test
+    // Measured on prod (afrolabs, 2026-10-09): from spawn, +-1920x1080 saw 0-2 players and no far bubble; +-6000x4000 and
+    // +-10000x8000 saw the far bubble too. So we ask for a whole map's worth (the biggest maps are ~6400x3840 px).
+    fun theDefaultViewportCoversAWholeMap() = runBlocking {
+        assertEquals(8000, RoomConfig(name = "x").viewportHalfWidth)
+        assertEquals(6000, RoomConfig(name = "x").viewportHalfHeight)
+    }
+
+    // Issue #77: our own woka picture comes from the server's room-joined message, so no extra request is needed.
+    @Test
+    fun theRoomJoinedMessageGivesUsOurOwnWokaTextures() = runBlocking {
+        val fake = Fake(
+            onOpen = { ws -> ws.send(s2c(ServerToClientMessage(roomConnectedMessage = RoomConnectedMessage()))) },
+            onFrame = { ws, msg ->
+                if (msg.joinRoomFrontMessage != null) {
+                    ws.send(s2c(ServerToClientMessage(roomJoinedMessage = RoomJoinedMessage(currentUserId = 7,
+                        characterTextures = listOf(CharacterTextureMessage(url = "https://x/full.png", id = "woka1"))))))
+                }
+            },
+        )
+        server(fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertEquals(listOf(Texture("woka1", "https://x/full.png")), conn.state.myTextures.value)
+            conn.close()
+        }
+    }
 
     @Test
     fun handshakeJoinsAndTracksPlayers() = runBlocking {

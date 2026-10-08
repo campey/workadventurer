@@ -1,7 +1,13 @@
 package app.workadventurer.protocol
 
 import app.workadventurer.nav.Facing
+import app.workadventurer.proto.AvailabilityStatus
+import app.workadventurer.proto.CharacterTextureMessage
 import app.workadventurer.proto.GroupDeleteMessage
+import app.workadventurer.proto.GroupUsersUpdateMessage
+import app.workadventurer.proto.PlayerDetailsUpdatedMessage
+import app.workadventurer.proto.PointMessage
+import app.workadventurer.proto.SetPlayerDetailsMessage
 import app.workadventurer.proto.AddSpaceUserMessage
 import app.workadventurer.proto.GroupUpdateMessage
 import app.workadventurer.proto.InitSpaceUsersMessage
@@ -72,6 +78,113 @@ class RoomStateTest {
         assertEquals(2, s.groupId.value)
         s.applySub(SubMessage(groupDeleteMessage = GroupDeleteMessage(groupId = 2)))
         assertNull(s.groupId.value)
+    }
+
+    // Issue #77: the Users screen lists every bubble and who is in it, so other players' groups can no longer be dropped.
+    @Test
+    fun everyGroupIsTrackedWithItsPositionAndMembers() {
+        val s = RoomState()
+        s.setMyUserId(7)
+        s.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 1, position = PointMessage(x = 100, y = 200), userIds = listOf(2, 3))))
+        s.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 2, position = PointMessage(x = 300, y = 400), userIds = listOf(7, 4))))
+        assertEquals(setOf(1, 2), s.groups.value.keys)
+        assertEquals(Group(1, 100, 200, listOf(2, 3)), s.groups.value.getValue(1))
+        assertEquals(2, s.groupId.value) // our own bubble is still the one we are in
+    }
+
+    @Test
+    fun aGroupsMembersAndPositionUpdateAndItIsRemovedWhenDeleted() {
+        val s = RoomState()
+        s.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 1, position = PointMessage(x = 100, y = 200), userIds = listOf(2, 3))))
+        s.applySub(SubMessage(groupUsersUpdateMessage = GroupUsersUpdateMessage(groupId = 1, userIds = listOf(2, 3, 4))))
+        assertEquals(listOf(2, 3, 4), s.groups.value.getValue(1).userIds)
+        assertEquals(100, s.groups.value.getValue(1).x) // a members-only update keeps the position
+        s.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 1, position = PointMessage(x = 150, y = 250), userIds = listOf(2, 4))))
+        assertEquals(Group(1, 150, 250, listOf(2, 4)), s.groups.value.getValue(1))
+        s.applySub(SubMessage(groupDeleteMessage = GroupDeleteMessage(groupId = 1)))
+        assertEquals(emptyMap(), s.groups.value)
+    }
+
+    @Test
+    fun aMembersOnlyUpdateForAnUnknownGroupIsIgnored() {
+        val s = RoomState()
+        s.applySub(SubMessage(groupUsersUpdateMessage = GroupUsersUpdateMessage(groupId = 9, userIds = listOf(2))))
+        assertEquals(emptyMap(), s.groups.value)
+    }
+
+    @Test
+    fun ourOwnBubbleFollowsMembersOnlyUpdates() {
+        val s = RoomState()
+        s.setMyUserId(7)
+        s.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 2, position = PointMessage(x = 1, y = 1), userIds = listOf(3, 4))))
+        assertNull(s.groupId.value)
+        s.applySub(SubMessage(groupUsersUpdateMessage = GroupUsersUpdateMessage(groupId = 2, userIds = listOf(3, 4, 7))))
+        assertEquals(2, s.groupId.value)
+        s.applySub(SubMessage(groupUsersUpdateMessage = GroupUsersUpdateMessage(groupId = 2, userIds = listOf(3, 4))))
+        assertNull(s.groupId.value)
+    }
+
+    @Test
+    fun playersCarryTheirStatusAndWokaTextures() {
+        val s = RoomState()
+        s.applySub(SubMessage(userJoinedMessage = UserJoinedMessage(
+            userId = 5, name = "Ada", userUuid = "u5",
+            position = PositionMessage(x = 1, y = 2, direction = PositionMessage.Direction.DOWN),
+            availabilityStatus = AvailabilityStatus.AWAY,
+            characterTextures = listOf(
+                CharacterTextureMessage(url = "https://x/body.png", id = "body1"),
+                CharacterTextureMessage(url = "https://x/hair.png", id = "hair1"),
+            ),
+        )))
+        val p = s.players.value.getValue(5)
+        assertEquals(AvailabilityStatus.AWAY, p.availabilityStatus)
+        assertEquals(listOf(Texture("body1", "https://x/body.png"), Texture("hair1", "https://x/hair.png")), p.textures)
+    }
+
+    @Test
+    fun aPlayerWithNoStatusIsOnlineAndNoTexturesMeansNone() {
+        val s = RoomState()
+        s.applySub(join(1, "x"))
+        assertEquals(AvailabilityStatus.ONLINE, s.players.value.getValue(1).availabilityStatus)
+        assertEquals(emptyList(), s.players.value.getValue(1).textures)
+    }
+
+    @Test
+    fun aStatusChangeUpdatesThePlayerAndAnUnchangedOneDoesNot() {
+        val s = RoomState()
+        s.applySub(join(1, "x"))
+        s.applySub(SubMessage(playerDetailsUpdatedMessage = PlayerDetailsUpdatedMessage(userId = 1, details = SetPlayerDetailsMessage(availabilityStatus = AvailabilityStatus.BUSY))))
+        assertEquals(AvailabilityStatus.BUSY, s.players.value.getValue(1).availabilityStatus)
+        s.applySub(SubMessage(playerDetailsUpdatedMessage = PlayerDetailsUpdatedMessage(userId = 1, details = SetPlayerDetailsMessage(availabilityStatus = AvailabilityStatus.UNCHANGED))))
+        assertEquals(AvailabilityStatus.BUSY, s.players.value.getValue(1).availabilityStatus) // a details update about something else
+        s.applySub(SubMessage(playerDetailsUpdatedMessage = PlayerDetailsUpdatedMessage(userId = 99, details = SetPlayerDetailsMessage(availabilityStatus = AvailabilityStatus.AWAY))))
+        assertEquals(setOf(1), s.players.value.keys) // an unknown player is ignored, not invented
+    }
+
+    @Test
+    fun ourOwnTexturesAreKeptAndClearedOnReconnect() {
+        val s = RoomState()
+        s.setMyTextures(listOf(Texture("woka1", "https://x/full.png")))
+        assertEquals(listOf(Texture("woka1", "https://x/full.png")), s.myTextures.value)
+        s.clear()
+        assertEquals(emptyList(), s.myTextures.value)
+    }
+
+    @Test
+    fun clearAlsoForgetsEveryGroup() {
+        val s = RoomState()
+        s.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 1, position = PointMessage(x = 1, y = 1), userIds = listOf(2))))
+        s.clear()
+        assertEquals(emptyMap(), s.groups.value)
+    }
+
+    @Test
+    fun aPlayersToStringStillLeavesOutTheirUuidAndTextures() {
+        val s = RoomState()
+        s.applySub(SubMessage(userJoinedMessage = UserJoinedMessage(userId = 1, name = "x", userUuid = "ada@example.org",
+            characterTextures = listOf(CharacterTextureMessage(url = "https://x/secret.png", id = "t")))))
+        val text = s.players.value.getValue(1).toString()
+        assertEquals(false, "ada@example.org" in text || "secret.png" in text, text)
     }
 
     @Test
