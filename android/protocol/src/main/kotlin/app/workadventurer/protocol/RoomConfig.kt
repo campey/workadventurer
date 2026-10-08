@@ -17,6 +17,9 @@ data class RoomConfig(
     val micOn: Boolean = false,
     /** Override only to probe a server build that has no adapter yet. */
     val apiVersionHash: String = Wa133.API_VERSION_HASHES[0],
+    /** How far around us we ask the server to stream players and bubbles (map pixels). The web client's own box is this size. */
+    val viewportHalfWidth: Int = 1920,
+    val viewportHalfHeight: Int = 1080,
 ) {
     companion object {
         /** The config for [roomUrl]: staging rooms get the staging pusher and woka, everything else is prod. */

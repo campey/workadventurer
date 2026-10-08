@@ -67,6 +67,12 @@ class WaApp : Application() {
             voiceHost = MeshVoiceHost(this, callLog),
             log = { callLog.i("WaSession", it) },
         )
+        // How much of the room the server has told us about (it only streams what is near us): counts only, no names.
+        appScope.launch {
+            s.state.map { it.players.size to it.groups.size }.distinctUntilChanged().collect { (p, g) ->
+                callLog.i("WaSession", "known: $p player(s), $g bubble(s)")
+            }
+        }
         // A call's file opens when a Join sets Connecting and closes on Leave or a failed join; see CallLog.onConnection.
         appScope.launch {
             s.state.map { it.connection to it.roomName }.distinctUntilChanged().collect { (connection, room) ->

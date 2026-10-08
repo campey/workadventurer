@@ -109,6 +109,34 @@ class PusherConnectionTest {
     private fun cfg(s: MockWebServer) =
         RoomConfig(pusherUrl = s.url("/").toString().trimEnd('/'), name = "tester")
 
+    // Issue #77: the Users screen wants to know about far-away bubbles, so how much of the map we ask the server for is a setting.
+    @Test
+    fun theViewportWeAskForFollowsTheConfig() = runBlocking {
+        val fake = Fake(
+            onOpen = { ws -> ws.send(s2c(ServerToClientMessage(roomConnectedMessage = RoomConnectedMessage()))) },
+            onFrame = { ws, msg ->
+                if (msg.joinRoomFrontMessage != null) ws.send(s2c(ServerToClientMessage(roomJoinedMessage = RoomJoinedMessage(currentUserId = 7))))
+            },
+        )
+        server(fake).use { s ->
+            val big = cfg(s).copy(viewportHalfWidth = 6000, viewportHalfHeight = 4000)
+            val conn = PusherConnection(OkHttpClient(), big, keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            val join = generateSequence { fake.received.poll(2, TimeUnit.SECONDS) }.first { it.joinRoomFrontMessage != null }.joinRoomFrontMessage!!
+            val v = join.viewportMessage!!
+            assertEquals(6000 + 320, v.right) // centred on the spawn fallback (320, 320)
+            assertEquals(4000 + 320, v.bottom)
+            assertEquals(0, v.left) // never negative
+            conn.close()
+        }
+    }
+
+    @Test
+    fun theDefaultViewportIsTheOneTheWebClientUses() = runBlocking {
+        assertEquals(1920, RoomConfig(name = "x").viewportHalfWidth)
+        assertEquals(1080, RoomConfig(name = "x").viewportHalfHeight)
+    }
+
     // Issue #77: our own woka picture comes from the server's room-joined message, so no extra request is needed.
     @Test
     fun theRoomJoinedMessageGivesUsOurOwnWokaTextures() = runBlocking {
