@@ -28,6 +28,98 @@ newest 20 files / 20 MB are kept; one file stops at 5 MB. Each starts with `#` h
 - The Gradle wrapper was generated from a one-off Gradle 8.10.2 download (avoids
   `brew install gradle`, which pulls a from-source `openjdk` on macOS 14).
 
+## Protocol and behaviour reference (what we know, and how we know it)
+
+One place for the facts that took live testing to learn. Evidence tags: **[live]** measured on the phone against browsers,
+**[code]** read from our code or the server source, **[guess]** a hypothesis that fits the evidence but isn't confirmed. The
+per-gate sections below have the measurements; this section is the summary to start from. The CLI's equivalents are in
+`docs/field-notes.md` (`#10` the red mic) and `docs/livekit.md`.
+
+### Spaces and bubbles
+- **The server drives bubble membership** [code, live]: it sends `joinSpaceRequestMessage{spaceName, propertiesToSync}`; we
+  answer with a `JoinSpaceQuery{spaceName, filterType ALL_USERS, propertiesToSync}` (default `cameraState`, `microphoneState`,
+  `screenSharingState`), the answer carries our `spaceUserId`, and then we send `addSpaceFilterMessage` ("watch"). Without the
+  watch the server never sets up peer connections for us. `leaveSpaceRequestMessage` makes us leave.
+- Joins and leaves are serialised by one mutex and started in arrival order, so a leave can never overtake a join (a join that
+  lands after its leave would leave the phone speaking into a bubble it left). [code, review finding]
+- **Bubble space names** are the room URL plus `#<group id>#<timestamp>`, not fixed [live]. **Map meeting areas** are different:
+  the client joins them itself, with a name it computes: `slugify(shortHash(roomUrl) + "-" + (the room name if non-blank, else
+  the area's property id))`, using the room URL exactly as typed (a trailing slash or `#entry` hashes differently and lands in an
+  empty space). The area carries `livekitRoomProperty`. We join after standing in it 1.5 s and leave 2.5 s after walking out,
+  so walking through one joins nothing. [code, ported from the front end; live: joined and held a 1-hour call in one]
+- A new connection id for a peer we already have a link to **replaces** the old link (the server restarts connections with a new
+  id). Keyed on (space, peer). [code]
+
+### Roles and signalling
+- **Who offers** [live, code]: the server tells the user who was already watching the space to offer (`initiator=true`); the
+  phone nearly always is that user, so the phone must be able to offer. If nobody offers, the browser times out after ~20 s,
+  sends `meetingConnectionRestartMessage` and the roles swap. See "G3 M2" for the measurements (21 s vs 1.25 s).
+- Signals are simple-peer JSON [live]: `{type: offer|answer, sdp}` with the **full SDP and its ICE candidates inside** (no
+  trickle), `{type: candidate}`, and `{type: "renegotiate", renegotiate: true}`. The initiator creates the `simplepeer` data
+  channel (a browser reports "connected" only once it opens). `transceiverRequest` also arrives; we ignore it and don't know its
+  shape. [live]
+- A browser offer always has an `m=video` section. We keep the line (answers must match the offer's order) and set it
+  **inactive**, so a peer with a camera never streams video to a backgrounded phone. [code, live]
+
+### Microphone state and mute
+- **Mic state is a claim; audio is separate.** We tell the space `UpdateSpaceUserMessage{spaceName, user{spaceUserId,
+  microphoneState}, updateMask: ["microphoneState"]}`. A browser shows a **red mic** when the claim says on but no audio
+  arrives. [live; CLI `#10` for the first form of it]
+- We announce on a schedule, not once, because a single announcement races the server registering us: while the mic is on, at
+  join +0 s, +1 s and +3 s, again when the space's user list (`initSpaceUsers`) arrives, and at every unmute; muting announces
+  **off at once** and cancels pending "on" announcements. Nothing is announced for a space we aren't in. [code]
+- **Mute on Android** [code, live]: one shared microphone track for every link. Muting calls `setMicrophoneMute`, which
+  zero-fills the capture buffer, so silence RTP keeps flowing and the browser's indicator stays correct. The app **starts
+  muted on every join**, the choice survives a reconnect, Leave resets it, and the notification's Mute/Unmute action does the
+  same thing as the button (the call log records which one was used).
+- **Capture keeps running while muted** (Android's mic indicator stays lit; some battery). Deliberate: stopping capture would
+  end the silent stream and bring the red mic back. [code; indicator behaviour not measured on a device]
+- **A browser that joins muted** has no audio line in its first offer, and changes that when its user unmutes. Phone hearing
+  it: the browser must renegotiate (as the answerer it sends `renegotiate` and we, the offerer, must re-offer; as the offerer it
+  re-offers itself and we must answer a second offer on the live link). Both were bugs found live. [live]
+- **The reverse direction is not understood** [guess]: with the browser joined muted and the phone answering, the phone's mic
+  was announced on while the link had no audio line to send on (`sent=0`, `dir=` empty), and the browser showed a red mic until
+  its own re-offer ~20 s later. Seen once on staging, not reproduced: issue #97. The call log's `audio lines in offer: N` line
+  exists to confirm or kill this.
+- **The CLI has the first (browser-unmutes) bug too** [owner-reported; code]: `src/wa-audio.mjs` ignores `renegotiate`, so as
+  the initiator it never re-offers. Issue #104. Whether it also has the reverse direction is unknown.
+
+### libwebrtc on Android
+- The process aborts without `ACCESS_NETWORK_STATE`; the engine needs ~1.5 s after creation to learn the network (create it
+  at join, and don't trust an instant "gathering complete" with zero candidates); video codecs must be registered or a real
+  browser offer aborts the process; ICE `COMPLETE` can arrive before the first candidate, so wait for one candidate then
+  let gathering settle. [live; details in the spike and M2 sections]
+- **Only the mesh coroutine may touch a `PeerConnection`.** `getTransceivers()` disposes the wrappers it returned last time, so a
+  second thread reading them (the stats loop did) can make a negotiation fail or touch a disposed object. Teardown happens on
+  that same coroutine, after any negotiation returns. Attach the shared mic with `setTrack(track, false)`: `true` would dispose
+  the track the other links share. [code, review finding]
+- The audio mode is `MODE_IN_COMMUNICATION` for the whole connection and restored afterwards. [code]
+
+### Maps (the campus map)
+- **Spawn**: the `.wam` start area if there is one; otherwise a tile of the map's Tiled `start` layer; the old fixed corner put
+  the avatar where it saw nobody. [live, #90]
+- **Furniture collision**: each entity in the `.wam` has a prefab id (`<collection>:<name>:<color>:<direction>`); the `.wam`
+  lists the collection files (`entityCollections`, entries of `type: "file"` have a public URL); each entry has a
+  `collisionGrid` of 0/1 rows (32 px cells from the entity's top-left; origin cell `floor((x+16)/32)`) and **an entry without
+  one is not solid**. Blocking all furniture as 3×3 squares split the campus map into 20 islands, so walks had no route and fell
+  back to straight lines through walls. If no collection loads we fall back to the old 3×3 approximation. [live, #90; the CLI's
+  baker still has the old behaviour: #92]
+
+### Server versions
+- Prod `play.workadventu.re` was v1.34.0 from 2026-10-05; its API hash is `23c8eb8c` (older hashes get a "new version" error
+  screen). Staging is rolling `master` (seen at `master@6ae415d` on 2026-10-07) and its hash is **also `23c8eb8c`**. [live]
+- **Staging has its own pusher and its own character catalogue** (`pusher.staging.workadventu.re`; a prod woka id is refused
+  with "invalid character texture"); the app chooses both from the room's host (`RoomConfig.forRoom`). Joining the staging village worked
+  first time, including audio. [live]
+
+### Observed on real calls (not protocol, but what to keep working)
+- Speaking with the **screen locked** works; **pressing the power button does not hang up** (many call apps do; this is a
+  requirement, issue #85). Changing the audio route from handset to a plugged-in wired headset mid-call did not disturb the call.
+  An hour-long call in a meeting area, and a stable call on staging while driving. See `docs/real-world-test-log.md`. [live]
+- Unexplained: a ~10 s network drop on the phone during M3 testing (cause unknown; drop reasons are logged since). [live]
+- Not yet checked live: mute from the notification, mute surviving a reconnect, LiveKit escalation (G4: the app ignores
+  `livekitInvitationMessage`).
+
 ## G3 — voice: library spike, step 1 (2026-10-06)
 
 Question: does LiveKit's libwebrtc build run on the phone and produce the audio offer a WorkAdventure browser peer needs?
@@ -58,10 +150,10 @@ Phone joined as `g3-voice`, the user (David, in a browser) walked next to it, th
 - 17 s after joining, within a second of David arriving: `entered bubble 1637`, `joined space <room url>#1637#<timestamp>`,
   `webRtcStart conn=<uuid> initiator=true`. No `joinSpace ... failed`.
 - The space name is the room URL plus the bubble's group id and a timestamp, not a fixed name.
-- **Who gets `initiator=true`.** When a browser avatar walks up to a phone that is already standing there, the phone is the
-  *existing* member and is told to send the offer. So being the offerer (M4) is the common case whenever people come to the
-  phone; answering (M2) only happens when the phone walks into someone else's bubble. The M2 live check therefore has the
-  phone do the walking.
+- **Who gets `initiator=true`** (superseded by M2 below: this first reading was wrong). When a browser avatar walks up to a
+  phone that is already standing there, the phone is told to send the offer, as expected. We then assumed that answering
+  would only happen when the phone walks into someone else's bubble; M2 showed the phone is told to offer *in both cases*,
+  because "existing member" means who started watching the space first, not who was standing there first.
 - Two more `webRtcStart` arrived 20 s and 41 s later with `initiator=false` and fresh connection ids (the server's retry
   after nothing answered the first, since this build only logs and ignores them).
 - Walking away: `left space`, `left bubble`, then `webRtcDisconnect` from the peer, in that order.
@@ -72,8 +164,10 @@ Measured live against browser peers on the S25 Ultra unless marked.
 
 - **Two-way audio works, both roles.** Phone as answerer and as offerer. Offerer role matters: connect took 1.25 s as offerer
   vs ~21 s waiting for the browser's own timeout and the server's role swap.
-- **No red mic.** The mic track is shared and always sending; mute is `setMicrophoneMute`, which zero-fills the capture buffer,
-  so RTP keeps flowing (silence) and the browser's indicator stays correct. Mute/unmute shows properly in the browser.
+- **No red mic on prod in these checks.** On a link that has an audio line, the mic track is shared and always sending; mute
+  is `setMicrophoneMute`, which zero-fills the capture buffer, so RTP keeps flowing (silence) and the browser's indicator
+  stays correct. Mute/unmute shows properly in the browser. **Exception seen later (2026-10-07, staging, once):** a link with
+  no audio line to send on showed a red mic until the browser re-offered; see the reference section and #97.
 - **Browser that joins muted** needs a second negotiation when its user unmutes. As answerer it sends `{type:"renegotiate"}`
   and waits for the initiator to offer again: we must re-offer (offerer only). As offerer it re-offers itself and we must answer
   a second offer on the live connection (`attachMic` and answering are repeatable). Both were bugs found live and are pinned by

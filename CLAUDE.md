@@ -12,6 +12,14 @@ Project-specific rules for Claude Code sessions working in this repo.
   WEBRTC codec negotiation against real browser peers, the subscribe path's
   known gotcha for whoever builds it next.
 
+- `android/docs/field-notes.md` — the Android client's gate-by-gate findings, led by a
+  "Protocol and behaviour reference" (spaces, roles, mic state and mute, libwebrtc
+  quirks, maps, server versions) with each fact tagged live / code / guess.
+- `docs/real-world-test-log.md` (calls with other people) and
+  `docs/experimental-test-log.md` (solo tests) — history of real test calls; the
+  Android app writes a log file per call (see "Call logs" in the Android notes) and
+  `android/tools/call-log-summary.mjs` summarises it.
+
 Read the relevant doc before touching `src/wa-audio.mjs` or anything
 LiveKit/werift-related — several of the bugs documented there look
 plausible-but-wrong on first read of the code, and were only resolved by

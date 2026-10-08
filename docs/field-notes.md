@@ -50,6 +50,17 @@ delay. Bounded burst → nothing to leak.
 **Do NOT replace this with a continuous keepalive stream.** Tried and
 abandoned — it OOMs the daemon in ~2 minutes. See below.
 
+**A second cause exists, seen on the Android client:** if the link has no audio
+line to send on at all (the browser joined muted, so its first offer had none),
+announcing mic-on gives the same red mic until the browser re-offers. Not
+reproduced yet; see `android/docs/field-notes.md` ("Protocol and behaviour
+reference") and issue #97.
+
+**The CLI also has the join-muted bug** (reported by the owner, 2026-10-08; issue
+#104): `_onSignal` ignores `{type:"renegotiate"}` ("our track is static"), so as
+the initiator it never re-offers when a browser that joined muted unmutes; the
+Android client had exactly this bug and fixed it.
+
 **Also:** firing RTP within ~1 s of `pc connected` can transiently leave the
 browser peer with no media tile (recovers on reconnect). 0.4 s is late
 enough that this is rare; a longer clip fired instantly on connect is
@@ -388,6 +399,11 @@ daemon in the past.
   each move can shift the `apiVersionHash`. `wa-master` warns on sha drift;
   refresh it with `node scripts/vendor-proto.mjs master wa-master` (prints the
   recomputed hash — self-verified: `v1.33.5` → `bfd20fc4`).
+- **The `wa-master` adapter is behind staging (checked 2026-10-08).** Staging was at
+  `master@6ae415d`; the adapter tracks `7d628838` and lists hash `3fb30729`, while
+  `vendor-proto.mjs --check 6ae415d` gives `23c8eb8c` (the same as prod v1.34.0, and the
+  Android app joined staging with it). The CLI has not been re-tested against staging
+  since, so it is unknown whether it still connects.
 - **Staging has its own everything.** Different pusher
   (`pusher.staging.workadventu.re`) and a **different woka catalogue** — a
   production woka id returns `invalid character texture`. Use a staging id
