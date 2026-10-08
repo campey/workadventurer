@@ -467,6 +467,7 @@ open class PusherConnection(
         }
         m.roomJoinedMessage?.let { r ->
             state.setMyUserId(r.currentUserId)
+            state.setMyTextures(r.characterTextures.map { Texture(it.id, it.url) })
             _log.tryEmit("joined room as userId ${r.currentUserId}")
             startKeepAlive()
             joined.complete(Unit)

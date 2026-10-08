@@ -22,6 +22,7 @@ import app.workadventurer.proto.SpaceUser
 import app.workadventurer.proto.WebRtcDisconnectMessage
 import app.workadventurer.proto.WebRtcSignal
 import app.workadventurer.proto.WebRtcStartMessage
+import app.workadventurer.proto.CharacterTextureMessage
 import app.workadventurer.proto.ClientToServerMessage
 import app.workadventurer.proto.ErrorScreenMessage
 import app.workadventurer.proto.LocatePositionMessage
@@ -107,6 +108,26 @@ class PusherConnectionTest {
 
     private fun cfg(s: MockWebServer) =
         RoomConfig(pusherUrl = s.url("/").toString().trimEnd('/'), name = "tester")
+
+    // Issue #77: our own woka picture comes from the server's room-joined message, so no extra request is needed.
+    @Test
+    fun theRoomJoinedMessageGivesUsOurOwnWokaTextures() = runBlocking {
+        val fake = Fake(
+            onOpen = { ws -> ws.send(s2c(ServerToClientMessage(roomConnectedMessage = RoomConnectedMessage()))) },
+            onFrame = { ws, msg ->
+                if (msg.joinRoomFrontMessage != null) {
+                    ws.send(s2c(ServerToClientMessage(roomJoinedMessage = RoomJoinedMessage(currentUserId = 7,
+                        characterTextures = listOf(CharacterTextureMessage(url = "https://x/full.png", id = "woka1"))))))
+                }
+            },
+        )
+        server(fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            assertEquals(listOf(Texture("woka1", "https://x/full.png")), conn.state.myTextures.value)
+            conn.close()
+        }
+    }
 
     @Test
     fun handshakeJoinsAndTracksPlayers() = runBlocking {
