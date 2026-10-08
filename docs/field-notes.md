@@ -53,8 +53,13 @@ abandoned — it OOMs the daemon in ~2 minutes. See below.
 **A second cause exists, seen on the Android client:** if the link has no audio
 line to send on at all (the browser joined muted, so its first offer had none),
 announcing mic-on gives the same red mic until the browser re-offers. Not
-reproduced yet, and the CLI is untested for it; see `android/docs/field-notes.md`
-("Protocol and behaviour reference") and issue #97.
+reproduced yet; see `android/docs/field-notes.md` ("Protocol and behaviour
+reference") and issue #97.
+
+**The CLI also has the join-muted bug** (reported by the owner, 2026-10-08; issue
+#104): `_onSignal` ignores `{type:"renegotiate"}` ("our track is static"), so as
+the initiator it never re-offers when a browser that joined muted unmutes; the
+Android client had exactly this bug and fixed it.
 
 **Also:** firing RTP within ~1 s of `pc connected` can transiently leave the
 browser peer with no media tile (recovers on reconnect). 0.4 s is late

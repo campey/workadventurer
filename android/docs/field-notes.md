@@ -81,6 +81,8 @@ per-gate sections below have the measurements; this section is the summary to st
   was announced on while the link had no audio line to send on (`sent=0`, `dir=` empty), and the browser showed a red mic until
   its own re-offer ~20 s later. Seen once on staging, not reproduced: issue #97. The call log's `audio lines in offer: N` line
   exists to confirm or kill this.
+- **The CLI has the first (browser-unmutes) bug too** [owner-reported; code]: `src/wa-audio.mjs` ignores `renegotiate`, so as
+  the initiator it never re-offers. Issue #104. Whether it also has the reverse direction is unknown.
 
 ### libwebrtc on Android
 - The process aborts without `ACCESS_NETWORK_STATE`; the engine needs ~1.5 s after creation to learn the network (create it
