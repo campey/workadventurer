@@ -15,6 +15,7 @@ Backfilled from the session transcripts on 2026-10-08, so entries from before th
 - Setup: <room/server>, <who/what was on the other end: browser, second browser, synthetic avatars>, <device>
 - Result: <what happened>
 - Learned / follow-up: ... (issue #NN)
+- Log: <the call's log file from "Share logs", if any>  (android only; since #98)
 ```
 
 ## Android

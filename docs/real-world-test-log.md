@@ -17,6 +17,7 @@ taught you something, good or bad. A short note is fine. Other people are named 
 - How it went: <one or two lines>
 - Worked: ...
 - Problems: ... (issue #NN)
+- Log: <the call's log file, e.g. 2026-10-08T09-12-03_afrolabs-afrolabs-open-space.log, from "Share logs" in the app; summarise with `node android/tools/call-log-summary.mjs <file>`>  (android only; since #98)
 ```
 
 ## Entries
