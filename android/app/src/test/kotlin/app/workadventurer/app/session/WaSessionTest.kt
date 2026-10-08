@@ -669,6 +669,32 @@ class WaSessionTest {
         assertEquals(listOf(false), conn!!.micCalls) // mic off on the connection too
     }
 
+    // #77: the mic choice is remembered across joins (the Join screen reads it), so a join takes its starting state from the config.
+    @Test
+    fun aJoinStartsWithTheMicStateItsConfigAsksFor() = runTest {
+        val voices = mutableListOf<FakeVoice>(); var conn: FakeConn? = null
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { }.also { conn = it } }, nowMs = { testScheduler.currentTime },
+            voiceHost = { FakeVoice().also { voices += it } })
+        session.dispatch(Command.Join(cfg.copy(micOn = true)))
+        assertEquals(false, session.state.value.muted) // visible straight away, before the connection is up
+        runCurrent()
+        assertEquals(false, session.state.value.muted)
+        assertEquals(listOf(false), voices[0].muteCalls) // the voice starts unmuted
+        assertEquals(listOf(true), conn!!.micCalls) // and the room is told the mic is on
+    }
+
+    @Test
+    fun leavingAndJoiningAgainWithoutAMicChoiceIsMutedAgain() = runTest {
+        val voices = mutableListOf<FakeVoice>()
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { } }, nowMs = { testScheduler.currentTime },
+            voiceHost = { FakeVoice().also { voices += it } })
+        session.dispatch(Command.Join(cfg.copy(micOn = true))); runCurrent()
+        session.dispatch(Command.Leave); runCurrent()
+        assertTrue(session.state.value.muted)
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(true, voices.last().muteCalls.last())
+    }
+
     @Test
     fun unmutingTurnsTheMicOnForTheConnectionAndTheVoiceAndMutingTurnsItOff() = runTest {
         val voices = mutableListOf<FakeVoice>(); var conn: FakeConn? = null
