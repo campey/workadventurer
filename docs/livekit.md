@@ -240,9 +240,11 @@ it could be):
   snapshot was read, never `addSpaceUserMessage`.
 - *Silent streams reconnected for no reason* by `SttStream`'s "no data within
   3s" startup check, now that silence emits nothing; the worker says `ready`.
-- Pre-existing and **not fixed**: `scripts/stt-selfcheck.mjs` fails on a cold
-  worker because it streams immediately and `push()` silently drops packets until
-  the pipeline exists (warm the worker first).
+- Was pre-existing, **fixed in #58**: `scripts/stt-selfcheck.mjs` failed on a cold
+  worker because `push()` silently dropped packets until the pipeline existed.
+  `SttStream` now holds up to 15 s of pre-pipeline audio (`src/stt-prequeue.mjs`)
+  and flushes it once the socket/ffmpeg are up. The selfcheck also asserts the
+  head of the bundled clip, since a dropped head still produced a "passing" tail.
 
 **Transport changes held up.** When a participant left and the meeting fell
 below the escalation threshold, the server sent the LiveKit disconnect, the

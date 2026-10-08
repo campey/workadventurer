@@ -55,13 +55,6 @@ async function runClip(file) {
   let error = null;
   stream.on("final", (m) => finals.push(m.text));
   stream.on("error", (e) => (error = e));
-  // SttStream drops packets pushed before its socket/ffmpeg exist (cold worker
-  // start takes ~2s), which would eat the head of the first clip. Wait for the
-  // worker's hello before streaming.
-  await new Promise((resolve, reject) => {
-    stream.once("ready", resolve);
-    setTimeout(() => reject(new Error("worker never said ready")), 30000);
-  });
   const t0 = Date.now();
   for (const p of packets) {
     stream.push(p);
