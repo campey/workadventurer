@@ -25,6 +25,22 @@ LiveKit/werift-related — several of the bugs documented there look
 plausible-but-wrong on first read of the code, and were only resolved by
 live testing against a real peer.
 
+## Issues, PRs and the project board
+
+Work is tracked on the "workadventurer board" (github.com/users/campey/projects/1;
+Status: Todo / In Progress / Done).
+
+- **Starting an issue marks it In Progress.** As soon as you begin work on an
+  issue, run `scripts/board-status.sh <issue-number>` (it adds the issue to the
+  board if needed). Closing an issue moves it to Done on its own, and new issues
+  land in Todo; starting work is the one manual step. Needs the `project` token
+  scope (`gh auth refresh -h github.com -s project`).
+- **PR bodies link their issue with a closing keyword.** Use `Closes #N` (or
+  `Fixes #N`) for each issue the PR completes. `Refs #N`, "Toward #N" or a bare
+  `#N` only leaves a mention: the issue's "Linked pull requests" stays empty
+  and the board doesn't show the PR. Use `Refs` only when the PR genuinely
+  leaves the issue open. (Works on a merged PR too: edit the body.)
+
 ## Multi-session / worktree hygiene
 
 Several Claude Code sessions — this one and peers — routinely work in this
