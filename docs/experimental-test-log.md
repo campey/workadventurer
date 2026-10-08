@@ -54,7 +54,7 @@ Backfilled from the session transcripts on 2026-10-08, so entries from before th
 - Client: cli (`stt-cold-start` listener avatar on port 8799, merged `main`, no audio published)
 - Setup: prod, open-space, the owner in a browser; fresh daemon, so a cold STT worker.
 - Result: the first round went unheard: the owner was muted, the P2P link came up (18:49:25 UTC) but no audio track arrived, so no worker started and nothing was logged. After they unmuted, a new link started a worker within 2 s and the first words ("Hey hello there…") were transcribed intact, with temperature 0 and `language: en` in the worker log. No wrong-script, loop or filler lines; ~20 s of open mic produced nothing.
-- Learned / follow-up: a muted peer is silent in the log, not an error; the audio arrived on a fresh connection rather than the original muted one, consistent with #104 (`field-notes.md`, "Connecting and listening"). `wa to` took about two and a half minutes to arrive across the map.
+- Learned / follow-up: a muted peer is silent in the log, not an error; the audio arrived on a fresh connection rather than the original muted one, consistent with #104 (`field-notes.md`, "Connecting and listening"). The walk to the owner was quick; it was the audio that took minutes.
 
 ### 2026-10-06 — live check of the #61 STT fixes
 - Client: cli (`claude` listener avatar on the default port, merged `main`)

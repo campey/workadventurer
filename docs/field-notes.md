@@ -453,24 +453,26 @@ avatar against a real room. Dates are when each was observed.
   re-offer on `renegotiate`). Caveats: the exact unmute time wasn't logged and
   why the bubble closed at 18:51:07 isn't known (the speaker may have
   re-entered it), so this is consistent with #104, not a clean reproduction.
-- **`wa to <player>` returns at once; arrival takes as long as the walk**
-  (2026-10-08). The reply is `goingTo: {...}` immediately. A walk across the
-  map took about two and a half minutes, and the voice link only formed when
-  the avatar arrived in range. Poll `wa status` for position rather than
-  assuming it has arrived, and expect early talking to go unheard.
-- **Name resolution is exact-then-substring, first match wins; duplicates
-  happen.** `findPlayer()` returns the first player whose name equals the
-  needle, else the first that contains it. With two same-named avatars
-  visible (two `:David`s at different spots, 2026-10-06, cause not found) `wa
-  to` can walk to the wrong one with no warning; check `wa status` and use
-  `wa goto <x> <y>` when it matters. `no player matching "<name>"` just means
-  nobody by that name is visible yet (the owner hadn't joined).
+- **`wa to <player>` returns at once** (`goingTo: {...}`), not on arrival. The
+  walk itself is quick (about 8 s across the map on 2026-10-08); poll `wa
+  status` for position rather than assuming it has arrived. Audio is a
+  separate matter: it only flows once a voice link exists *and* the speaker is
+  unmuted (see the first bullet), which on that run took minutes.
+- **Name resolution is exact-then-substring, first match wins.**
+  `findPlayer()` returns the first player whose name equals the needle, else
+  the first that contains it. The same name can legitimately appear twice —
+  two browsers (tabs or devices) of the same person were both visible as
+  `:David` on 2026-10-06 — and `wa to` then walks to whichever the player map
+  lists first, with no warning. Check `wa status` and use `wa goto <x> <y>`
+  when it matters. `no player matching "<name>"` just means nobody by that
+  name is visible yet.
 - **Walking through the map joins and leaves things on the way.** Crossing
   meeting areas fires `area enter`/`area leave` pairs (the dwell debounce
   covers the Space side), and passing another avatar can set up and tear down
   a P2P link within the same second (`webRtcStart … initiator=false`, then
-  `closed (left bubble)`). That churn is expected, not a fault; see #62 for the
-  related case of standing inside a meeting area.
+  `closed (left bubble)`). That churn is a side effect of the route taken, not
+  a fault; #102 (routes that avoid walking through map areas) is the fix. #62
+  is the related case of *standing* inside a meeting area.
 - **`daemon-<port>.log` timestamps are UTC**, not local time (2026-10-08: log
   `18:49` was 20:49 for the owner). Match them against `date -u`.
 - **Env vars on `wa join` reach the detached daemon** (`STT_TEE_DIR`,
