@@ -49,6 +49,8 @@ fun WokaAvatar(
     placeholder: String? = null,
     /** A grey dot (not in a world yet) instead of a status colour. */
     offline: Boolean = false,
+    /** No coloured tile behind the picture (and a light placeholder): for a container that already has its own background. */
+    plain: Boolean = false,
 ) {
     val loader = LocalWokaLoader.current
     val picture by produceState<ImageBitmap?>(null, WokaSprite.cacheKey(textures), loader) {
@@ -57,14 +59,14 @@ fun WokaAvatar(
     val shape = RoundedCornerShape(size / 3.5f)
     Box(modifier.size(size).clearAndSetSemantics { }, contentAlignment = Alignment.Center) {
         Box(
-            Modifier.fillMaxSize().clip(shape).background(Color(placeholderColor(name))).alpha(if (dim) 0.5f else 1f),
+            Modifier.fillMaxSize().clip(shape).background(if (plain) Color.Transparent else Color(placeholderColor(name))).alpha(if (dim) 0.5f else 1f),
             contentAlignment = Alignment.Center,
         ) {
             val p = picture
             if (p != null) {
                 Image(p, contentDescription = null, contentScale = ContentScale.Fit, filterQuality = FilterQuality.None, modifier = Modifier.fillMaxSize())
             } else {
-                Text(placeholder ?: initialOf(name), color = Color(0xFF0B1B32), fontSize = (size.value * 0.42f).sp, style = MaterialTheme.typography.titleMedium)
+                Text(placeholder ?: initialOf(name), color = if (plain) MaterialTheme.colorScheme.onSurface else Color(0xFF0B1B32), fontSize = (size.value * 0.42f).sp, style = MaterialTheme.typography.titleMedium)
             }
         }
         if (status != null || offline) {
