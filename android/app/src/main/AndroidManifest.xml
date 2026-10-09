@@ -9,6 +9,7 @@
     <application
         android:name=".WaApp"
         android:label="WorkAdventure"
+        android:theme="@style/Theme.WorkAdventurer"
         android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

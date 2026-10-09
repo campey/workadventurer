@@ -29,17 +29,12 @@ import app.workadventurer.app.session.SessionState
 
 /**
  * The room. For now this is the people-and-areas list the app already had, minus the join form and the mic (which moved to the
- * Join screen and the bottom bar); the sections in the design replace it in the Users slice, and Leave and Share logs move into
- * the world panel with the top bar. Every row is one focusable element with a full description, buttons are at least 48dp, and
+ * Join screen and the bottom bar); the sections in the design replace it in the Users slice, and Leave and Share logs now live in
+ * the world panel. Every row is one focusable element with a full description, buttons are at least 48dp, and
  * what changes is a live region, so TalkBack is complete.
  */
 @Composable
-fun UsersScreen(
-    state: SessionState,
-    onLeave: () -> Unit,
-    onShareLogs: () -> Unit,
-    onCommand: (Command) -> Unit,
-) {
+fun UsersScreen(state: SessionState, onCommand: (Command) -> Unit) {
     val canMove = state.connection is Connection.Connected
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
@@ -47,16 +42,6 @@ fun UsersScreen(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = onLeave,
-                modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Leave the room" },
-            ) { Text("Leave") }
-            TextButton(
-                onClick = onShareLogs,
-                modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Share the logs of recent calls" },
-            ) { Text("Share logs") }
-        }
         activityText(state.activity)?.let { text ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(text, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })

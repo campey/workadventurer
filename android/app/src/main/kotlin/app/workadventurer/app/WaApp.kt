@@ -22,6 +22,12 @@ import java.util.concurrent.TimeUnit
 class WaApp : Application() {
     // pingInterval is OkHttp's TCP-level websocket ping. G1 measures whether it's needed.
     private val http = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
+    /** Your own woka layers as last seen per server, so the Join screen can preview you before connecting. */
+    val lastTextures by lazy { LastTextures(PrefsStore(this)) }
+
+    /** Builds and remembers the woka pictures shown across the app. */
+    val wokaLoader by lazy { app.workadventurer.app.ui.WokaLoader(http) }
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** Where the per-call log files live (see [CallLog]); the share action reads from here. */
@@ -69,6 +75,12 @@ class WaApp : Application() {
             voiceHost = MeshVoiceHost(this, callLog),
             log = { callLog.i("WaSession", it) },
         )
+        // Our own picture arrives in the room-joined message; keep it for the Join screen's preview.
+        appScope.launch {
+            s.state.map { it.roomName to it.myTextures }.distinctUntilChanged().collect { (room, layers) ->
+                if (layers.isNotEmpty()) lastTextures.remember(room, layers)
+            }
+        }
         // How much of the room the server has told us about (it only streams what is near us): counts only, no names.
         appScope.launch {
             s.state.map { it.players.size to it.groups.size }.distinctUntilChanged().collect { (p, g) ->

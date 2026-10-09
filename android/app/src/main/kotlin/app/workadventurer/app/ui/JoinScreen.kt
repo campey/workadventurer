@@ -1,7 +1,15 @@
 package app.workadventurer.app.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -23,11 +31,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.workadventurer.app.session.Connection
+import app.workadventurer.protocol.Texture
 import app.workadventurer.protocol.Wa133
 
 /**
@@ -36,10 +51,19 @@ import app.workadventurer.protocol.Wa133
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: String, room: String) -> Unit) {
+fun JoinScreen(
+    connection: Connection,
+    initialName: String,
+    texturesFor: (roomUrl: String) -> List<Texture>,
+    onMessage: (String) -> Unit,
+    onJoin: (name: String, room: String) -> Unit,
+) {
     var name by rememberSaveable { mutableStateOf(initialName) }
     var room by rememberSaveable { mutableStateOf(Wa133.DEFAULT_ROOM) }
     var picking by remember { mutableStateOf(false) }
+    val focus = LocalFocusManager.current
+    val urlFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
     val joining = connection is Connection.Connecting
 
     Column(Modifier.fillMaxSize()) {
@@ -48,40 +72,59 @@ fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: Strin
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            OutlinedTextField(
-                value = name, onValueChange = { name = it }, enabled = !joining, singleLine = true,
-                label = { Text("Your name in the room") }, modifier = Modifier.fillMaxWidth(),
-            )
             // The address stays editable for any world; the arrow offers the frequent ones.
             ExposedDropdownMenuBox(expanded = picking, onExpandedChange = { picking = it && !joining }) {
                 OutlinedTextField(
                     value = room, onValueChange = { room = it }, enabled = !joining, singleLine = true,
-                    label = { Text("World URL") },
+                    label = { Text("World / Room URL") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = picking) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryEditable)
-                        .semantics { contentDescription = "World URL. Choose a frequent world from the list." },
+                    modifier = Modifier.fillMaxWidth().focusRequester(urlFocus).menuAnchor(MenuAnchorType.PrimaryEditable)
+                        .semantics { contentDescription = "World or room URL. Choose a frequent world from the list." },
                 )
                 ExposedDropdownMenu(expanded = picking, onDismissRequest = { picking = false }) {
                     ROOM_PRESETS.forEach { p ->
                         DropdownMenuItem(
                             text = { Text(p.name) },
-                            onClick = { room = p.url; picking = false },
+                            // Close the keyboard too, so the world's details underneath are in view.
+                            onClick = { room = p.url; picking = false; focus.clearFocus(); keyboard?.hide() },
                             modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Choose ${p.name}" },
                         )
                     }
+                    // A world that isn't in the list: empty the address and put the cursor in it.
+                    DropdownMenuItem(
+                        text = { Text(NEW_WORLD_LABEL) },
+                        onClick = { room = ""; picking = false; urlFocus.requestFocus(); keyboard?.show() },
+                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Enter a new world address" },
+                    )
                 }
             }
             WorldInfo(worldDetails(room))
+            // Your name, and how you will look: the woka the server last gave you, as it appears in the top bar.
+            // Bottom-aligned, and the same height as the name box (56 dp), so their tops and bottoms line up.
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it }, enabled = !joining, singleLine = true,
+                    label = { Text("Your name in the room") }, modifier = Modifier.weight(1f),
+                )
+                val layers = remember(room) { texturesFor(room) }
+                // A tile like the world's: same border, corners and background, the picture just inside it.
+                Box(
+                    Modifier.size(56.dp).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+                        .clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface).clickable(role = Role.Button) { onMessage(WOKA_CUSTOMISATION_MESSAGE) }
+                        .semantics { contentDescription = "Your woka, $OFFLINE_LABEL. Customising it is not built yet" },
+                    contentAlignment = Alignment.Center,
+                ) { WokaAvatar(layers, name.ifBlank { "?" }, 48.dp, offline = true, plain = true, placeholder = WOKA_PREVIEW_PLACEHOLDER) }
+            }
             if (connection is Connection.Failed) {
                 Text("Couldn't join: ${connection.message}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
         }
         PrimaryAction(
             label = if (joining) "Joining…" else "Join",
-            explainer = if (name.isBlank()) "Enter your name to join" else "Enter this world as ${name.trim()}",
+            explainer = joinExplainer(name, room),
             onClick = { onJoin(name.trim(), room.trim()) },
             description = if (joining) "Joining the world" else "Join the world as ${name.trim()}",
-            enabled = !joining && name.isNotBlank(),
+            enabled = canJoin(name, room, joining),
         )
         Spacer(Modifier.padding(bottom = 12.dp))
     }

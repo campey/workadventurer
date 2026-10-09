@@ -7,6 +7,15 @@ data class WorldDetails(val name: String, val host: String, val path: String)
 
 private const val UNKNOWN_WORLD = "Unknown world"
 
+/** The room's address for sharing: scheme, host and path only (a query or fragment can carry a token); empty if there is no room. */
+fun shareableRoomUrl(roomUrl: String): String {
+    val uri = runCatching { URI(roomUrl.trim()) }.getOrNull() ?: return ""
+    val host = uri.host.orEmpty()
+    val path = uri.rawPath.orEmpty().trimEnd('/')
+    if (host.isEmpty() || path.isEmpty() || uri.scheme.isNullOrEmpty()) return ""
+    return "${uri.scheme}://$host$path"
+}
+
 /**
  * The details for a room URL. A room with a preset uses the preset's name; any other is named from the last part of its path
  * ("team-room" becomes "Team room"). The query and fragment (which can carry a token) are never part of what is shown.

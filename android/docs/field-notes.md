@@ -112,6 +112,18 @@ per-gate sections below have the measurements; this section is the summary to st
   the track the other links share. [code, review finding]
 - The audio mode is `MODE_IN_COMMUNICATION` for the whole connection and restored afterwards. [code]
 
+### Pictures and UI facts (#77)
+- **Woka pictures** [live]: each layer is a public https PNG, a 96x128 sheet of 3x4 frames of 32x32; the picture is every
+  layer's standing facing-down frame (frame 1, rect (32,0,32,32)) stacked in the order the server sends them (our own layers
+  arrive in `roomJoinedMessage`, other players' in `userJoinedMessage`), scaled up without smoothing. Worked first time on prod.
+- **Status** [code]: labels and dot colours are the web client's; "unchanged" is not a state (a details update about something
+  else).
+- **Edge to edge needs two things Compose doesn't do for you** [live]: lift the layout above the keyboard (`imePadding`, or the
+  Join button hides behind it), and handle Back for the drawer yourself (this Material 3 version's drawer doesn't: Back with the
+  world panel open left the app). A no-action-bar theme is needed or the system title bar shows above the app's own top bar.
+- **World icon**: every room we know shows the default WorkAdventure coffee cup. A custom icon can only come from the
+  server's `metatags.favIcons` (admin API); none of our rooms sets one, so it isn't read yet.
+
 ### Maps (the campus map)
 - **Spawn**: the `.wam` start area if there is one; otherwise a tile of the map's Tiled `start` layer; the old fixed corner put
   the avatar where it saw nobody. [live, #90]
