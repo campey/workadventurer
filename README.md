@@ -49,7 +49,7 @@ wa leave                          # disconnect and stop the daemon
 
 | Command | Does |
 |---|---|
-| `wa join [<room-url>] [--detach] [--stt]` | join the room (runs the daemon); `--stt` joins as a listener (transcribes peer audio to the console, a thought bubble and Space chat instead of publishing a mic) |
+| `wa join [<room-url>] [--detach] [--stt [--transcript <file>]]` | join the room (runs the daemon); `--stt` joins as a listener (transcribes peer audio to the console, a thought bubble and Space chat instead of publishing a mic); `--transcript` also appends each final to a JSONL file |
 | `wa leave` | leave and stop the daemon |
 | `wa status [--json]` | position, area, visible players |
 | `wa to <player>` | walk next to a player (returns at once; poll `wa status` for arrival. Name match is exact-then-substring, first hit wins — see [quirks](docs/field-notes.md#connecting-and-listening-quirks-seen-in-live-runs)) |
@@ -485,6 +485,14 @@ locks it in with a newline on `final`; under `--detach` (stdout is
 `daemon-<port>.log`, a plain file — cursor control doesn't mean anything there) it
 instead logs one clean, timestamped line per finalized utterance and drops
 partials. `/state` doesn't expose transcripts yet.
+
+**Transcript file (issue #64):** `wa join --stt --transcript <file>` appends one
+JSONL line per finalized utterance, `{"ts":"<ISO UTC>","speaker":"<name>","text":"…"}`.
+Partials and empty finals are not written; the worker has already dropped faint
+filler (#61), so it isn't repeated here. One append-only file per daemon (the path
+is made absolute against where you ran `wa join`, parent directories are created,
+and a write error is logged, never fatal). `--transcript` without `--stt` is an
+error. Also settable with `WA_STT_TRANSCRIPT=<file>`.
 
 **Into the room (issue #41):** the same `heard` stream also goes out in-world
 via `src/stt-room-output.mjs`. Each partial is shown as a **thought bubble**

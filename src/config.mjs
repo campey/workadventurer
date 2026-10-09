@@ -25,6 +25,7 @@ const BASE = {
   target: CLIENT_DEFAULTS.target, // "auto"
   wokaId: CLIENT_DEFAULTS.wokaId,
   port: 8787,
+  transcript: null, // WA_STT_TRANSCRIPT=<path> -> append finals as JSONL (issue #64)
   stt: false, // WA_STT=1 -> live speech-to-text on inbound peer audio (issue #23, prototype)
 };
 
@@ -37,6 +38,7 @@ const ENV_MAP = {
   WA_WOKA_ID: "wokaId",
   WA_DAEMON_PORT: "port",
   WA_STT: "stt",
+  WA_STT_TRANSCRIPT: "transcript",
 };
 
 function fromFile() {
@@ -94,6 +96,7 @@ export function configToEnv(cfg) {
     WA_WOKA_ID: cfg.wokaId,
     WA_DAEMON_PORT: String(cfg.port),
     WA_STT: cfg.stt ? "1" : "0",
+    ...(cfg.transcript ? { WA_STT_TRANSCRIPT: cfg.transcript } : {}),
     ...(cfg.version ? { WA_VERSION: cfg.version } : {}),
   };
 }

@@ -33,6 +33,7 @@ import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
 import { resolveClip } from "./resolve-clip.mjs";
 import { makeSttRoomOutput } from "./stt-room-output.mjs";
+import { makeTranscriptSink } from "./stt-transcript.mjs";
 import { stopWorker } from "./wa-stt.mjs";
 import { createRegistry } from "./daemon-registry.mjs";
 import { goQuiet } from "./quiet.mjs";
@@ -76,6 +77,13 @@ function attachAudio(client) {
     audio.on("heard", (e) => {
       try { roomOutput(e); } catch (err) { log(`stt room output failed: ${err.message}`); }
     });
+    // Transcript file (#64): one JSONL line per final, same speaker label as the console.
+    if (cfg.transcript) {
+      const transcript = makeTranscriptSink(cfg.transcript, { onError: (err) => log(`stt transcript write failed: ${err.message}`) });
+      audio.on("heard", (e) => {
+        transcript(e, wa.spaceUserName(e.remoteUserId) ?? String(e.remoteUserId).split("/").pop());
+      });
+    }
     audio.on("heard", ({ remoteUserId, text, final }) => {
       // Silence closing out a buffer that never had real speech transcribes
       // to "" — the worker skips sending these, but guard here too rather
