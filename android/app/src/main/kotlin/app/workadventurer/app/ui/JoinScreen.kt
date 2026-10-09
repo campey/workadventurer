@@ -63,10 +63,10 @@ fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: Strin
             ExposedDropdownMenuBox(expanded = picking, onExpandedChange = { picking = it && !joining }) {
                 OutlinedTextField(
                     value = room, onValueChange = { room = it }, enabled = !joining, singleLine = true,
-                    label = { Text("World URL") },
+                    label = { Text("World / Room URL") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = picking) },
                     modifier = Modifier.fillMaxWidth().focusRequester(urlFocus).menuAnchor(MenuAnchorType.PrimaryEditable)
-                        .semantics { contentDescription = "World URL. Choose a frequent world from the list." },
+                        .semantics { contentDescription = "World or room URL. Choose a frequent world from the list." },
                 )
                 ExposedDropdownMenu(expanded = picking, onDismissRequest = { picking = false }) {
                     ROOM_PRESETS.forEach { p ->
