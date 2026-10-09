@@ -19,6 +19,14 @@ class RoomConfigTest {
         assertEquals(WaStaging.DEFAULT_WOKA, c.wokaId)
     }
 
+    // #77: the mic choice made on the Join screen travels with the join.
+    @Test
+    fun theMicChoiceTravelsWithTheConfigAndDefaultsToMuted() {
+        assertEquals(false, RoomConfig.forRoom("Ada", "https://play.workadventu.re/@/a/b/c").micOn)
+        assertEquals(true, RoomConfig.forRoom("Ada", "https://play.workadventu.re/@/a/b/c", micOn = true).micOn)
+        assertEquals(true, RoomConfig.forRoom("Ada", "https://play.staging.workadventu.re/@/a/b/c", micOn = true).micOn)
+    }
+
     @Test
     fun anUnknownOrMalformedHostFallsBackToProd() {
         assertEquals(Wa133.DEFAULT_PUSHER, RoomConfig.forRoom("Ada", "not a url").pusherUrl)

@@ -50,6 +50,8 @@ class WaApp : Application() {
             "# phone ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (sdk ${Build.VERSION.SDK_INT})",
             "# room $roomUrl",
             "# server ${if (host == WaStaging.HOST) "staging" else "prod"}",
+            // The mic choice is remembered across joins now, so a surprise live mic must be traceable from the log alone.
+            "# mic ${if (session.state.value.muted) "muted" else "on"} at join",
         )
     }
 

@@ -1,7 +1,6 @@
 package app.workadventurer.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,18 +10,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -34,88 +26,36 @@ import androidx.compose.ui.unit.dp
 import app.workadventurer.app.session.Command
 import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.SessionState
-import app.workadventurer.protocol.Wa133
 
 /**
- * Minimal and TalkBack-first (the seed of the accessibility goal): every row is one focusable element
- * with a full description, nothing is conveyed by colour alone, touch targets are at least 48dp, and every
- * button's description is the whole action ("Walk to Ada"), not just its visible label.
+ * The room. For now this is the people-and-areas list the app already had, minus the join form and the mic (which moved to the
+ * Join screen and the bottom bar); the sections in the design replace it in the Users slice, and Leave and Share logs move into
+ * the world panel with the top bar. Every row is one focusable element with a full description, buttons are at least 48dp, and
+ * what changes is a live region, so TalkBack is complete.
  */
 @Composable
-fun PresenceScreen(
+fun UsersScreen(
     state: SessionState,
-    onJoin: (name: String, room: String) -> Unit,
     onLeave: () -> Unit,
+    onShareLogs: () -> Unit,
     onCommand: (Command) -> Unit,
-    notice: String? = null,
-    initialName: String = "",
-    onShareLogs: () -> Unit = {},
 ) {
-    var name by rememberSaveable { mutableStateOf(initialName) }
-    var room by rememberSaveable { mutableStateOf(Wa133.DEFAULT_ROOM) }
-    val inRoom = state.connection is Connection.Connecting ||
-        state.connection is Connection.Connected ||
-        state.connection is Connection.Reconnecting
     val canMove = state.connection is Connection.Connected
-
-    Column(
-        Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        OutlinedTextField(
-            value = name, onValueChange = { name = it }, enabled = !inRoom,
-            label = { Text("Your name in the room") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = room, onValueChange = { room = it }, enabled = !inRoom,
-            label = { Text("Room URL") }, singleLine = true,
-            supportingText = presetNameFor(room)?.let { known -> { Text(known) } },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        // Frequent rooms, one tap. The field stays editable for anything else.
-        var picking by remember { mutableStateOf(false) }
-        Box {
-            TextButton(
-                onClick = { picking = true }, enabled = !inRoom,
-                modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Choose a frequent room" },
-            ) { Text("Frequent rooms ▾") }
-            DropdownMenu(expanded = picking, onDismissRequest = { picking = false }) {
-                ROOM_PRESETS.forEach { p ->
-                    DropdownMenuItem(
-                        text = { Text(p.name) },
-                        onClick = { room = p.url; picking = false },
-                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Join room ${p.name}" },
-                    )
-                }
-            }
-        }
-        Button(
-            onClick = { if (inRoom) onLeave() else onJoin(name.trim(), room.trim()) },
-            enabled = inRoom || name.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-        ) { Text(if (inRoom) "Leave" else "Join") }
-        TextButton(
-            onClick = onShareLogs,
-            modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Share the logs of recent calls" },
-        ) { Text("Share logs") }
-
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
             statusText(state.connection),
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         )
-        if (canMove) {
-            // The microphone: always muted at join. A live region so TalkBack announces the change.
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(micText(state.muted), Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
-                Button(
-                    onClick = { onCommand(Command.SetMuted(!state.muted)) },
-                    modifier = Modifier.heightIn(min = 48.dp).semantics {
-                        contentDescription = if (state.muted) "Unmute the microphone" else "Mute the microphone"
-                    },
-                ) { Text(if (state.muted) "Unmute" else "Mute") }
-            }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = onLeave,
+                modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Leave the room" },
+            ) { Text("Leave") }
+            TextButton(
+                onClick = onShareLogs,
+                modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Share the logs of recent calls" },
+            ) { Text("Share logs") }
         }
         activityText(state.activity)?.let { text ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -144,7 +84,6 @@ fun PresenceScreen(
                 ) { Text("Decline") }
             }
         }
-        if (notice != null) Text(notice, color = MaterialTheme.colorScheme.error)
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             item {

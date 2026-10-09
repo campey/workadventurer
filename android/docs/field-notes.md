@@ -82,9 +82,13 @@ per-gate sections below have the measurements; this section is the summary to st
   join +0 s, +1 s and +3 s, again when the space's user list (`initSpaceUsers`) arrives, and at every unmute; muting announces
   **off at once** and cancels pending "on" announcements. Nothing is announced for a space we aren't in. [code]
 - **Mute on Android** [code, live]: one shared microphone track for every link. Muting calls `setMicrophoneMute`, which
-  zero-fills the capture buffer, so silence RTP keeps flowing and the browser's indicator stays correct. The app **starts
-  muted on every join**, the choice survives a reconnect, Leave resets it, and the notification's Mute/Unmute action does the
-  same thing as the button (the call log records which one was used).
+  zero-fills the capture buffer, so silence RTP keeps flowing and the browser's indicator stays correct. The app **remembers
+  the mic choice across joins** (changed 2026-10-09, owner's call: it used to start muted every time). A fresh install is
+  muted; the bottom bar's mic button sets the choice on the Join screen too; a join starts with it (`RoomConfig.micOn`, announced
+  to the room), a reconnect keeps the in-room choice, and the notification's Mute/Unmute action does the same thing as the
+  button. Trade-off: a join can now go live without a tap that session, so the call log header says `# mic on|muted at join` and
+  each tap is logged with its source. Checked on the phone: unmuted on Join, joined with the mic on, muted in the room, and Join
+  then showed muted.
 - **Capture keeps running while muted** (Android's mic indicator stays lit; some battery). Deliberate: stopping capture would
   end the silent stream and bring the red mic back. [code; indicator behaviour not measured on a device]
 - **A browser that joins muted** has no audio line in its first offer, and changes that when its user unmutes. Phone hearing

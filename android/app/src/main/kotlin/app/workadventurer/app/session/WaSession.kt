@@ -86,7 +86,7 @@ data class SessionState(
     val groups: List<Group> = emptyList(),
     /** The bubble we are in, one of [groups], or null. */
     val myGroupId: Int? = null,
-    /** The microphone. Every join starts muted: the phone never broadcasts from a pocket by surprise. */
+    /** The microphone. A join starts with the mic state its [RoomConfig.micOn] asks for (muted unless the app remembered otherwise). */
     val muted: Boolean = true,
 )
 
@@ -161,7 +161,7 @@ class WaSession(
                 is Command.Join -> {
                     val gen = restart()
                     // Set synchronously so observers never see the previous room's (or a stale Failed) state first.
-                    _state.value = SessionState(connection = Connection.Connecting, roomName = cmd.config.roomUrl, myName = cmd.config.name)
+                    _state.value = SessionState(connection = Connection.Connecting, roomName = cmd.config.roomUrl, myName = cmd.config.name, muted = !cmd.config.micOn)
                     job = scope.launch { run(cmd.config, gen) }
                 }
                 Command.Leave -> {
@@ -192,7 +192,7 @@ class WaSession(
                     }
                 }
                 is Command.SetMuted -> {
-                    // Remembered either way; only applied to a live connection. A Join resets it (muted), see SessionState.
+                    // Remembered either way; only applied to a live connection. A Join starts from its own config, see SessionState.
                     _state.update { it.copy(muted = cmd.muted) }
                     val live = _state.value.connection == Connection.Connected
                     log("mic ${if (cmd.muted) "muted" else "unmuted"} (${cmd.source})${if (live) "" else ", not in a call so only remembered"}")

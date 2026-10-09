@@ -36,6 +36,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.navigation.compose)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.coroutines.test)
 }

@@ -7,19 +7,25 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.workadventurer.app.ui.PresenceScreen
+import app.workadventurer.app.session.Command
+import app.workadventurer.app.ui.AppRoot
+import app.workadventurer.app.ui.WorkAdventurerTheme
 
+/** The single activity: permissions and the foreground-service handoff live here; everything on screen is in [AppRoot]. */
 class MainActivity : ComponentActivity() {
     private val notice = mutableStateOf<String?>(null)
+    private val micWanted = mutableStateOf(false)
     private var pendingJoin: Pair<String, String>? = null
-    private val lastName by lazy { LastName(PrefsStore(this)) }
+    private val prefs by lazy { PrefsStore(this) }
+    private val lastName by lazy { LastName(prefs) }
+    private val lastMic by lazy { LastMic(prefs) }
 
     private val permissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
@@ -30,24 +36,40 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        micWanted.value = lastMic.isOn()
         val session = (application as WaApp).session
         setContent {
-            MaterialTheme {
+            WorkAdventurerTheme {
                 val state by session.state.collectAsStateWithLifecycle()
-                PresenceScreen(
+                AppRoot(
                     state = state,
+                    micWanted = micWanted.value,
                     notice = notice.value,
                     initialName = lastName.get(),
                     onJoin = ::requestJoin,
-                    onShareLogs = ::shareLogs,
-                    // Movement goes straight to the session; only Join/Leave go through the foreground service.
-                    onCommand = { session.dispatch(it) },
                     onLeave = {
                         notice.value = null
                         startService(Intent(this, PresenceService::class.java).setAction(PresenceService.ACTION_LEAVE))
                     },
+                    onShareLogs = ::shareLogs,
+                    onMicChoice = ::chooseMic,
+                    // Movement goes straight to the session; only Join/Leave go through the foreground service.
+                    onCommand = { session.dispatch(it) },
                 )
             }
+        }
+    }
+
+    /** The mic button: remembered for next time either way, and applied now when in a room. */
+    private fun chooseMic(muted: Boolean) {
+        micWanted.value = !muted
+        lastMic.remember(!muted)
+        (application as WaApp).session.let { s ->
+            if (s.state.value.connection !is app.workadventurer.app.session.Connection.Disconnected &&
+                s.state.value.connection !is app.workadventurer.app.session.Connection.Failed &&
+                s.state.value.connection !is app.workadventurer.app.session.Connection.Connecting
+            ) s.dispatch(Command.SetMuted(muted))
         }
     }
 
@@ -84,7 +106,8 @@ class MainActivity : ComponentActivity() {
             Intent(this, PresenceService::class.java)
                 .setAction(PresenceService.ACTION_JOIN)
                 .putExtra(PresenceService.EXTRA_NAME, name)
-                .putExtra(PresenceService.EXTRA_ROOM, room),
+                .putExtra(PresenceService.EXTRA_ROOM, room)
+                .putExtra(PresenceService.EXTRA_MIC_ON, micWanted.value),
         )
     }
 }

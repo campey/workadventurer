@@ -55,6 +55,7 @@ class PresenceService : Service() {
                 val cfg = RoomConfig.forRoom(
                     name = intent.getStringExtra(EXTRA_NAME).orEmpty(),
                     roomUrl = intent.getStringExtra(EXTRA_ROOM) ?: Wa133.DEFAULT_ROOM,
+                    micOn = intent.getBooleanExtra(EXTRA_MIC_ON, false), // the mic choice from the Join screen
                 )
                 session.dispatch(Command.Join(cfg))
                 observer?.cancel()
@@ -211,6 +212,7 @@ class PresenceService : Service() {
         const val ACTION_DECLINE_INVITE = "app.workadventurer.action.DECLINE_INVITE"
         const val EXTRA_NAME = "name"
         const val EXTRA_ROOM = "room"
+        const val EXTRA_MIC_ON = "micOn"
         const val EXTRA_NOTIFICATION_ID = "notificationId"
         private const val CHANNEL_ID = "presence"
         private const val INVITE_CHANNEL_ID = "invitations-v3"
