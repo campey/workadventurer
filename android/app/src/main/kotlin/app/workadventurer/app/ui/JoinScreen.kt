@@ -94,15 +94,16 @@ fun JoinScreen(
             }
             WorldInfo(worldDetails(room))
             // Your name, and how you will look: the woka the server last gave you, as it appears in the top bar.
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            // Bottom-aligned, and the same height as the name box (56 dp), so their tops and bottoms line up.
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = name, onValueChange = { name = it }, enabled = !joining, singleLine = true,
                     label = { Text("Your name in the room") }, modifier = Modifier.weight(1f),
                 )
                 val layers = remember(room) { texturesFor(room) }
                 WokaAvatar(
-                    layers, name.ifBlank { "?" }, 36.dp, offline = true, placeholder = WOKA_PREVIEW_PLACEHOLDER,
-                    modifier = Modifier.padding(end = 4.dp).clickable(role = Role.Button) { onMessage(WOKA_CUSTOMISATION_MESSAGE) }
+                    layers, name.ifBlank { "?" }, 56.dp, offline = true, placeholder = WOKA_PREVIEW_PLACEHOLDER,
+                    modifier = Modifier.clickable(role = Role.Button) { onMessage(WOKA_CUSTOMISATION_MESSAGE) }
                         .semantics { contentDescription = "Your woka, $OFFLINE_LABEL. Customising it is not built yet" },
                 )
             }
