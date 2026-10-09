@@ -24,7 +24,7 @@ class JoinFormTest {
     // The preview beside the name is tappable already, so it says why nothing happens (issue #108 builds the real thing).
     @Test
     fun tappingTheWokaPreviewExplainsItIsNotBuiltYet() {
-        assertEquals("Woka customisation not (yet) built", WOKA_CUSTOMISATION_MESSAGE)
+        assertEquals("Woka customisation not (yet) built (#108)", WOKA_CUSTOMISATION_MESSAGE)
         assertEquals("…", WOKA_PREVIEW_PLACEHOLDER)
     }
 

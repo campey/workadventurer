@@ -4,7 +4,7 @@ package app.workadventurer.app.ui
 const val NEW_WORLD_LABEL = "+ New world"
 
 /** What a tap on your woka preview says: customising it is planned (issue #108) but not built. */
-const val WOKA_CUSTOMISATION_MESSAGE = "Woka customisation not (yet) built"
+const val WOKA_CUSTOMISATION_MESSAGE = "Woka customisation not (yet) built (#108)"
 
 /** Shown in the preview instead of an initial until the picture is known or has loaded. */
 const val WOKA_PREVIEW_PLACEHOLDER = "…"
