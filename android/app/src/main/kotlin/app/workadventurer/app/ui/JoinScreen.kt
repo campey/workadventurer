@@ -1,6 +1,11 @@
 package app.workadventurer.app.ui
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -101,11 +106,13 @@ fun JoinScreen(
                     label = { Text("Your name in the room") }, modifier = Modifier.weight(1f),
                 )
                 val layers = remember(room) { texturesFor(room) }
-                WokaAvatar(
-                    layers, name.ifBlank { "?" }, 56.dp, offline = true, placeholder = WOKA_PREVIEW_PLACEHOLDER,
-                    modifier = Modifier.clickable(role = Role.Button) { onMessage(WOKA_CUSTOMISATION_MESSAGE) }
+                // A tile like the world's: same border and corners, the picture a little smaller inside it.
+                Box(
+                    Modifier.size(56.dp).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+                        .clip(RoundedCornerShape(16.dp)).clickable(role = Role.Button) { onMessage(WOKA_CUSTOMISATION_MESSAGE) }
                         .semantics { contentDescription = "Your woka, $OFFLINE_LABEL. Customising it is not built yet" },
-                )
+                    contentAlignment = Alignment.Center,
+                ) { WokaAvatar(layers, name.ifBlank { "?" }, 42.dp, offline = true, placeholder = WOKA_PREVIEW_PLACEHOLDER) }
             }
             if (connection is Connection.Failed) {
                 Text("Couldn't join: ${connection.message}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
