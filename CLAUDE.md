@@ -39,7 +39,10 @@ Status: Todo / In Progress / Done).
   `Fixes #N`) for each issue the PR completes. `Refs #N`, "Toward #N" or a bare
   `#N` only leaves a mention: the issue's "Linked pull requests" stays empty
   and the board doesn't show the PR. Use `Refs` only when the PR genuinely
-  leaves the issue open. (Works on a merged PR too: edit the body.)
+  leaves the issue open. (Works on a merged PR too: edit the body. But the
+  board's built-in "pull request linked → In Progress" rule fires on any new
+  link, so retro-linking a PR to an already-closed issue flips it from Done
+  to In Progress. Reset it afterwards: `scripts/board-status.sh <n> done`.)
 
 ## Multi-session / worktree hygiene
 
