@@ -113,7 +113,7 @@ fun AppRoot(
                 },
             ) { padding ->
                 NavHost(nav, startDestination = target.path, modifier = Modifier.padding(padding)) {
-                    composable(Route.Join.path) { JoinScreen(state.connection, initialName, texturesFor, onJoin) }
+                    composable(Route.Join.path) { JoinScreen(state.connection, initialName, texturesFor, onMessage = { scope.launch { snackbar.showSnackbar(it) } }, onJoin = onJoin) }
                     composable(Route.Users.path) { UsersScreen(state, onCommand) }
                 }
             }

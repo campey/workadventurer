@@ -31,6 +31,13 @@ class StatusTest {
     }
 
     // "Unchanged" means a details update that was about something else; as a state it reads as the default, online.
+    // Not in a world yet (the Join screen's preview): the protocol has no such status, but the web client has the word and a grey dot.
+    @Test
+    fun beforeJoiningYouAreOfflineAndGrey() {
+        assertEquals("Offline", OFFLINE_LABEL)
+        assertEquals(0xFF6B7A90L, OFFLINE_COLOR)
+    }
+
     @Test
     fun unchangedIsTreatedAsOnline() {
         assertEquals("Online", statusLabel(AvailabilityStatus.UNCHANGED))

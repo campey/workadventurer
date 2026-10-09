@@ -28,3 +28,7 @@ fun statusColor(s: AvailabilityStatus): Long = when (s) {
     AvailabilityStatus.SILENT -> 0xFFE74C3CL
     AvailabilityStatus.DENY_PROXIMITY_MEETING -> 0xFFFFFFFFL
 }
+
+/** Not in a world: the protocol has no such status, but the web client says "Offline" and shows a grey dot. */
+const val OFFLINE_LABEL = "Offline"
+const val OFFLINE_COLOR = 0xFF6B7A90L

@@ -21,6 +21,13 @@ class JoinFormTest {
         assertEquals("Enter this world as Ada", joinExplainer("  Ada ", "https://play.workadventu.re/@/a/b/c"))
     }
 
+    // The preview beside the name is tappable already, so it says why nothing happens (issue #108 builds the real thing).
+    @Test
+    fun tappingTheWokaPreviewExplainsItIsNotBuiltYet() {
+        assertEquals("Woka customisation not (yet) built", WOKA_CUSTOMISATION_MESSAGE)
+        assertEquals("…", WOKA_PREVIEW_PLACEHOLDER)
+    }
+
     @Test
     fun theNewWorldEntryHasItsOwnLabel() {
         assertEquals("+ New world", NEW_WORLD_LABEL)

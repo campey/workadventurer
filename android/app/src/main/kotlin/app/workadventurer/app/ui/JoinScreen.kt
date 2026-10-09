@@ -1,5 +1,6 @@
 package app.workadventurer.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,6 +31,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -47,6 +49,7 @@ fun JoinScreen(
     connection: Connection,
     initialName: String,
     texturesFor: (roomUrl: String) -> List<Texture>,
+    onMessage: (String) -> Unit,
     onJoin: (name: String, room: String) -> Unit,
 ) {
     var name by rememberSaveable { mutableStateOf(initialName) }
@@ -97,7 +100,11 @@ fun JoinScreen(
                     label = { Text("Your name in the room") }, modifier = Modifier.weight(1f),
                 )
                 val layers = remember(room) { texturesFor(room) }
-                WokaAvatar(layers, name.ifBlank { "?" }, 36.dp, status = MY_STATUS, modifier = Modifier.padding(end = 4.dp))
+                WokaAvatar(
+                    layers, name.ifBlank { "?" }, 36.dp, offline = true, placeholder = WOKA_PREVIEW_PLACEHOLDER,
+                    modifier = Modifier.padding(end = 4.dp).clickable(role = Role.Button) { onMessage(WOKA_CUSTOMISATION_MESSAGE) }
+                        .semantics { contentDescription = "Your woka, $OFFLINE_LABEL. Customising it is not built yet" },
+                )
             }
             if (connection is Connection.Failed) {
                 Text("Couldn't join: ${connection.message}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)

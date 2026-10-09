@@ -45,6 +45,10 @@ fun WokaAvatar(
     modifier: Modifier = Modifier,
     status: AvailabilityStatus? = null,
     dim: Boolean = false,
+    /** Shown instead of the initial while there is no picture (the Join preview uses an ellipsis). */
+    placeholder: String? = null,
+    /** A grey dot (not in a world yet) instead of a status colour. */
+    offline: Boolean = false,
 ) {
     val loader = LocalWokaLoader.current
     val picture by produceState<ImageBitmap?>(null, WokaSprite.cacheKey(textures), loader) {
@@ -60,14 +64,14 @@ fun WokaAvatar(
             if (p != null) {
                 Image(p, contentDescription = null, contentScale = ContentScale.Fit, filterQuality = FilterQuality.None, modifier = Modifier.fillMaxSize())
             } else {
-                Text(initialOf(name), color = Color(0xFF0B1B32), fontSize = (size.value * 0.42f).sp, style = MaterialTheme.typography.titleMedium)
+                Text(placeholder ?: initialOf(name), color = Color(0xFF0B1B32), fontSize = (size.value * 0.42f).sp, style = MaterialTheme.typography.titleMedium)
             }
         }
-        if (status != null) {
+        if (status != null || offline) {
             val dot = (size.value * 0.34f).coerceAtLeast(10f).dp
             Box(
                 Modifier.align(Alignment.BottomEnd).size(dot).clip(CircleShape)
-                    .background(Color(statusColor(status)))
+                    .background(Color(if (offline || status == null) OFFLINE_COLOR else statusColor(status)))
                     .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape),
             )
         }
