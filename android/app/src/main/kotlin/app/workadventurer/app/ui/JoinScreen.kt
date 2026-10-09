@@ -55,10 +55,6 @@ fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: Strin
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            OutlinedTextField(
-                value = name, onValueChange = { name = it }, enabled = !joining, singleLine = true,
-                label = { Text("Your name in the room") }, modifier = Modifier.fillMaxWidth(),
-            )
             // The address stays editable for any world; the arrow offers the frequent ones.
             ExposedDropdownMenuBox(expanded = picking, onExpandedChange = { picking = it && !joining }) {
                 OutlinedTextField(
@@ -86,6 +82,10 @@ fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: Strin
                 }
             }
             WorldInfo(worldDetails(room))
+            OutlinedTextField(
+                value = name, onValueChange = { name = it }, enabled = !joining, singleLine = true,
+                label = { Text("Your name in the room") }, modifier = Modifier.fillMaxWidth(),
+            )
             if (connection is Connection.Failed) {
                 Text("Couldn't join: ${connection.message}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
