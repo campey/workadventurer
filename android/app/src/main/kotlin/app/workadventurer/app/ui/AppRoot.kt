@@ -20,7 +20,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
+import androidx.navigation.navArgument
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import app.workadventurer.app.session.Command
@@ -112,9 +118,29 @@ fun AppRoot(
                     )
                 },
             ) { padding ->
-                NavHost(nav, startDestination = target.path, modifier = Modifier.padding(padding)) {
+                NavHost(
+                    nav, startDestination = target.path, modifier = Modifier.padding(padding),
+                    // Between the top-level screens (Join, Users) just fade; going deeper slides in from the right (below).
+                    enterTransition = { fadeIn() }, exitTransition = { fadeOut() },
+                    popEnterTransition = { fadeIn() }, popExitTransition = { fadeOut() },
+                ) {
                     composable(Route.Join.path) { JoinScreen(state.connection, initialName, texturesFor, onMessage = { scope.launch { snackbar.showSnackbar(it) } }, onJoin = onJoin) }
-                    composable(Route.Users.path) { UsersScreen(state, onCommand) }
+                    composable(
+                        Route.Users.path,
+                        // The list steps left a little when a screen slides in over it, and back when it leaves.
+                        exitTransition = { if (targetState.destination.route == Route.User.PATTERN) slideOutHorizontally { -it / 4 } + fadeOut() else fadeOut() },
+                        popEnterTransition = { if (initialState.destination.route == Route.User.PATTERN) slideInHorizontally { -it / 4 } + fadeIn() else fadeIn() },
+                    ) { UsersScreen(state, onOpenPerson = { nav.navigate(Route.User(it).path) }, onCommand = onCommand) }
+                    composable(
+                        Route.User.PATTERN,
+                        arguments = listOf(navArgument("userId") { type = NavType.IntType }),
+                        enterTransition = { slideInHorizontally { it } },
+                        exitTransition = { fadeOut() },
+                        popEnterTransition = { fadeIn() },
+                        popExitTransition = { slideOutHorizontally { it } },
+                    ) { entry ->
+                        UserDetailScreen(entry.arguments?.getInt("userId") ?: -1, state, onBack = { nav.popBackStack() }, onCommand = onCommand)
+                    }
                 }
             }
         }

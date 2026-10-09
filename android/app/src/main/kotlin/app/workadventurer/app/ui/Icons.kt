@@ -46,6 +46,24 @@ object WaIcons {
         )
     }
 
+    val ChevronRight: ImageVector by lazy { stroked("chevron-right", "M9 6l6 6l-6 6", 2f) }
+
+    val ArrowBack: ImageVector by lazy { stroked("arrow-back", "M15 6l-6 6l6 6", 2f) }
+
+    val Walk: ImageVector by lazy {
+        stroked("walk", "M13 4m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0 M7 21l3 -4 M16 21l-2 -4l-3 -3l1 -6 M6 12l2 -3l4 -1l3 3l3 1", 2f)
+    }
+
+    val UserPlus: ImageVector by lazy {
+        stroked("user-plus", "M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0 M16 19h6 M19 16v6 M6 21v-2a4 4 0 0 1 4 -4h4", 2f)
+    }
+
+    val MapPin: ImageVector by lazy {
+        stroked("map-pin", "M9 11a3 3 0 1 0 6 0a3 3 0 0 0 -6 0 M17.657 16.657l-4.243 4.243a2 2 0 0 1 -2.827 0l-4.244 -4.243a8 8 0 1 1 11.314 0z", 2f)
+    }
+
+    val Map: ImageVector by lazy { stroked("map", "M3 7l6 -3l6 3l6 -3v13l-6 3l-6 -3l-6 3v-13 M9 4v13 M15 7v13", 2f) }
+
     /** Material's three-dots overflow glyph: filled circles. */
     val MoreVert: ImageVector by lazy {
         ImageVector.Builder("more-vert", 24.dp, 24.dp, 24f, 24f).addPath(

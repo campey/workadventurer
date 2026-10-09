@@ -1,48 +1,116 @@
 package app.workadventurer.app.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
 import app.workadventurer.app.session.Command
 import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.SessionState
 
 /**
- * The room. For now this is the people-and-areas list the app already had, minus the join form and the mic (which moved to the
- * Join screen and the bottom bar); the sections in the design replace it in the Users slice, and Leave and Share logs now live in
- * the world panel. Every row is one focusable element with a full description, buttons are at least 48dp, and
- * what changes is a live region, so TalkBack is complete.
+ * Who is where: the conversation you are in at the top, then other bubbles, meeting areas with people in them, "Is on this
+ * map" (you first), then every other area. Every section stays open with its people. A section header with an arrow opens
+ * that conversation; a person opens their screen. Until the conversation screen exists (next slice), a bubble or area header
+ * walks you there, so nothing the old list could do is lost.
  */
 @Composable
-fun UsersScreen(state: SessionState, onCommand: (Command) -> Unit) {
+fun UsersScreen(state: SessionState, onOpenPerson: (userId: Int) -> Unit, onCommand: (Command) -> Unit) {
+    val model = usersModel(state)
     val canMove = state.connection is Connection.Connected
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            statusText(state.connection),
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-        )
-        activityText(state.activity)?.let { text ->
+
+    Column(Modifier.fillMaxSize()) {
+        TransientRows(state, canMove, onCommand)
+        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+            model.active?.let { c ->
+                item(key = "active") {
+                    Column(Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))) {
+                        ConversationSection(c, you = true, onHeader = { onCommand(walkTo(c)) }, onPerson = onOpenPerson)
+                    }
+                }
+            }
+            model.bubbles.forEach { c ->
+                item(key = "b-${(c.key as ConversationKey.Bubble).groupId}") {
+                    ConversationSection(c, you = false, onHeader = { onCommand(walkTo(c)) }, onPerson = onOpenPerson)
+                }
+            }
+            model.meetingAreas.forEach { c ->
+                item(key = "a-${(c.key as ConversationKey.AreaKey).key}") {
+                    ConversationSection(c, you = false, onHeader = { onCommand(walkTo(c)) }, onPerson = onOpenPerson)
+                }
+            }
+            item(key = "map") {
+                Spacer(Modifier.height(8.dp))
+                SectionHeader("Is on this map", model.onMap.size, onClick = null, description = "Is on this map, ${model.onMap.size}")
+                model.onMap.forEach { PersonRow(it, onClick = if (it.isMe) null else ({ it.userId?.let(onOpenPerson) })) }
+                Spacer(Modifier.height(8.dp))
+            }
+            model.otherAreas.forEach { entry ->
+                item(key = "o-${entry.area.id ?: entry.area.name}") {
+                    SectionHeader(
+                        entry.area.name, entry.occupants.size,
+                        onClick = { onCommand(Command.WalkToArea(entry.area.id ?: entry.area.name)) },
+                        description = "Walk to ${entry.area.name}, ${if (entry.occupants.isEmpty()) "empty" else "${entry.occupants.size} here"}",
+                    )
+                    entry.occupants.forEach { PersonRow(it, onClick = if (it.isMe) null else ({ it.userId?.let(onOpenPerson) })) }
+                }
+            }
+        }
+    }
+}
+
+/** Walking to a conversation until its screen exists: a bubble by one of its people, an area by itself. */
+private fun walkTo(c: Conversation): Command = when (val k = c.key) {
+    is ConversationKey.AreaKey -> Command.WalkToArea(k.key)
+    is ConversationKey.Bubble -> c.members.firstOrNull { !it.isMe }?.userId?.let { Command.WalkToPlayer(it) } ?: Command.StopMoving
+}
+
+/** The things that appear and go: what the avatar is doing, the last invite you sent, and invitations waiting for an answer. */
+@Composable
+private fun TransientRows(state: SessionState, canMove: Boolean, onCommand: (Command) -> Unit) {
+    val activity = activityText(state.activity)
+    val inviteStatus = inviteStatusText(state.inviteStatus)
+    val reconnecting = state.connection !is Connection.Connected
+    if (activity == null && inviteStatus == null && state.pendingInvites.isEmpty() && !reconnecting) return
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (reconnecting) {
+            Text(statusText(state.connection), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        }
+        activity?.let { text ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(text, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
                 Button(
@@ -51,64 +119,87 @@ fun UsersScreen(state: SessionState, onCommand: (Command) -> Unit) {
                 ) { Text("Stop") }
             }
         }
-        inviteStatusText(state.inviteStatus)?.let { text ->
-            Text(text, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-        }
+        inviteStatus?.let { Text(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
         // Incoming invitations come first: they're time-sensitive and someone is waiting on the answer.
         state.pendingInvites.forEach { invite ->
             val text = inviteText(invite)
+            val who = invite.senderName.ifBlank { "someone" }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(text, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
                 Button(
                     onClick = { onCommand(Command.AcceptInvite(invite.senderUuid)) }, enabled = canMove,
-                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Accept invitation from ${invite.senderName.ifBlank { "someone" }}" },
+                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Accept invitation from $who" },
                 ) { Text("Accept") }
                 TextButton(
                     onClick = { onCommand(Command.DeclineInvite(invite.senderUuid)) }, enabled = canMove,
-                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Decline invitation from ${invite.senderName.ifBlank { "someone" }}" },
+                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Decline invitation from $who" },
                 ) { Text("Decline") }
             }
         }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+    }
+}
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            item {
-                Text(
-                    "Players (${state.players.size})",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.semantics { heading() },
-                )
-            }
-            items(state.players, key = { it.userId }) { p ->
-                val label = playerLabel(p)
-                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(label, Modifier.weight(1f).semantics { contentDescription = "Player $label" })
-                    TextButton(
-                        onClick = { onCommand(Command.WalkToPlayer(p.userId)) }, enabled = canMove,
-                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Walk to $label" },
-                    ) { Text("Walk to") }
-                    TextButton(
-                        onClick = { onCommand(Command.InvitePlayer(p.userId)) }, enabled = canMove,
-                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Invite $label to talk" },
-                    ) { Text("Invite") }
-                }
-            }
-            item {
-                Text(
-                    "Areas (${state.areas.size})",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.semantics { heading() },
-                )
-            }
-            items(state.areas, key = { it.id ?: it.name }) { a ->
-                val here = state.inAreas.any { (it.id ?: it.name) == (a.id ?: a.name) }
-                val text = if (here) "${a.name} (you are here)" else a.name
-                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(text, Modifier.weight(1f).semantics { contentDescription = "Area $text" })
-                    TextButton(
-                        onClick = { onCommand(Command.WalkToArea(a.id ?: a.name)) }, enabled = canMove,
-                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Walk to ${a.name}" },
-                    ) { Text("Walk to") }
-                }
+@Composable
+private fun ConversationSection(c: Conversation, you: Boolean, onHeader: () -> Unit, onPerson: (Int) -> Unit) {
+    val title = if (you) "${c.title} · you are here" else c.title
+    SectionHeader(
+        title, c.members.size, onClick = onHeader,
+        description = "${if (you) "You are in " else "Walk to "}${c.title}, ${c.members.size} people", highlighted = you,
+    )
+    c.members.forEach { PersonRow(it, onClick = if (it.isMe) null else ({ it.userId?.let(onPerson) })) }
+}
+
+/** A section's title with its count; the web's uppercase, spaced style. An arrow means it can be opened. */
+@Composable
+private fun SectionHeader(title: String, count: Int, onClick: (() -> Unit)?, description: String, highlighted: Boolean = false) {
+    Column {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+                .padding(horizontal = 16.dp)
+                .semantics(mergeDescendants = true) { contentDescription = description; if (onClick == null) heading() },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                Modifier.heightIn(min = 22.dp).clip(RoundedCornerShape(6.dp))
+                    .background(if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text("$count", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold) }
+            Text(
+                title.uppercase(), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold,
+                letterSpacing = TextUnit(1.4f, TextUnitType.Sp),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+            )
+            if (onClick != null) Icon(WaIcons.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** One person: their picture with status dot, name (with "(You)" for you) and status line. Tap opens their screen. */
+@Composable
+private fun PersonRow(p: Participant, onClick: (() -> Unit)?) {
+    val label = if (p.isMe) "${p.name} (You)" else p.name
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 56.dp)
+            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "$label, ${statusLabel(p.status)}${if (onClick != null) ". Opens their screen" else ""}"
+            },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        WokaAvatar(p.textures, p.name, 40.dp, status = p.status)
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(Color(statusColor(p.status))))
+                Text(statusLabel(p.status), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
