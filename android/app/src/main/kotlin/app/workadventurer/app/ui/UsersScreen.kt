@@ -49,15 +49,10 @@ import app.workadventurer.app.session.SessionState
  * walks you there, so nothing the old list could do is lost.
  */
 @Composable
-fun UsersScreen(state: SessionState, onOpenPerson: (userId: Int) -> Unit, onMessage: (String) -> Unit, onCommand: (Command) -> Unit) {
+fun UsersScreen(state: SessionState, onOpenPerson: (userId: Int) -> Unit, onOpenConversation: (ConversationKey) -> Unit, onCommand: (Command) -> Unit) {
     val model = usersModel(state)
     val canMove = state.connection is Connection.Connected
-    // A Jitsi area can't be used from the app yet: say so instead of walking into a call we can't hear.
-    fun open(c: Conversation) {
-        val key = (c.key as? ConversationKey.AreaKey)?.key
-        val area = key?.let { k -> state.areas.firstOrNull { (it.id ?: it.name) == k } }
-        if (area?.isJitsi() == true) onMessage(JITSI_NOT_SUPPORTED_MESSAGE) else onCommand(walkTo(c))
-    }
+    fun open(c: Conversation) = onOpenConversation(c.key)
 
     Column(Modifier.fillMaxSize()) {
         TransientRows(state, canMove, onCommand)
@@ -81,28 +76,22 @@ fun UsersScreen(state: SessionState, onOpenPerson: (userId: Int) -> Unit, onMess
             }
             item(key = "map") {
                 Spacer(Modifier.height(8.dp))
-                SectionHeader("Is on this map", model.onMap.size, onClick = null, description = "Is on this map, ${model.onMap.size}")
+                SectionHeader("Elsewhere on the map", onClick = null, description = "Elsewhere on the map")
                 model.onMap.forEach { PersonRow(it, onClick = if (it.isMe) null else ({ it.userId?.let(onOpenPerson) })) }
                 Spacer(Modifier.height(8.dp))
             }
             model.otherAreas.forEach { entry ->
                 item(key = "o-${entry.area.id ?: entry.area.name}") {
                     SectionHeader(
-                        entry.area.name, entry.occupants.size,
-                        onClick = { if (entry.area.isJitsi()) onMessage(JITSI_NOT_SUPPORTED_MESSAGE) else onCommand(Command.WalkToArea(entry.area.id ?: entry.area.name)) },
-                        description = "Walk to ${entry.area.name}, ${if (entry.occupants.isEmpty()) "empty" else "${entry.occupants.size} here"}",
+                        entry.area.name,
+                        onClick = { onOpenConversation(ConversationKey.AreaKey(entry.area.id ?: entry.area.name)) },
+                        description = "Open ${entry.area.name}, ${if (entry.occupants.isEmpty()) "empty" else "${entry.occupants.size} here"}",
                     )
                     entry.occupants.forEach { PersonRow(it, onClick = if (it.isMe) null else ({ it.userId?.let(onOpenPerson) })) }
                 }
             }
         }
     }
-}
-
-/** Walking to a conversation until its screen exists: a bubble by one of its people, an area by itself. */
-private fun walkTo(c: Conversation): Command = when (val k = c.key) {
-    is ConversationKey.AreaKey -> Command.WalkToArea(k.key)
-    is ConversationKey.Bubble -> c.members.firstOrNull { !it.isMe }?.userId?.let { Command.WalkToPlayer(it) } ?: Command.StopMoving
 }
 
 /** The things that appear and go: what the avatar is doing, the last invite you sent, and invitations waiting for an answer. */
@@ -150,15 +139,15 @@ private fun TransientRows(state: SessionState, canMove: Boolean, onCommand: (Com
 private fun ConversationSection(c: Conversation, you: Boolean, onHeader: () -> Unit, onPerson: (Int) -> Unit) {
     val title = if (you) "${c.title} · you are here" else c.title
     SectionHeader(
-        title, c.members.size, onClick = onHeader,
-        description = "${if (you) "You are in " else "Walk to "}${c.title}, ${c.members.size} people", highlighted = you,
+        title, onClick = onHeader,
+        description = "${if (you) "You are in " else "Open "}${c.title}, ${c.members.size} people",
     )
     c.members.forEach { PersonRow(it, onClick = if (it.isMe) null else ({ it.userId?.let(onPerson) })) }
 }
 
-/** A section's title with its count; the web's uppercase, spaced style. An arrow means it can be opened. */
+/** A section's title; the web's uppercase, spaced style. An arrow means it can be opened. */
 @Composable
-private fun SectionHeader(title: String, count: Int, onClick: (() -> Unit)?, description: String, highlighted: Boolean = false) {
+private fun SectionHeader(title: String, onClick: (() -> Unit)?, description: String) {
     Column {
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
         Row(
@@ -169,12 +158,6 @@ private fun SectionHeader(title: String, count: Int, onClick: (() -> Unit)?, des
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Box(
-                Modifier.heightIn(min = 22.dp).clip(RoundedCornerShape(6.dp))
-                    .background(if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
-                    .padding(horizontal = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) { Text("$count", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold) }
             Text(
                 title.uppercase(), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold,
@@ -188,7 +171,7 @@ private fun SectionHeader(title: String, count: Int, onClick: (() -> Unit)?, des
 
 /** One person: their picture with status dot, name (with "(You)" for you) and status line. Tap opens their screen. */
 @Composable
-private fun PersonRow(p: Participant, onClick: (() -> Unit)?) {
+internal fun PersonRow(p: Participant, onClick: (() -> Unit)?) {
     val label = if (p.isMe) "${p.name} (You)" else p.name
     Row(
         Modifier.fillMaxWidth().heightIn(min = 56.dp)

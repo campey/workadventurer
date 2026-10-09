@@ -380,6 +380,41 @@ class WaSessionTest {
         assertEquals(listOf("Fire pit"), session.state.value.inAreas.map { it.name })
     }
 
+    // The protocol has no "leave the bubble/area" message: leaving is walking out of it.
+    @Test
+    fun leavingAnAreaWalksOutOfItAndSaysSo() = runTest {
+        val (session, conn) = connected(startX = 250, startY = 50)
+        assertEquals(listOf("Fire pit"), session.state.value.inAreas.map { it.name })
+        session.dispatch(Command.LeaveConversation); runCurrent()
+        assertEquals(Activity.WalkingOut("Fire pit"), session.state.value.activity)
+        advanceTimeBy(20_000); runCurrent()
+        assertEquals(Activity.Idle, session.state.value.activity)
+        assertEquals(emptyList(), session.state.value.inAreas.map { it.name })
+        assertTrue(conn().moves.isNotEmpty())
+    }
+
+    @Test
+    fun leavingABubbleWalksAwayFromItsPosition() = runTest {
+        val (session, conn) = connected(startX = 0, startY = 0)
+        conn().state.setMyUserId(7)
+        conn().state.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 5, position = PointMessage(x = 0, y = 0), userIds = listOf(7, 1))))
+        runCurrent()
+        assertEquals(5, session.state.value.myGroupId)
+        session.dispatch(Command.LeaveConversation); runCurrent()
+        assertEquals(Activity.WalkingOut("the bubble"), session.state.value.activity)
+        advanceTimeBy(20_000); runCurrent()
+        val p = conn().state.myPose.value
+        assertTrue(kotlin.math.hypot(p.x, p.y) > 96.0, "should end clear of the bubble, at $p")
+    }
+
+    @Test
+    fun leavingWhenInNothingDoesNothing() = runTest {
+        val (session, conn) = connected(startX = 2000, startY = 2000)
+        session.dispatch(Command.LeaveConversation); runCurrent()
+        assertEquals(Activity.Idle, session.state.value.activity)
+        assertTrue(conn().moves.isEmpty())
+    }
+
     @Test
     fun aNewMovementReplacesTheCurrentOne() = runTest {
         val (session, conn) = connected(adaX = 5_000)

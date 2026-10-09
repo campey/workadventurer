@@ -135,9 +135,21 @@ fun AppRoot(
                     composable(
                         Route.Users.path,
                         // The list steps left a little when a screen slides in over it, and back when it leaves.
+                        exitTransition = { if (targetState.destination.route.isDeeper()) slideOutHorizontally { -it / 4 } + fadeOut() else fadeOut() },
+                        popEnterTransition = { if (initialState.destination.route.isDeeper()) slideInHorizontally { -it / 4 } + fadeIn() else fadeIn() },
+                    ) { UsersScreen(state, onOpenPerson = { nav.navigate(Route.User(it).path) }, onOpenConversation = { nav.navigate(Route.Conversation(it).path) }, onCommand = onCommand) }
+                    composable(
+                        Route.Conversation.PATTERN,
+                        enterTransition = { slideInHorizontally { it } },
                         exitTransition = { if (targetState.destination.route == Route.User.PATTERN) slideOutHorizontally { -it / 4 } + fadeOut() else fadeOut() },
                         popEnterTransition = { if (initialState.destination.route == Route.User.PATTERN) slideInHorizontally { -it / 4 } + fadeIn() else fadeIn() },
-                    ) { UsersScreen(state, onOpenPerson = { nav.navigate(Route.User(it).path) }, onMessage = { scope.launch { snackbar.showSnackbar(it) } }, onCommand = onCommand) }
+                        popExitTransition = { slideOutHorizontally { it } },
+                    ) { entry ->
+                        val route = parseRoute("conversation/${entry.arguments?.getString("kind")}/${entry.arguments?.getString("id")}") as? Route.Conversation
+                        if (route != null) {
+                            ConversationScreen(route.key, state, onBack = { nav.popBackStack() }, onOpenPerson = { nav.navigate(Route.User(it).path) }, onCommand = onCommand)
+                        }
+                    }
                     composable(
                         Route.User.PATTERN,
                         arguments = listOf(navArgument("userId") { type = NavType.IntType }),
@@ -156,3 +168,6 @@ fun AppRoot(
         if (showMeSheet && inRoom) MeSheet(state.myName, state.myTextures, onDismiss = { showMeSheet = false }, sheetState = meSheetState)
     }
 }
+
+/** The screens that slide in over the list. */
+private fun String?.isDeeper() = this == Route.User.PATTERN || this == Route.Conversation.PATTERN
