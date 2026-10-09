@@ -53,6 +53,8 @@ class MainActivity : ComponentActivity() {
                         startService(Intent(this, PresenceService::class.java).setAction(PresenceService.ACTION_LEAVE))
                     },
                     onShareLogs = ::shareLogs,
+                    onShareLink = ::shareLink,
+                    wokaLoader = (application as WaApp).wokaLoader,
                     onMicChoice = ::chooseMic,
                     // Movement goes straight to the session; only Join/Leave go through the foreground service.
                     onCommand = { session.dispatch(it) },
@@ -84,6 +86,13 @@ class MainActivity : ComponentActivity() {
             .putExtra(Intent.EXTRA_SUBJECT, "WorkAdventurer call logs")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         startActivity(Intent.createChooser(send, "Share call logs"))
+    }
+
+    /** Hands the room's address (no token) to the share sheet, so a link to it can go to anyone. */
+    private fun shareLink(url: String) {
+        if (url.isEmpty()) return
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url)
+        startActivity(Intent.createChooser(send, "Share link to room"))
     }
 
     private fun requestJoin(name: String, room: String) {

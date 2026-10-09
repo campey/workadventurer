@@ -22,6 +22,9 @@ import java.util.concurrent.TimeUnit
 class WaApp : Application() {
     // pingInterval is OkHttp's TCP-level websocket ping. G1 measures whether it's needed.
     private val http = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
+    /** Builds and remembers the woka pictures shown across the app. */
+    val wokaLoader by lazy { app.workadventurer.app.ui.WokaLoader(http) }
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** Where the per-call log files live (see [CallLog]); the share action reads from here. */
