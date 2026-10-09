@@ -2,6 +2,7 @@ package app.workadventurer.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -23,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -32,6 +34,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.workadventurer.app.session.Connection
+import app.workadventurer.protocol.Texture
 import app.workadventurer.protocol.Wa133
 
 /**
@@ -40,7 +43,12 @@ import app.workadventurer.protocol.Wa133
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: String, room: String) -> Unit) {
+fun JoinScreen(
+    connection: Connection,
+    initialName: String,
+    texturesFor: (roomUrl: String) -> List<Texture>,
+    onJoin: (name: String, room: String) -> Unit,
+) {
     var name by rememberSaveable { mutableStateOf(initialName) }
     var room by rememberSaveable { mutableStateOf(Wa133.DEFAULT_ROOM) }
     var picking by remember { mutableStateOf(false) }
@@ -82,10 +90,15 @@ fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: Strin
                 }
             }
             WorldInfo(worldDetails(room))
-            OutlinedTextField(
-                value = name, onValueChange = { name = it }, enabled = !joining, singleLine = true,
-                label = { Text("Your name in the room") }, modifier = Modifier.fillMaxWidth(),
-            )
+            // Your name, and how you will look: the woka the server last gave you, as it appears in the top bar.
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it }, enabled = !joining, singleLine = true,
+                    label = { Text("Your name in the room") }, modifier = Modifier.weight(1f),
+                )
+                val layers = remember(room) { texturesFor(room) }
+                WokaAvatar(layers, name.ifBlank { "?" }, 36.dp, status = MY_STATUS, modifier = Modifier.padding(end = 4.dp))
+            }
             if (connection is Connection.Failed) {
                 Text("Couldn't join: ${connection.message}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }

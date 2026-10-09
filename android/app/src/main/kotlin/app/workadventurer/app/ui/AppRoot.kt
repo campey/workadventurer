@@ -25,6 +25,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import app.workadventurer.app.session.Command
 import app.workadventurer.app.session.SessionState
+import app.workadventurer.protocol.Texture
 import kotlinx.coroutines.launch
 
 /**
@@ -42,6 +43,8 @@ fun AppRoot(
     notice: String?,
     initialName: String,
     wokaLoader: WokaLoader,
+    /** Your woka layers as last seen for a world's server, for the Join preview (empty if never joined there). */
+    texturesFor: (roomUrl: String) -> List<Texture>,
     onJoin: (name: String, room: String) -> Unit,
     onLeave: () -> Unit,
     onShareLogs: () -> Unit,
@@ -110,7 +113,7 @@ fun AppRoot(
                 },
             ) { padding ->
                 NavHost(nav, startDestination = target.path, modifier = Modifier.padding(padding)) {
-                    composable(Route.Join.path) { JoinScreen(state.connection, initialName, onJoin) }
+                    composable(Route.Join.path) { JoinScreen(state.connection, initialName, texturesFor, onJoin) }
                     composable(Route.Users.path) { UsersScreen(state, onCommand) }
                 }
             }
