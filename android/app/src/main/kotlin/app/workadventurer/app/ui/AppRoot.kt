@@ -77,6 +77,13 @@ fun AppRoot(
     }
     LaunchedEffect(notice) { if (notice != null) snackbar.showSnackbar(notice) }
 
+    // Walking into a Jitsi area: we don't support those yet (#119), so say so once, rather than leave someone in a call they can't hear.
+    var areasBefore by remember { mutableStateOf(emptyList<app.workadventurer.protocol.Area>()) }
+    LaunchedEffect(state.inAreas) {
+        if (jitsiEntered(areasBefore, state.inAreas) != null) snackbar.showSnackbar(JITSI_NOT_SUPPORTED_MESSAGE)
+        areasBefore = state.inAreas
+    }
+
     // In a room the bar shows (and drives) the live mic; before joining it shows the remembered choice.
     val inRoom = target == Route.Users
     val muted = if (inRoom) state.muted else !micWanted
@@ -130,7 +137,7 @@ fun AppRoot(
                         // The list steps left a little when a screen slides in over it, and back when it leaves.
                         exitTransition = { if (targetState.destination.route == Route.User.PATTERN) slideOutHorizontally { -it / 4 } + fadeOut() else fadeOut() },
                         popEnterTransition = { if (initialState.destination.route == Route.User.PATTERN) slideInHorizontally { -it / 4 } + fadeIn() else fadeIn() },
-                    ) { UsersScreen(state, onOpenPerson = { nav.navigate(Route.User(it).path) }, onCommand = onCommand) }
+                    ) { UsersScreen(state, onOpenPerson = { nav.navigate(Route.User(it).path) }, onMessage = { scope.launch { snackbar.showSnackbar(it) } }, onCommand = onCommand) }
                     composable(
                         Route.User.PATTERN,
                         arguments = listOf(navArgument("userId") { type = NavType.IntType }),

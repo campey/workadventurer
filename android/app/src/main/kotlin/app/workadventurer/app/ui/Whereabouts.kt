@@ -5,13 +5,17 @@ import app.workadventurer.app.session.SessionState
 /** Where a person is right now, for their screen: in a bubble, in an area, or on the map. [others] are names we can see. */
 sealed interface Whereabouts {
     data class InBubble(val key: ConversationKey.Bubble, val others: List<String>, val withYou: Boolean) : Whereabouts
-    data class InArea(val key: ConversationKey.AreaKey, val areaName: String, val meeting: Boolean, val others: List<String>, val withYou: Boolean) : Whereabouts
+    data class InArea(
+        val key: ConversationKey.AreaKey, val areaName: String, val meeting: Boolean, val others: List<String>, val withYou: Boolean,
+        /** A Jitsi room: we can't be in that call, so it is never "together" and there is nothing to join. */
+        val jitsi: Boolean = false,
+    ) : Whereabouts
     data object OnTheMap : Whereabouts
 
     /** You are in the same conversation as them (a bubble, or a meeting area), so there is nothing to walk to. */
     fun isTogether(): Boolean = when (this) {
         is InBubble -> withYou
-        is InArea -> meeting && withYou
+        is InArea -> meeting && withYou && !jitsi
         OnTheMap -> false
     }
 }
@@ -35,6 +39,7 @@ fun whereIsOrNull(userId: Int, s: SessionState): Whereabouts? {
         return Whereabouts.InArea(
             ConversationKey.AreaKey(key), area.name, area.isMeeting(), others,
             withYou = s.inAreas.any { (it.id ?: it.name) == key },
+            jitsi = area.isJitsi(),
         )
     }
     return Whereabouts.OnTheMap
@@ -57,6 +62,7 @@ fun whereText(w: Whereabouts): String = when (w) {
         else -> "In a bubble with " + naturalList(w.others)
     }
     is Whereabouts.InArea -> when {
+        w.jitsi -> "In ${w.areaName} (Jitsi meeting)"
         w.meeting && w.withYou -> "In this area with " + naturalList(listOf("you") + w.others)
         w.meeting -> if (w.others.isEmpty()) "In ${w.areaName}" else "In ${w.areaName} with " + naturalList(w.others)
         else -> {
@@ -69,6 +75,7 @@ fun whereText(w: Whereabouts): String = when (w) {
 
 /** What walking over to them does, under the Walk over button; null when you are already together. */
 fun walkExplainer(w: Whereabouts): String? = when {
+    w is Whereabouts.InArea && w.jitsi -> JITSI_NOT_SUPPORTED_MESSAGE
     w.isTogether() -> null
     w is Whereabouts.InBubble -> "Go to them and join the conversation"
     w is Whereabouts.InArea && w.meeting && w.others.isNotEmpty() -> "Go to them and join the conversation"

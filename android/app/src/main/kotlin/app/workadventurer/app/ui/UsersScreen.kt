@@ -49,9 +49,15 @@ import app.workadventurer.app.session.SessionState
  * walks you there, so nothing the old list could do is lost.
  */
 @Composable
-fun UsersScreen(state: SessionState, onOpenPerson: (userId: Int) -> Unit, onCommand: (Command) -> Unit) {
+fun UsersScreen(state: SessionState, onOpenPerson: (userId: Int) -> Unit, onMessage: (String) -> Unit, onCommand: (Command) -> Unit) {
     val model = usersModel(state)
     val canMove = state.connection is Connection.Connected
+    // A Jitsi area can't be used from the app yet: say so instead of walking into a call we can't hear.
+    fun open(c: Conversation) {
+        val key = (c.key as? ConversationKey.AreaKey)?.key
+        val area = key?.let { k -> state.areas.firstOrNull { (it.id ?: it.name) == k } }
+        if (area?.isJitsi() == true) onMessage(JITSI_NOT_SUPPORTED_MESSAGE) else onCommand(walkTo(c))
+    }
 
     Column(Modifier.fillMaxSize()) {
         TransientRows(state, canMove, onCommand)
@@ -59,18 +65,18 @@ fun UsersScreen(state: SessionState, onOpenPerson: (userId: Int) -> Unit, onComm
             model.active?.let { c ->
                 item(key = "active") {
                     Column(Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))) {
-                        ConversationSection(c, you = true, onHeader = { onCommand(walkTo(c)) }, onPerson = onOpenPerson)
+                        ConversationSection(c, you = true, onHeader = { open(c) }, onPerson = onOpenPerson)
                     }
                 }
             }
             model.bubbles.forEach { c ->
                 item(key = "b-${(c.key as ConversationKey.Bubble).groupId}") {
-                    ConversationSection(c, you = false, onHeader = { onCommand(walkTo(c)) }, onPerson = onOpenPerson)
+                    ConversationSection(c, you = false, onHeader = { open(c) }, onPerson = onOpenPerson)
                 }
             }
             model.meetingAreas.forEach { c ->
                 item(key = "a-${(c.key as ConversationKey.AreaKey).key}") {
-                    ConversationSection(c, you = false, onHeader = { onCommand(walkTo(c)) }, onPerson = onOpenPerson)
+                    ConversationSection(c, you = false, onHeader = { open(c) }, onPerson = onOpenPerson)
                 }
             }
             item(key = "map") {
@@ -83,7 +89,7 @@ fun UsersScreen(state: SessionState, onOpenPerson: (userId: Int) -> Unit, onComm
                 item(key = "o-${entry.area.id ?: entry.area.name}") {
                     SectionHeader(
                         entry.area.name, entry.occupants.size,
-                        onClick = { onCommand(Command.WalkToArea(entry.area.id ?: entry.area.name)) },
+                        onClick = { if (entry.area.isJitsi()) onMessage(JITSI_NOT_SUPPORTED_MESSAGE) else onCommand(Command.WalkToArea(entry.area.id ?: entry.area.name)) },
                         description = "Walk to ${entry.area.name}, ${if (entry.occupants.isEmpty()) "empty" else "${entry.occupants.size} here"}",
                     )
                     entry.occupants.forEach { PersonRow(it, onClick = if (it.isMe) null else ({ it.userId?.let(onOpenPerson) })) }
