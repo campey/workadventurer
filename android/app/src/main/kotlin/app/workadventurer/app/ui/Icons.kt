@@ -48,6 +48,8 @@ object WaIcons {
 
     val ChevronRight: ImageVector by lazy { stroked("chevron-right", "M9 6l6 6l-6 6", 2f) }
 
+    val Check: ImageVector by lazy { stroked("check", "M5 12l5 5l10 -10", 2.5f) }
+
     val ArrowBack: ImageVector by lazy { stroked("arrow-back", "M15 6l-6 6l6 6", 2f) }
 
     val Walk: ImageVector by lazy {

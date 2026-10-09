@@ -2,6 +2,7 @@ package app.workadventurer.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
@@ -31,7 +33,7 @@ import app.workadventurer.app.session.Command
 import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.SessionState
 
-private val IN_COLOR = Color(0xFF68E97A)
+private val OFFLINE_DOT = Color(0xFF8A99B3)
 
 /**
  * One bubble or area: who is in it, whether you are, and the one thing to do about it. Joining is walking your avatar
@@ -47,6 +49,7 @@ fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> 
             IconButton(onClick = onBack, modifier = Modifier.size(48.dp).semantics { contentDescription = "Back to the people list" }) {
                 Icon(WaIcons.ArrowBack, contentDescription = null)
             }
+            m?.let { Text(it.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 4.dp)) }
         }
         if (m == null) {
             Column(Modifier.weight(1f).fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -55,15 +58,14 @@ fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> 
             return@Column
         }
 
-        Column(Modifier.padding(horizontal = 16.dp)) {
-            Text(m.title, style = MaterialTheme.typography.headlineMedium)
-            Text(
-                m.strip, style = MaterialTheme.typography.bodyMedium,
-                color = if (m.subtext != null) IN_COLOR else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp).clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surface).padding(horizontal = 10.dp, vertical = 6.dp)
-                    .semantics { liveRegion = LiveRegionMode.Polite },
-            )
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surface).padding(horizontal = 16.dp, vertical = 12.dp)
+                .semantics { liveRegion = LiveRegionMode.Polite },
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(if (m.subtext != null) DONE_COLOR else OFFLINE_DOT))
+            Text(m.strip, style = MaterialTheme.typography.bodyMedium)
         }
         Column(Modifier.weight(1f).fillMaxWidth().padding(top = 12.dp).verticalScroll(rememberScrollState())) {
             m.emptyText?.let {
@@ -92,10 +94,9 @@ fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> 
                         m.leaveLabel, m.leaveExplainer, onClick = { onCommand(Command.LeaveConversation) },
                         description = "${m.leaveLabel}. ${m.leaveExplainer}", enabled = canMove, danger = true,
                     )
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("✓ In the ${m.noun}", style = MaterialTheme.typography.titleMedium, color = IN_COLOR)
-                        m.subtext?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
+                    PrimaryAction(
+                        "In the ${m.noun}", m.subtext ?: "", onClick = {}, description = "You are in the ${m.noun}. ${m.subtext ?: ""}", done = true,
+                    )
                 }
             }
         }
