@@ -24,6 +24,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -40,6 +42,8 @@ fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: Strin
     var name by rememberSaveable { mutableStateOf(initialName) }
     var room by rememberSaveable { mutableStateOf(Wa133.DEFAULT_ROOM) }
     var picking by remember { mutableStateOf(false) }
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val joining = connection is Connection.Connecting
 
     Column(Modifier.fillMaxSize()) {
@@ -65,7 +69,8 @@ fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: Strin
                     ROOM_PRESETS.forEach { p ->
                         DropdownMenuItem(
                             text = { Text(p.name) },
-                            onClick = { room = p.url; picking = false },
+                            // Close the keyboard too, so the world's details underneath are in view.
+                            onClick = { room = p.url; picking = false; focus.clearFocus(); keyboard?.hide() },
                             modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Choose ${p.name}" },
                         )
                     }
