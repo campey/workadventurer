@@ -91,8 +91,8 @@ fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> 
                 Phase.Leaving -> PrimaryAction("Walking out…", "Your avatar is on its way out", onClick = {}, enabled = false, quiet = true)
                 Phase.Joined -> {
                     PrimaryAction(
-                        m.leaveLabel, m.leaveExplainer, onClick = { onCommand(Command.LeaveConversation) },
-                        description = "${m.leaveLabel}. ${m.leaveExplainer}", enabled = canMove, danger = true,
+                        m.leaveLabel, "", onClick = { onCommand(Command.LeaveConversation) },
+                        description = "${m.leaveLabel}. Walk your avatar out of the ${m.noun}", enabled = canMove, danger = true,
                     )
                     PrimaryAction(
                         "In the ${m.noun}", m.subtext ?: "", onClick = {}, description = "You are in the ${m.noun}. ${m.subtext ?: ""}", done = true,

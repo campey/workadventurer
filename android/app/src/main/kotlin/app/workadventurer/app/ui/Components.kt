@@ -72,7 +72,7 @@ fun PrimaryAction(
                 Text(label, style = MaterialTheme.typography.titleMedium)
             }
         }
-        Text(
+        if (explainer.isNotEmpty()) Text(
             explainer, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
         )

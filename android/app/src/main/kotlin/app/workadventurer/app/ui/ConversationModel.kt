@@ -20,7 +20,6 @@ data class ConversationScreenModel(
     val explainer: String,
     val subtext: String?,
     val leaveLabel: String,
-    val leaveExplainer: String,
     val emptyText: String?,
 )
 
@@ -63,7 +62,6 @@ fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScree
         },
         subtext = if (c.joined) { if (others.isEmpty()) "Waiting in $the" else "Talking in $the" } else null,
         leaveLabel = "Leave the $noun",
-        leaveExplainer = "Walk your avatar out of the $noun",
         emptyText = if (c.members.isEmpty()) "Nobody is here yet" else null,
     )
 }

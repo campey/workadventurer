@@ -49,7 +49,6 @@ class ConversationModelTest {
         assertEquals("You are in this bubble", m.strip)
         assertEquals("Talking in the bubble", m.subtext)
         assertEquals("Leave the bubble", m.leaveLabel)
-        assertEquals("Walk your avatar out of the bubble", m.leaveExplainer)
     }
 
     @Test
