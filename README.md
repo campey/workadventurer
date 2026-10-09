@@ -6,10 +6,19 @@ protobuf protocol directly, so it holds a real avatar with presence in a room:
 it appears on the map, walks around (with pathfinding), sees other players, and
 can talk.
 
-It started as a one-liner request — *"log into the afrolabs open-space as
-`claude` and walk over to find `:David`"* — and turned into a small
-reverse-engineering exercise. The [protocol notes](#the-protocol) below are the
-main takeaway.
+It exists so people and agents can be present in a WorkAdventure space without
+a desktop browser tab. The goals are a native **Android client** you can use
+from the car, **agent and bot presence** (a Claude that comes to find you,
+speaks and listens, a scribe that captions and summarises), and
+**accessibility** for blind and eyes-busy users. See the
+[roadmap](docs/roadmap.md) for the plan and where a contribution fits.
+
+What works today: the `wa` CLI and daemon (join, walk with pathfinding, bubbles,
+sounds, chat), a Claude Code plugin, live speech-to-text into Space chat
+(`--stt`), WebRTC and LiveKit audio, and an Android prototype in
+[`android/`](android/). It started as a one-liner request — *"log into the
+afrolabs open-space as `claude` and walk over to find `:David`"* — and the
+[protocol notes](#the-protocol) below came out of reverse-engineering it.
 
 > [!NOTE]
 > This talks to a hosted third-party service over an **undocumented** protocol
@@ -609,8 +618,9 @@ the target leaves view rather than marching to their stale last-known position.
 
 ## Contributing
 
-Issues and PRs welcome — especially protocol corrections for newer WorkAdventure
-builds, the Space-channel roster, and real map-`start` spawn handling.
+Issues and PRs welcome. Start with the [roadmap](docs/roadmap.md), then pick an
+issue from the [board](https://github.com/users/campey/projects/1). Protocol
+corrections for newer WorkAdventure builds are always useful.
 
 ## License
 
