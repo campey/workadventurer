@@ -24,6 +24,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
@@ -43,6 +45,7 @@ fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: Strin
     var room by rememberSaveable { mutableStateOf(Wa133.DEFAULT_ROOM) }
     var picking by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
+    val urlFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val joining = connection is Connection.Connecting
 
@@ -62,7 +65,7 @@ fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: Strin
                     value = room, onValueChange = { room = it }, enabled = !joining, singleLine = true,
                     label = { Text("World URL") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = picking) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryEditable)
+                    modifier = Modifier.fillMaxWidth().focusRequester(urlFocus).menuAnchor(MenuAnchorType.PrimaryEditable)
                         .semantics { contentDescription = "World URL. Choose a frequent world from the list." },
                 )
                 ExposedDropdownMenu(expanded = picking, onDismissRequest = { picking = false }) {
@@ -74,6 +77,12 @@ fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: Strin
                             modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Choose ${p.name}" },
                         )
                     }
+                    // A world that isn't in the list: empty the address and put the cursor in it.
+                    DropdownMenuItem(
+                        text = { Text(NEW_WORLD_LABEL) },
+                        onClick = { room = ""; picking = false; urlFocus.requestFocus(); keyboard?.show() },
+                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Enter a new world address" },
+                    )
                 }
             }
             WorldInfo(worldDetails(room))
@@ -83,10 +92,10 @@ fun JoinScreen(connection: Connection, initialName: String, onJoin: (name: Strin
         }
         PrimaryAction(
             label = if (joining) "Joining…" else "Join",
-            explainer = if (name.isBlank()) "Enter your name to join" else "Enter this world as ${name.trim()}",
+            explainer = joinExplainer(name, room),
             onClick = { onJoin(name.trim(), room.trim()) },
             description = if (joining) "Joining the world" else "Join the world as ${name.trim()}",
-            enabled = !joining && name.isNotBlank(),
+            enabled = canJoin(name, room, joining),
         )
         Spacer(Modifier.padding(bottom = 12.dp))
     }
