@@ -17,18 +17,14 @@ The live side has been run (network reachable; live commands need
 `NODE_USE_ENV_PROXY=1`). Results, details in `world-port/probes/README.md`:
 
 - probes: `version-hash` (afrolabs), `spawn` (afrolabs), `voice-signalling`
-  (afrolabs) and `meeting-area` (both worlds) confirm; `spawn` (the academy) is
-  **new**: no `.wam` start area, avatars land on the Tiled start layer.
-  `landmarks` and the academy `voice-signalling` have not been run;
-- `world-port/worlds/*.json` hold only probe-confirmed facts: afrolabs
-  `startArea` and `meetingAreas` ("Yellowish-Brownish Table"), the academy's
-  "Lean Coffee Table 1". `"landmarks": []` is still empty: they need campey's
-  browser check, so the walls outline has no rows and the academy spawn row skips;
-- `WORLD=live NODE_USE_ENV_PROXY=1 npm run scenarios`: 17 scenarios, 14 passed,
-  3 skipped (two `@fake`, the academy spawn row), 0 failed.
-
-The first live run found one gap (invite before the server announced the peer):
-the fake was omniscient. Fixed test-first; see "Gaps found" in the probes README.
+  (both worlds) and `meeting-area` (both worlds) confirm; `spawn` (the academy) is
+  **new**: no `.wam` start area, avatars land on the Tiled start layer;
+- `world-port/worlds/*.json`: afrolabs `startArea`, `meetingAreas` ("Yellowish-Brownish
+  Table") and 5 `landmarks` (4 solid, 1 open) confirmed by a wall walk: `wa-probe-walls`
+  walked to each point while campey watched in a browser and emoted 👍. The academy has
+  "Lean Coffee Table 1" and no landmarks yet (its wall walk is next);
+- `WORLD=live NODE_USE_ENV_PROXY=1 npm run scenarios`: 22 scenarios with the wall rows;
+  the afrolabs walls 5/5 pass live and on the fake.
 
 ## The loop
 

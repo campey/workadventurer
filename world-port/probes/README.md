@@ -22,7 +22,7 @@ only, never other players' names.
 | `version-hash` | afrolabs open space | 2026-10-10 | confirms | Prod accepts `23c8eb8c` and turns away `05489a87` with a new-version error. |
 | `spawn` | afrolabs open space | 2026-10-10 | confirms | `.wam` start area "Spawn Point" {x:1895,y:2099,w:169,h:119,isDefault:true}; B saw A at (1961,2136); Tiled start layer sample (2192,1520), so the layer is not where avatars appear. Now in `worlds/afrolabs-open-space.json` as `startArea`. |
 | `spawn` | the academy | 2026-10-10 | new | No `.wam` start area: A spawned at (976,2928), the Tiled start layer. Nothing to put in the facts file (do not invent one); the spawn row skips. |
-| `landmarks` | afrolabs open space | NOT YET RUN | - | Which candidate points does the adapter's collision map call solid? Needs candidates and campey's browser check. |
+| `landmarks` (wall walk) | afrolabs open space | 2026-10-10 | confirms | `wa-probe-walls` walked to 4 obstacle tiles near the spawn, stopped on the open side facing each, and stood on 1 open tile; campey watched in a browser and emoted 👍 for all 5. Tiles (px): solid (1904,2224), (1872,2064), (2032,2064), (2192,2064); open (2128,2192). In `landmarks`; `walls.feature` 5/5 on fake and live. |
 | `landmarks` | the academy | NOT YET RUN | - | Same, including one `.wam` furniture piece (campus furniture gaps link #92). |
 | `voice-signalling` | afrolabs open space | 2026-10-10 | confirms | Proximity pair saw WEBRTC signalling (A: `{kind:"webrtc",with:null}`, B: `{kind:"webrtc",with:"wa-probe-a"}`), no LiveKit invitation. Area-meeting half skipped (no meeting area was confirmed at the time; `meeting-area` now has one). |
 | `voice-signalling` | the academy | 2026-10-10 | confirms | Same as afrolabs: A `{kind:"webrtc",with:null}`, B `{kind:"webrtc",with:"wa-probe-a"}`, no LiveKit invitation. Area-meeting half not exercised (the probe does not yet drive into a meeting area). |
@@ -55,7 +55,25 @@ Whole-suite result, `WORLD=live NODE_USE_ENV_PROXY=1 npm run scenarios`, 2026-10
    back to the Tiled start layer. The spawn row for the academy skips; documented in
    `spawn.feature` and `docs/field-notes.md`.
 
+3. **"Same meeting" failed twice in one live run, then passed** (2026-10-10, during
+   the wall walk). In one full `WORLD=live` run, two scenarios failed at "avatars A and B
+   are in the same meeting"; the next full run passed 19/19 with 3 skipped. Not yet
+   explained. A real person (campey) was standing near the spawn at the time, which may
+   have pulled an avatar into a different proximity group. To probe: run the meeting
+   scenarios with and without a person nearby.
+
 A `contradicts` verdict means correcting the matching note in `docs/field-notes.md`.
+
+## Asking the person watching (👍 / 😂)
+
+Some checks only a person can make, like "did the avatar stop at the wall?" (the
+server never enforces collisions). `human-check.mjs` handles these: the avatar shows the
+question in a speech bubble, and the person watching in a browser answers with an
+emote, 👍 for good and 😂 for wrong. Nothing moves on until someone answers. A probe
+that needs a person starts with the same handshake ("👍 when you can see me, 😂 to
+cancel") instead of a timed wait. `wall-walk` is the first probe built this way:
+
+    NODE_USE_ENV_PROXY=1 node world-port/probes/run.mjs wall-walk --world "the academy"
 
 ## Confirming landmarks
 
