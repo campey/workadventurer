@@ -80,4 +80,24 @@ class SteeringTest {
         assertTrue(!g.isPxBlocked(s.x, s.y))
         assertNull(NavGrid(2, 2, 32, BooleanArray(4) { true }).snapToFree(10.0, 10.0))
     }
+
+    // Leaving a bubble or area has no message in the protocol: it is done by walking out.
+    @Test
+    fun nearestFreeOutsideFindsTheClosestWayOutOfARegion() {
+        val g = NavGrid(40, 40, 32, BooleanArray(1600))
+        val region = { p: Pt -> p.x in 400.0..600.0 && p.y in 400.0..600.0 }
+        val me = Pt(430.0, 500.0) // near the left edge
+        val out = g.nearestFreeOutside(me, region)!!
+        assertTrue(!region(out), "still inside: $out")
+        assertTrue(out.x < 400.0, "should leave by the near (left) side: $out")
+    }
+
+    @Test
+    fun nearestFreeOutsideSkipsBlockedTilesAndGivesUpWhenBoxedIn() {
+        val g = gridOf("....", "....")
+        assertNull(g.nearestFreeOutside(Pt(16.0, 16.0)) { true }) // everywhere counts as inside
+        val walled = NavGrid(40, 40, 32, BooleanArray(1600) { i -> (i % 40) < 20 }) // left half blocked
+        val out = walled.nearestFreeOutside(Pt(700.0, 600.0)) { p -> p.x in 650.0..750.0 }!!
+        assertTrue(!walled.isPxBlocked(out.x, out.y) && out.x !in 650.0..750.0)
+    }
 }

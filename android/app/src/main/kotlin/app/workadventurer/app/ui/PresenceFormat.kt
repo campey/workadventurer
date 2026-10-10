@@ -28,6 +28,7 @@ fun notificationText(s: SessionState): String = when (s.connection) {
 fun activityText(a: Activity): String? = when (a) {
     Activity.Idle -> null
     is Activity.WalkingTo -> "Walking to ${a.label}"
+    is Activity.WalkingOut -> "Walking out of ${a.label}"
 }
 
 /** What happened to the invite we sent, or null if we haven't sent one. */
