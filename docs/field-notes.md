@@ -17,6 +17,15 @@ the Tiled `.tmj`'s `start` tile layer. On shared template maps the `.tmj`
 (afrolabs: the tile layer sits ~600 px north of the actual "Spawn Point" by
 the fire).
 
+Re-tested against prod with the `spawn` probe, 2026-10-10:
+
+- **afrolabs** confirms: the `.wam` start area "Spawn Point" is
+  {x:1895, y:2099, w:169, h:119, isDefault:true}; another avatar saw ours at
+  (1961, 2136), inside it; the Tiled `start` layer sampled (2192, 1520).
+- **the academy (lean-iterator campus) has no `.wam` start area**, so spawn
+  falls back to the Tiled `start` layer: the avatar appeared at (976, 2928).
+  The "`.wam` beats `.tmj`" rule only applies on maps that have a start area.
+
 The client handles this in `connect()`: after `_loadAreas()` populates
 `this.areas` from the live `.wam`, `_wamSpawnPoint()` picks a random point
 inside the start area and sets `this.pos` before the join message goes out.
@@ -365,6 +374,24 @@ a no-op; stopping in a meeting area still works.
 no Jitsi transport. Walking into one is out of scope and has confused the
 daemon in the past.
 
+## Meeting areas and availability
+
+A browser client sends `setPlayerDetailsMessage { availabilityStatus }` as it moves
+through a `livekitRoomProperty` meeting area: **LIVEKIT (11)** on entering, **ONLINE (1)**
+on leaving (probe `meeting-availability`, 2026-10-10, campey walking a browser avatar
+into the "Fire Pit"; relayed to others as `playerDetailsUpdatedMessage`). Our client used
+to say ONLINE always (set once at join), and campey saw our two avatars' proximity bubble
+persist while they walked through the Fire Pit. Probe `firepit-meeting` (same day) had
+`wa-probe-a` send LIVEKIT/ONLINE like a browser: all five steps looked right to a person
+(one meeting, no bubble, clean exit).
+
+Since then the **wa-1.34 adapter** defines `meeting.areaAvailabilityStatus: 11` and
+`WorkAdventureClient` sends it when the dwell timer actually joins an area meeting, and
+ONLINE when the linger timer leaves it (ONLINE only once no area meeting remains). An
+adapter without the value (the frozen wa-1.33) behaves as before. Live check, scenario
+"A proximity pair walking into a meeting area leaves its bubble for the area meeting": it
+passes with the status sent and fails with it removed (the bubble persists).
+
 ---
 
 ## Movement niceties
@@ -486,6 +513,13 @@ avatar against a real room. Dates are when each was observed.
 - **`npm test`** (`node --test`) covers pure logic only: adapter resolution,
   the area-meeting debounce timers, invite message shapes, the mic-prime and
   Ogg mux with a fake peer / no live socket.
+- **`npm run scenarios`** (cucumber, `world-port/features/`) — behavioural
+  scenarios against the offline fake world. `WORLD=live npm run scenarios`
+  runs the same suite against prod (the gate for a new adapter; as of
+  2026-10-10 it has **not been run**, prod was blocked from the cloud
+  environment: see the Status section of `docs/fakes-with-probes.md`);
+  `node world-port/probes/run.mjs <probe>` re-tests one note live. See
+  `docs/fakes-with-probes.md`.
 - **`node scripts/selfcheck.mjs [--target <id>] [--room <url>]`** — ephemeral
   client, real join: connect / adapter match / move / bubble / area-meeting
   join / audio (SKIP without a second participant). The prod run is the merge

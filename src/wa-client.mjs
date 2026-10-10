@@ -44,6 +44,9 @@ export class WorkAdventureClient extends EventEmitter {
     super();
     this.cfg = { ...DEFAULTS, ...opts };
     this.adapter = opts.adapter ?? null;
+    // Driven-port seam: swap the network (recorders, fakes). Defaults are the real ones.
+    this._fetch = opts.fetch ?? ((...a) => globalThis.fetch(...a));
+    this._WebSocket = opts.WebSocketImpl ?? WebSocket;
     this._target = this.cfg.target ?? "auto";
     this.token = null;
     this.ws = null;
@@ -126,7 +129,7 @@ export class WorkAdventureClient extends EventEmitter {
   }
 
   async _anonymLogin() {
-    const res = await fetch(`${this.cfg.pusherUrl}${this.adapter.endpoints.anonymLogin}`, {
+    const res = await this._fetch(`${this.cfg.pusherUrl}${this.adapter.endpoints.anonymLogin}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
@@ -172,7 +175,7 @@ export class WorkAdventureClient extends EventEmitter {
   // the avatar walks into a meeting / silent / megaphone zone. Best-effort:
   // a failure just leaves `this.areas` empty.
   async _loadAreas() {
-    const get = (u) => fetch(u, { signal: AbortSignal.timeout(8000) }).then((r) => r.json());
+    const get = (u) => this._fetch(u, { signal: AbortSignal.timeout(8000) }).then((r) => r.json());
     try {
       const mapInfo = await get(
         `${this.cfg.pusherUrl}${this.adapter.endpoints.map}?playUri=${encodeURIComponent(this.cfg.roomUrl)}`
@@ -259,7 +262,7 @@ export class WorkAdventureClient extends EventEmitter {
     const url = this._wsUrl();
     this.emit("log", `connecting ${url}`);
     // The JWT is smuggled as the WebSocket subprotocol (see IoSocketController).
-    this.ws = new WebSocket(url, [this.token], {
+    this.ws = new this._WebSocket(url, [this.token], {
       headers: { Origin: "https://play.workadventu.re" },
     });
 
@@ -401,6 +404,13 @@ export class WorkAdventureClient extends EventEmitter {
     this.query("leaveSpaceQuery", { spaceName }).catch(() => {});
     this.emit("log", `left space ${spaceName}`);
     this.emit("spaceLeft", { spaceName });
+    if (this._areaMeetingsJoined?.delete(spaceName) && this._areaMeetingsJoined.size === 0) {
+      try {
+        this._send({ setPlayerDetailsMessage: { availabilityStatus: AVAILABILITY_ONLINE } });
+      } catch (e) {
+        this.emit("log", `could not report ONLINE: ${e.message}`);
+      }
+    }
   }
 
   // The space name of a map-area meeting, derived the same way the WA front does
@@ -435,8 +445,14 @@ export class WorkAdventureClient extends EventEmitter {
         t.join = null;
         if (!this.currentAreas.has(key) || this.spaces.has(spaceName)) return;
         this.emit("log", `meeting area "${area.name}" → joining space ${spaceName}`);
-        this._joinSpace(spaceName).catch((e) =>
-          this.emit("log", `area meeting join failed: ${e.message}`)
+        this._joinSpace(spaceName).then(
+          () => {
+            // Left the area while joinSpaceQuery was in flight: no linger is armed (t.join was
+            // already null, the space not ours yet), so leave now instead of announcing LIVEKIT.
+            if (!this.currentAreas.has(key)) return this._leaveSpace(spaceName);
+            this._areaMeetingJoined(spaceName);
+          },
+          (e) => this.emit("log", `area meeting join failed: ${e.message}`)
         );
       }, DWELL_MS);
     } else {
@@ -448,6 +464,20 @@ export class WorkAdventureClient extends EventEmitter {
         this._leaveSpace(spaceName);
       }, LINGER_MS);
     }
+  }
+
+  /**
+   * A browser client reports availabilityStatus LIVEKIT while it is in a meeting area and ONLINE
+   * when it leaves (probe meeting-availability, 2026-10-10); the server uses it to let the area
+   * meeting take over from a proximity bubble. Only for adapters that define the value
+   * (`meeting.areaAvailabilityStatus`). The matching ONLINE is sent from `_leaveSpace`, whatever
+   * caused the leave, once no area meeting remains.
+   */
+  _areaMeetingJoined(spaceName) {
+    const status = this.adapter?.meeting?.areaAvailabilityStatus;
+    if (status == null) return;
+    (this._areaMeetingsJoined ??= new Set()).add(spaceName);
+    this._send({ setPlayerDetailsMessage: { availabilityStatus: status } });
   }
 
   /** Tell the other Space members whether our mic is live. */
@@ -572,14 +602,30 @@ export class WorkAdventureClient extends EventEmitter {
       });
       return;
     }
-    if (obj.meetingInvitationResponseReceivedMessage || obj.meetingInvitationRequestClosedMessage) {
-      return; // outcomes of invites we sent — nothing to do
+    if (obj.meetingInvitationResponseReceivedMessage) {
+      // The player we invited answered.
+      const m = obj.meetingInvitationResponseReceivedMessage;
+      this.emit("inviteAnswered", { accepted: !!m.accepted, name: m.responderName ?? "" });
+      return;
+    }
+    if (obj.meetingInvitationRequestClosedMessage) {
+      return; // an invite we sent was closed — nothing to do
     }
     // roomConnectedMessage, worldConnectionMessage, refreshRoomMessage, etc. — ignored.
     if (process.env.WA_DEBUG) {
       const k = Object.keys(obj)[0];
       if (k && k !== "batchMessage") this.emit("log", `S2C ${k}: ${JSON.stringify(obj[k]).slice(0, 400)}`);
     }
+  }
+
+  _emitPeerMic(spaceName, u) {
+    if (!u?.spaceUserId || u.spaceUserId === this.spaces.get(spaceName)?.spaceUserId) return;
+    this.emit("peerMic", {
+      spaceName,
+      spaceUserId: u.spaceUserId,
+      name: u.name || this.spaceUserNames.get(u.spaceUserId) || "",
+      on: !!u.microphoneState,
+    });
   }
 
   _handleSub(sub) {
@@ -649,6 +695,7 @@ export class WorkAdventureClient extends EventEmitter {
       // the room's numeric userId at all.
       for (const u of users) if (u.spaceUserId && u.name) this.spaceUserNames.set(u.spaceUserId, u.name);
       this.emit("spaceUsers", { spaceName: sn, users });
+      for (const u of users) this._emitPeerMic(sn, u);
       return;
     }
     // The init snapshot only covers who was already in the space. Anyone who
@@ -659,6 +706,10 @@ export class WorkAdventureClient extends EventEmitter {
     if (sub.addSpaceUserMessage || sub.updateSpaceUserMessage) {
       const u = (sub.addSpaceUserMessage ?? sub.updateSpaceUserMessage).user;
       if (u?.spaceUserId && u.name) this.spaceUserNames.set(u.spaceUserId, u.name);
+      // A peer's mic state: always on add; on update only when the mask names it.
+      const upd = sub.updateSpaceUserMessage;
+      if (sub.addSpaceUserMessage) this._emitPeerMic(sub.addSpaceUserMessage.spaceName, u);
+      else if ((upd.updateMask?.paths ?? []).includes("microphoneState")) this._emitPeerMic(upd.spaceName, u);
     }
     if (sub.privateEvent) {
       const pe = sub.privateEvent;
@@ -745,6 +796,13 @@ export class WorkAdventureClient extends EventEmitter {
   /** Display name for a space-user id (the format webRTC peer events carry), or null. */
   spaceUserName(spaceUserId) {
     return this.spaceUserNames.get(spaceUserId) ?? null;
+  }
+
+  /** Invite the player with this uuid / room userId over ("invite to discussion"). */
+  sendMeetingInvitation(receiverUuid, receiverUserId = null) {
+    this._send({
+      meetingInvitationRequestMessage: { receiverUserUuid: receiverUuid, receiverUserId },
+    });
   }
 
   /** Accept a meeting invitation ("come over") from the player with this uuid. */
@@ -1037,6 +1095,11 @@ export class WorkAdventureClient extends EventEmitter {
   // empty `message`; `type` is irrelevant in that case.
   clearBubble() {
     this._send({ setPlayerDetailsMessage: { sayMessage: { message: "", type: 0 } } });
+  }
+
+  // Show an emote above our avatar (C2S EmotePromptMessage); others get it as `emote`.
+  sendEmote(emote) {
+    this._send({ emotePromptMessage: { emote } });
   }
 
   close() {
