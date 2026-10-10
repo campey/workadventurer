@@ -42,7 +42,7 @@ The goal is **stability**, not discovery [campey]. There are no open surprises r
 
 - **Staging.** Prod first; staging follows once prod is right [campey].
 - The version-check Actions and auto-merge (#127), the downloadable adapter and catalog (#126), releases (#128), the API (#129).
-- Changing how the clients behave. This piece describes and tests; it doesn't fix.
+- Changing how existing client behaviour works. This piece describes and tests; it doesn't fix. *Adding* abilities a scenario needs is allowed (see below).
 - Automating "does it look/sound right" checks: rendered bubbles, the media tile, audible audio. They stay manual, as `docs/field-notes.md` "Testing approach" already says [my call].
 
 ## Anti-goals: failure even if it technically works
@@ -59,7 +59,7 @@ Both **prod** worlds, chosen because they mark walls differently:
 | world | URL | how walls are marked |
 |---|---|---|
 | afrolabs open space | `https://play.workadventu.re/@/afrolabs/afrolabs/open-space` | tile layer in the Tiled map *(my reading of the notes)* |
-| the academy | `https://play.workadventu.re/@/levelup-npc/lean-iterator/campus` *(my guess at which world "the academy" is)* | `.wam` furniture, solid only where each prefab's `collisionGrid` says (`android/docs/field-notes.md`, "Maps") |
+| the academy (the lean-iterator campus) [campey] | `https://play.workadventu.re/@/levelup-npc/lean-iterator/campus` | `.wam` furniture, solid only where each prefab's `collisionGrid` says (`android/docs/field-notes.md`, "Maps") |
 
 **Robot avatars in these live worlds while people are there are fine.** It's what we always do [campey]. Naming and daemon ports follow `CLAUDE.md` (never the bare `claude`, never port 8787).
 
@@ -71,7 +71,9 @@ First-round areas, each to be confirmed by a probe before it becomes a scenario.
 
 - **Connecting.** Our version hash is accepted. A stale hash gets the "new version" error screen ("When prod bumps", #56). This is the scenario that failed in #55.
 - **Joining and spawn.** I appear inside the world's `.wam` start area, not at the Tiled `start` layer, which on afrolabs sits about 600 px off ("Spawn point" in `docs/field-notes.md`). Spawn is decided client-side [campey: one of the past surprises].
-- **Walls.** I can't walk through a wall in either world, by either marking method [campey: the other past surprise]. *Note:* the CLI's map baker still uses an older approximation for furniture (#92), so this scenario may fail through the CLI today. That's the loop working, not a reason to drop the scenario.
+- **Walls.** I can't walk through a wall in either world, by either marking method [campey: the other past surprise]. *Note:* the CLI's map baker still uses an older approximation for furniture (#92), so this scenario may fail through today's code. That's the loop working, not a reason to drop the scenario.
+
+  Spawn and walls are worked out client-side; the server never checks collisions. So live, **a second avatar of ours watches** where the first one appears and walks (positions the server relays), rather than the avatar trusting its own idea of where it is.
 - **Presence.** I see other players arrive, move and leave.
 - **Areas and area meetings.** Entering a meeting area puts me in its meeting, with the dwell debounce ("Map areas: dwell debounce").
 - **Proximity meetings.** Walking up to another avatar puts us in the same group.
@@ -84,6 +86,9 @@ First-round areas, each to be confirmed by a probe before it becomes a scenario.
 Two-avatar scenarios use two of our own headless instances, which the notes already treat as legitimate live-test participants.
 
 ## Decided parts of the how
+
+- **Spawn, walls and pathfinding belong to the world, so they live inside the adapter** [campey: "they're part of a world"; pathfinding goes with walls, my reading]. WorkAdventure's map formats (Tiled, `.wam`, entity collections) are WorkAdventure's and can change with a version like anything else. The **fake has its own, independent implementation**. If it reused the adapter's map code, the spawn and wall scenarios would pass on both sides by construction and prove nothing.
+- **The live adapter may gain abilities the current client lacks** [campey], as additions that go through the `selfcheck` gate. Known so far: **sending** a meeting invitation (the Android client already has `sendInvite`; the Node client can only accept), and **reading other users' mic state** (the Node client only announces its own). Two of our own avatars can then run the invite and mic scenarios without a human.
 
 - **Scenarios are written in Gherkin (`.feature` files, Given/When/Then), run with cucumber-js in Node** [my call]. When #126 lands, the APK will run the same JavaScript adapter, so Node is the one place the suite needs to run.
 - **Scenarios drive a minimal World Port defined here** [my call]. The port doesn't exist yet (#126 formalises it), but the steps need something to drive. So the step definitions talk to a small interface with two implementations: a **live adapter** that wraps today's `WorkAdventureClient` without changing it, and the **fake**. #126 then grows this interface into the real World Port. That means the scenarios come first and #126 inherits them, which is the order #124 wants.
