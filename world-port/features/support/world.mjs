@@ -6,9 +6,14 @@ import { WORLDS } from "../../worlds/index.mjs";
 
 const kind = process.env.WORLD ?? "fake";
 
-// Missing facts file (Task 4 creates them) loads as {}.
+// Missing facts file (Task 4 creates them) loads as {}; anything else (bad JSON) throws.
 const loadFacts = (file) => {
-  try { return JSON.parse(readFileSync(file, "utf8")); } catch { return {}; }
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch (e) {
+    if (e.code === "ENOENT") return {};
+    throw e;
+  }
 };
 
 class ScenarioWorld extends World {

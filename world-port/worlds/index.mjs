@@ -1,7 +1,7 @@
 // Named worlds the scenarios can be set in (prod only).
 import { fileURLToPath } from "node:url";
 
-const facts = (f) => fileURLToPath(new URL(`../facts/${f}`, import.meta.url));
+const facts = (f) => fileURLToPath(new URL(`./${f}`, import.meta.url));
 
 export const WORLDS = {
   "afrolabs open space": {
@@ -10,6 +10,6 @@ export const WORLDS = {
   },
   "the academy": {
     roomUrl: "https://play.workadventu.re/@/levelup-npc/lean-iterator/campus",
-    factsFile: facts("the-academy.json"),
+    factsFile: facts("lean-iterator-campus.json"),
   },
 };

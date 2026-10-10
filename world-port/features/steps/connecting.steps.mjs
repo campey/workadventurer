@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { Given, When, Then } from "@cucumber/cucumber";
 import { isVersionRejection } from "../../../src/server-rejected.mjs";
+import { FakeServer } from "../../fake/fake-server.mjs";
 import { waitFor } from "../../port.mjs";
 
 const role = (r) => r.toUpperCase();
 
 Given("the world {string}", function (id) {
   this.worldId = id;
+});
+
+// scenario: connecting:A version turned away after joining
+Given("the server turns stale versions away after join", function () {
+  this.server = new FakeServer({ rejectAfterJoin: true });
 });
 
 When("avatar {word} connects", async function (r) {

@@ -10,11 +10,13 @@ export class FakeServer {
     this.nextUserId = 1;
   }
 
+  // scenario: connecting:Our version is accepted
   accepts(hash) {
     return this.acceptedHashes.includes(hash);
   }
 
   /** The rejection a stale client build gets (code NEW_VERSION => isVersionRejection). */
+  // scenario: connecting:A stale version is turned away
   newVersionError() {
     return ServerRejectedError.fromMessage({
       code: { value: "NEW_VERSION" },
@@ -24,17 +26,20 @@ export class FakeServer {
     });
   }
 
+  // scenario: connecting:Our version is accepted
   join(world) {
     const userId = this.nextUserId++;
     this.worlds.set(userId, world);
     return userId;
   }
 
+  // scenario: connecting:A version turned away after joining
   leave(userId) {
     this.worlds.delete(userId);
   }
 
   /** Deliver `event` to every joined world except the sender. */
+  // scenario: none yet — WorldPort contract
   broadcast(fromUserId, event, payload) {
     for (const [id, w] of this.worlds) if (id !== fromUserId) w.emit(event, payload);
   }
