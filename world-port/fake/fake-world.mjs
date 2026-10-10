@@ -17,6 +17,12 @@ export class FakeWorld extends EventEmitter {
     this.dwellMs = dwellMs;
     this.lingerMs = lingerMs;
     this.inside = new Map(); // meeting area name -> { dwell, linger, joined }
+    // Who this avatar has been told about. Live, an avatar knows another only after the server
+    // announces it (playerJoined); the fake must not read shared server state (#125).
+    this.known = new Map(); // userId -> { userId, name, x, y }
+    this.on("playerJoined", (p) => this.known.set(p.userId, { ...p }));
+    this.on("playerMoved", (p) => { if (this.known.has(p.userId)) this.known.set(p.userId, { ...p }); });
+    this.on("playerLeft", (p) => this.known.delete(p.userId));
   }
 
   // scenario: connecting:Our version is accepted
@@ -43,7 +49,8 @@ export class FakeWorld extends EventEmitter {
     const me = this.self();
     queueMicrotask(() => this.emit("joined", me));
     // scenario: presence:A player's arrival, movement and departure are seen
-    this.server.broadcast(this.userId, "playerJoined", me);
+    // Deferred, as on the wire: others (and we, of them) are told a moment later, not synchronously.
+    this.server.announceJoin(this);
     // scenario: presence:Walking next to another avatar puts both in the same meeting
     this.server.updateProximity();
   }
@@ -89,7 +96,7 @@ export class FakeWorld extends EventEmitter {
 
   // scenario: presence:A player's arrival, movement and departure are seen
   players() {
-    return [...this.server.worlds.values()].filter((w) => w !== this).map((w) => w.self());
+    return [...this.known.values()].map((p) => ({ ...p }));
   }
 
   // scenario: presence:A player's arrival, movement and departure are seen
@@ -122,7 +129,11 @@ export class FakeWorld extends EventEmitter {
   }
 
   // scenario: invites:An invitation is received, accepted and brings both avatars together
-  invite(playerName) { this.server.invite(this.userId, playerName); }
+  invite(playerName) {
+    const p = [...this.known.values()].find((q) => q.name === playerName);
+    if (!p) throw new Error(`unknown player "${playerName}"`);
+    this.server.invite(this.userId, p.userId);
+  }
 
   /** Accepting walks us next to the inviter (as the real client does), which puts us in their meeting. */
   // scenario: invites:An invitation is received, accepted and brings both avatars together

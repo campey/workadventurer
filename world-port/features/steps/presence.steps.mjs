@@ -52,7 +52,7 @@ Then("avatar {word} has not been told avatar {word} arrived", async function (vi
 
 // scenario: presence:Strangers are not mistaken for our avatars
 Then("avatar {word} has been told {string} arrived", async function (viewer, name) {
-  assert.ok(toldAbout(this, viewer, "playerJoined", name), `${name} was never announced to ${viewer}`);
+  await this.observe(role(viewer), "playerJoined", (p) => p.name === name, { timeoutMs: 20000 });
 });
 
 // scenario: presence:Strangers are not mistaken for our avatars

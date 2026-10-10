@@ -79,6 +79,25 @@ export class FakeServer {
     }
   }
 
+  /**
+   * Tell the others about a newcomer, and the newcomer about those already there, one event-loop
+   * turn later (live, the announcement trails the join). The payload is read at delivery time;
+   * an avatar that left in between is never announced.
+   */
+  // scenario: invites:An invitation is received, accepted and brings both avatars together
+  // scenario: presence:A player's arrival, movement and departure are seen
+  announceJoin(world) {
+    const tell = (to, subject) => setImmediate(() => {
+      if (this.worlds.get(to.userId) !== to || this.worlds.get(subject.userId) !== subject) return;
+      to.emit("playerJoined", subject.self());
+    });
+    for (const other of this.worlds.values()) {
+      if (other === world) continue;
+      tell(other, world);
+      tell(world, other);
+    }
+  }
+
   /** Deliver `event` to every joined world except the sender. */
   // scenario: presence:A player's arrival, movement and departure are seen
   broadcast(fromUserId, event, payload) {
@@ -109,11 +128,9 @@ export class FakeServer {
     return [...this.pairs].filter(([k]) => k.split("-").map(Number).includes(userId)).map(([, n]) => n);
   }
 
-  /** `fromId` invites `toName`: the target is told who invited them. Throws if no such avatar. */
+  /** `fromId` invites `toId` (the caller found it among the players it was told about): the target is told who invited them. */
   // scenario: invites:An invitation is received, accepted and brings both avatars together
-  invite(fromId, toName) {
-    const toId = this.idByName(toName);
-    if (toId == null) throw new Error(`unknown player "${toName}"`);
+  invite(fromId, toId) {
     this.invites.set(`${fromId}>${toId}`, true);
     this.worlds.get(toId).emit("inviteReceived", { name: this.worlds.get(fromId).name });
   }

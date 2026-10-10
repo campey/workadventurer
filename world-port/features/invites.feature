@@ -9,6 +9,8 @@ Feature: Meeting invitations
 
   # source: docs/field-notes.md "Invite over" (MeetingInvitation); live run NOT YET RUN
   Scenario: An invitation is received, accepted and brings both avatars together
+    # A only knows B once the server has announced B to A (fake and live)
+    Given avatar A sees avatar B arrive
     When avatar A invites avatar B
     Then avatar B is told avatar A invited them
     When avatar B accepts the invitation from avatar A
