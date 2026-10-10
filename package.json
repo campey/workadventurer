@@ -23,7 +23,8 @@
     "wa": "node bin/wa.mjs",
     "test": "node --test",
     "find-player": "node src/find-player.mjs",
-    "build:collision": "node scripts/build-collision.mjs"
+    "build:collision": "node scripts/build-collision.mjs",
+    "scenarios": "cucumber-js"
   },
   "dependencies": {
     "@livekit/rtc-node": "^1.0.0",
@@ -35,5 +36,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/campey/workadventurer.git"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber": "^11.3.0"
   }
 }
