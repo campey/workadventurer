@@ -39,9 +39,18 @@ export class LiveWorld extends EventEmitter {
       if (isVersionRejection(e)) { if (!this._connecting) this.emit("rejected", e); }
       else if (this.listenerCount("error")) this.emit("error", e);
     });
+    // The client deletes a player before emitting playerLeft (src/wa-client.mjs), so remember names here.
+    const names = new Map(); // userId -> name
+    const remember = (p) => { if (p?.name) names.set(p.userId, p.name); };
+    c.on("playerJoined", remember);
+    c.on("playerMoved", remember);
     fwd("playerJoined", "playerJoined", info);
     fwd("playerMoved", "playerMoved", (p) => (p ? info(p) : p));
-    fwd("playerLeft", "playerLeft", (userId) => ({ userId, name: c.players.get(userId)?.name ?? "" }));
+    fwd("playerLeft", "playerLeft", (userId) => {
+      const name = names.get(userId) ?? c.players.get(userId)?.name ?? "";
+      names.delete(userId);
+      return { userId, name };
+    });
     fwd("areaEnter", "areaEntered");
     fwd("areaLeave", "areaLeft");
     fwd("spaceJoined", "meetingJoined");

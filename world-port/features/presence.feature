@@ -14,10 +14,14 @@ Feature: Presence and proximity
   @fake
   Scenario: Strangers are not mistaken for our avatars
     Given avatar A is in the world
-    And a stranger named "Someone" arrives, moves and leaves
-    Then avatar A does not see avatar B arrive
+    And a stranger named "Someone" arrives and moves
+    Then avatar A has been told "Someone" arrived
+    And avatar A has not been told avatar B arrived
     When avatar B connects
     Then avatar A sees avatar B arrive
+    Given the stranger leaves
+    When avatar B walks 100 px east
+    Then avatar A sees avatar B move
 
   Scenario: Walking next to another avatar puts both in the same meeting
     Given avatar A is in the world

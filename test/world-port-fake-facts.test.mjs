@@ -78,3 +78,12 @@ test("live isSolid uses nav.isPxBlocked; throws without a collision map", () => 
   w.client.nav = null;
   assert.throws(() => w.isSolid(1, 2), { message: "no collision map for this room" });
 });
+
+test("live playerLeft carries the name, though the client deletes the player first", () => {
+  const w = live();
+  const got = [];
+  w.on("playerLeft", (p) => got.push(p));
+  w.client.emit("playerJoined", { userId: 7, name: "wa-probe-b", x: 1, y: 2 });
+  w.client.emit("playerLeft", 7); // client.players no longer has 7
+  assert.deepEqual(got, [{ userId: 7, name: "wa-probe-b" }]);
+});
