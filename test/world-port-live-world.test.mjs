@@ -64,7 +64,9 @@ test("moveTo walks with the client's pathfinding when there is a collision map",
   w.client.navTo = async (x, y, opts) => { calls.push([x, y, opts]); return { arrived: true }; };
   w.client._emitMove = () => assert.fail("must not teleport");
   await w.moveTo(300, 200);
-  assert.deepEqual(calls, [[300, 200, { stopWithin: 16 }]]);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(0, 2), [300, 200]);
+  assert.equal(calls[0][2].stopWithin, 16);
 });
 
 test("moveTo falls back to a position update when there is no collision map", async () => {
@@ -106,4 +108,63 @@ test("openSpotNear without a collision map returns the point unchanged", () => {
   const w = mkLive();
   w.client.nav = null;
   assert.deepEqual(w.openSpotNear(10, 20), { x: 10, y: 20 });
+});
+
+test("moveTo uses a short timeout and rejects when the avatar does not arrive", async () => {
+  const w = mkLive();
+  w.client.nav = mkNav();
+  let opts;
+  w.client.navTo = async (x, y, o) => { opts = o; return { arrived: false, reason: "timeout" }; };
+  await assert.rejects(() => w.moveTo(300, 200), /did not arrive.*timeout/);
+  assert.ok(opts.timeoutMs <= 30000, `timeoutMs ${opts.timeoutMs}`);
+  assert.equal(opts.stopWithin, 16);
+  assert.ok(opts.signal instanceof AbortSignal);
+});
+
+test("close() during a moveTo aborts the walk", async () => {
+  const w = mkLive();
+  w.client.nav = mkNav();
+  w.client.close = () => {};
+  let signal;
+  w.client.navTo = (x, y, o) => new Promise((res) => {
+    signal = o.signal;
+    o.signal.addEventListener("abort", () => res({ arrived: false, reason: "aborted" }), { once: true });
+  });
+  const walking = w.moveTo(300, 200);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(signal.aborted, false);
+  w.close();
+  assert.equal(signal.aborted, true);
+  await assert.rejects(walking, /aborted/);
+});
+
+test("close() leaves every space before closing the socket", () => {
+  const w = mkLive();
+  const order = [];
+  w.client.spaces = new Map([["s1", {}], ["s2", {}]]);
+  w.client._leaveSpace = async (s) => { order.push(`leave ${s}`); w.client.spaces.delete(s); };
+  w.client.close = () => order.push("close");
+  w.close();
+  assert.deepEqual(order, ["leave s1", "leave s2", "close"]);
+});
+
+test("close() still closes when leaving a space throws (the socket is already gone)", () => {
+  const w = mkLive();
+  const order = [];
+  w.client.spaces = new Map([["s1", {}]]);
+  w.client._leaveSpace = () => { throw new Error("WebSocket is not open"); };
+  w.client.close = () => order.push("close");
+  assert.doesNotThrow(() => w.close());
+  assert.deepEqual(order, ["close"]);
+});
+
+test("openSpotInside: the free tile centre nearest the rectangle centre, inside the rectangle", () => {
+  const w = mkLive();
+  w.client.nav = mkNav([[5, 5]]); // tile (5,5): px 160..192, centre (176,176)
+  const p = w.openSpotInside(128, 128, 96, 96); // centre (176,176) is the solid tile
+  assert.ok(!w.isSolid(p.x, p.y));
+  assert.ok(p.x > 128 && p.x < 224 && p.y > 128 && p.y < 224, "inside");
+  assert.equal(Math.hypot(p.x - 176, p.y - 176), 32, "an adjacent tile");
+  w.client.nav = null;
+  assert.deepEqual(w.openSpotInside(128, 128, 96, 96), { x: 176, y: 176 });
 });

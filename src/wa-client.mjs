@@ -404,6 +404,13 @@ export class WorkAdventureClient extends EventEmitter {
     this.query("leaveSpaceQuery", { spaceName }).catch(() => {});
     this.emit("log", `left space ${spaceName}`);
     this.emit("spaceLeft", { spaceName });
+    if (this._areaMeetingsJoined?.delete(spaceName) && this._areaMeetingsJoined.size === 0) {
+      try {
+        this._send({ setPlayerDetailsMessage: { availabilityStatus: AVAILABILITY_ONLINE } });
+      } catch (e) {
+        this.emit("log", `could not report ONLINE: ${e.message}`);
+      }
+    }
   }
 
   // The space name of a map-area meeting, derived the same way the WA front does
@@ -439,7 +446,12 @@ export class WorkAdventureClient extends EventEmitter {
         if (!this.currentAreas.has(key) || this.spaces.has(spaceName)) return;
         this.emit("log", `meeting area "${area.name}" → joining space ${spaceName}`);
         this._joinSpace(spaceName).then(
-          () => this._setAreaAvailability(spaceName, true),
+          () => {
+            // Left the area while joinSpaceQuery was in flight: no linger is armed (t.join was
+            // already null, the space not ours yet), so leave now instead of announcing LIVEKIT.
+            if (!this.currentAreas.has(key)) return this._leaveSpace(spaceName);
+            this._areaMeetingJoined(spaceName);
+          },
           (e) => this.emit("log", `area meeting join failed: ${e.message}`)
         );
       }, DWELL_MS);
@@ -450,7 +462,6 @@ export class WorkAdventureClient extends EventEmitter {
         t.leave = null;
         if (this.currentAreas.has(key)) return; // walked back in
         this._leaveSpace(spaceName);
-        this._setAreaAvailability(spaceName, false);
       }, LINGER_MS);
     }
   }
@@ -459,21 +470,14 @@ export class WorkAdventureClient extends EventEmitter {
    * A browser client reports availabilityStatus LIVEKIT while it is in a meeting area and ONLINE
    * when it leaves (probe meeting-availability, 2026-10-10); the server uses it to let the area
    * meeting take over from a proximity bubble. Only for adapters that define the value
-   * (`meeting.areaAvailabilityStatus`); ONLINE only once no area meeting remains.
+   * (`meeting.areaAvailabilityStatus`). The matching ONLINE is sent from `_leaveSpace`, whatever
+   * caused the leave, once no area meeting remains.
    */
-  _setAreaAvailability(spaceName, joined) {
+  _areaMeetingJoined(spaceName) {
     const status = this.adapter?.meeting?.areaAvailabilityStatus;
     if (status == null) return;
-    this._areaMeetingsJoined ??= new Set();
-    if (joined) {
-      this._areaMeetingsJoined.add(spaceName);
-      this._send({ setPlayerDetailsMessage: { availabilityStatus: status } });
-    } else {
-      this._areaMeetingsJoined.delete(spaceName);
-      if (this._areaMeetingsJoined.size === 0) {
-        this._send({ setPlayerDetailsMessage: { availabilityStatus: AVAILABILITY_ONLINE } });
-      }
-    }
+    (this._areaMeetingsJoined ??= new Set()).add(spaceName);
+    this._send({ setPlayerDetailsMessage: { availabilityStatus: status } });
   }
 
   /** Tell the other Space members whether our mic is live. */

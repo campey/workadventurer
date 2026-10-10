@@ -101,6 +101,12 @@ export class FakeWorld extends EventEmitter {
     return { x, y };
   }
 
+  /** The fake states the rectangle's centre; live, the adapter finds open floor inside it. */
+  // scenario: meetings:A proximity pair walking into a meeting area leaves its bubble for the area meeting
+  openSpotInside(x, y, w, h) {
+    return { x: x + w / 2, y: y + h / 2 };
+  }
+
   // scenario: presence:A player's arrival, movement and departure are seen
   players() {
     return [...this.known.values()].map((p) => ({ ...p }));

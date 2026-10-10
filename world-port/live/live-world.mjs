@@ -14,6 +14,7 @@ export class LiveWorld extends EventEmitter {
     super();
     this.name = name;
     this.closed = false;
+    this._walks = new Set(); // AbortControllers of walks in flight; close() aborts them
     this._connecting = false;
     this._sink = recordTo ?? (process.env.RECORD === "1" ? [] : null);
     this._saveOnClose = recordTo == null && this._sink != null;
@@ -83,6 +84,13 @@ export class LiveWorld extends EventEmitter {
     try {
       if (this._onVoiceEvent) this.client.off?.("spaceEvent", this._onVoiceEvent);
       try { this.audio?.hangup?.("world closed"); } catch { /* best effort */ }
+      // Be a polite leaver: stop walking, and leave every space so the server and peers drop our
+      // meeting tile (a ghost video tile stayed when the socket was just dropped). Bounded: sync
+      // sends only; a socket already gone throws, which must not stop the close.
+      for (const walk of this._walks) walk.abort();
+      for (const spaceName of [...(this.client.spaces?.keys() ?? [])]) {
+        try { Promise.resolve(this.client._leaveSpace(spaceName)).catch(() => {}); } catch { /* socket gone */ }
+      }
       this.client.close();
     } finally {
       if (this._saveOnClose) this.recordingPath = save(this._sink, this.name);
@@ -135,17 +143,44 @@ export class LiveWorld extends EventEmitter {
     return { x: best.x, y: best.y };
   }
 
+  /** Open floor inside a rectangle: the free tile centre nearest its centre (the centre itself may be solid, like the Fire Pit's fire). */
+  openSpotInside(x, y, w, h) {
+    const cx = x + w / 2, cy = y + h / 2;
+    const nav = this.client.nav;
+    if (!nav) return { x: cx, y: cy };
+    let best = null;
+    for (let ty = Math.floor(y / nav.tile); ty <= Math.floor((y + h) / nav.tile); ty++) {
+      for (let tx = Math.floor(x / nav.tile); tx <= Math.floor((x + w) / nav.tile); tx++) {
+        if (nav.isTileBlocked(tx, ty)) continue;
+        const [px, py] = nav.tileCenterPx(tx, ty);
+        if (px < x || px > x + w || py < y || py > y + h) continue;
+        const d = Math.hypot(px - cx, py - cy);
+        if (!best || d < best.d) best = { x: px, y: py, d };
+      }
+    }
+    if (!best) throw new Error(`no open spot inside (${x},${y},${w},${h})`);
+    return { x: best.x, y: best.y };
+  }
+
   players() {
     return this.client.listPlayers().map(info);
   }
 
   /**
    * Walk there with the client's pathfinding (people watching see a walk, not a glide through
-   * walls), resolving when it arrives or stops. Only with no collision map: a position update.
+   * walls). Resolves on arrival; rejects if the avatar stops short (unreachable or blocked
+   * goal, 30 s timeout) or the world is closed mid-walk. Only with no collision map: a position update.
    */
   async moveTo(x, y) {
     if (this.client.nav) {
-      await this.client.navTo(x, y, { stopWithin: 16 });
+      const walk = new AbortController();
+      this._walks.add(walk);
+      try {
+        const r = await this.client.navTo(x, y, { stopWithin: 16, timeoutMs: 30000, signal: walk.signal });
+        if (!r?.arrived) throw new Error(`${this.name} did not arrive at (${x},${y}): ${r?.reason ?? "unknown"}`);
+      } finally {
+        this._walks.delete(walk);
+      }
       return;
     }
     this.client.pos.x = x;

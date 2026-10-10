@@ -25,6 +25,7 @@ When("avatar {word} walks {int} px east", async function (r, px) {
   const b = await this.avatar(role(r));
   const { x, y } = b.self();
   const p = b.openSpotNear(x + px, y);
+  assert.ok(Math.hypot(p.x - x, p.y - y) > ARRIVED_PX, `(${p.x},${p.y}) is no move from (${x},${y})`);
   this.walkedTo = { name: nameOf(r), x: p.x, y: p.y };
   await b.moveTo(p.x, p.y);
 });

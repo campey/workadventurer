@@ -16,16 +16,19 @@ function harness({ meeting } = {}) {
     },
   });
   const sent = [];
-  c._send = (m) => sent.push(m);
+  c._send = (m) => { if (m.setPlayerDetailsMessage) sent.push(m); }; // only availability matters here
   const joins = [];
   const leaves = [];
   c._joinSpace = async (s) => {
     joins.push(s);
     c.spaces.set(s, { spaceUserId: "x" });
   };
+  // The real _leaveSpace (it owns the availability bookkeeping) with the wire stubbed out.
+  const realLeave = WorkAdventureClient.prototype._leaveSpace;
+  c.query = async () => ({});
   c._leaveSpace = (s) => {
     leaves.push(s);
-    c.spaces.delete(s);
+    return realLeave.call(c, s);
   };
   const area = {
     id: "A1",
@@ -154,4 +157,27 @@ test("availability: with overlapping area meetings, ONLINE only when none remain
   await sleep(2800);
   assert.equal(sent.at(-1).setPlayerDetailsMessage.availabilityStatus, ONLINE);
   assert.equal(sent.filter((m) => m.setPlayerDetailsMessage.availabilityStatus === ONLINE).length, 1);
+});
+
+test("availability: leaving the area while the join is in flight sends no LIVEKIT and leaves the space", async () => {
+  const { c, leaves, sent, enter, leave } = harness({ meeting: { areaAvailabilityStatus: LIVEKIT } });
+  let finish;
+  c._joinSpace = () => new Promise((res) => { finish = () => { c.spaces.set("space-m1", { spaceUserId: "x" }); res(); }; });
+  enter();
+  await sleep(1700); // dwell fired, joinSpaceQuery in flight
+  leave(); // t.join is already null and the space is not ours yet: no linger is armed
+  finish();
+  await sleep(50);
+  assert.deepEqual(sent.filter((m) => m.setPlayerDetailsMessage), [], "no LIVEKIT while outside");
+  assert.deepEqual(leaves, ["space-m1"], "the stray space is left");
+  assert.ok(!c.spaces.has("space-m1"));
+});
+
+test("availability: a server-initiated leave sends ONLINE", async () => {
+  const { c, sent, enter } = harness({ meeting: { areaAvailabilityStatus: LIVEKIT } });
+  enter();
+  await sleep(1800);
+  assert.deepEqual(sent, [status(LIVEKIT)]);
+  await c._leaveSpace("space-m1"); // leaveSpaceRequestMessage
+  assert.deepEqual(sent.filter((m) => m.setPlayerDetailsMessage), [status(LIVEKIT), status(ONLINE)]);
 });

@@ -91,3 +91,7 @@ test("live playerLeft carries the name, though the client deletes the player fir
 test("fake openSpotNear states the point unchanged (it never computes)", () => {
   assert.deepEqual(fake(facts).openSpotNear(10, 20), { x: 10, y: 20 });
 });
+
+test("fake openSpotInside states the rectangle's centre (it never computes)", () => {
+  assert.deepEqual(fake(facts).openSpotInside(100, 200, 64, 32), { x: 132, y: 216 });
+});

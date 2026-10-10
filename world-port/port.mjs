@@ -10,7 +10,8 @@
  * @property {() => PlayerInfo} self
  * @property {() => PlayerInfo[]} players
  * @property {(x:number, y:number) => Promise<void>} moveTo  live: walks with the client's pathfinding and resolves when it arrives or stops (a position update only without a collision map); fake: a position update
- * @property {(x:number, y:number) => {x:number,y:number}} openSpotNear  open floor near (x,y), outside every meeting area; live: the nearest non-solid tile centre that is outside all meeting areas; fake: the point unchanged (it states, never computes)
+ * @property {(x:number, y:number) => {x:number,y:number}} openSpotNear  open floor near (x,y), outside every meeting area; live: the nearest non-solid tile centre that is outside all meeting areas; fake: the point unchanged (it states, never computes). Ignores reachability: the point may be walled off.
+ * @property {(x:number, y:number, w:number, h:number) => {x:number,y:number}} openSpotInside  open floor inside a rectangle, nearest its centre (the centre may be solid); live: the nearest free tile centre inside; fake: the rectangle's centre
  * @property {() => ({x:number,y:number,w:number,h:number}|null)} startArea  the room's start rectangle, null if none known
  * @property {(x:number, y:number) => boolean} isSolid  throws if the adapter has no answer for that point
  * @property {(spaceName:string, text:string) => void} chat  to the members of a space we are in; they get `chatMessage`

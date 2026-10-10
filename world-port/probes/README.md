@@ -41,7 +41,7 @@ only, never other players' names.
 
 Whole-suite result, `WORLD=live NODE_USE_ENV_PROXY=1 npm run scenarios`, 2026-10-10 (after the follow-ups): 17 scenarios, 14 passed, 3 skipped (two `@fake`, the academy spawn row), 0 failed.
 
-After the meeting-area availability work (gap 3), twice in a row: 23 scenarios, 20 passed, 3 skipped (same three), 0 failed; 137 steps, 119 passed, 18 skipped (7m40s and 7m47s, since avatars now walk). Fake: 23 scenarios, 22 passed, 1 skipped.
+After the meeting-area availability work (gap 3), twice in a row: 23 scenarios, 20 passed, 3 skipped (same three), 0 failed; 137 steps, 119 passed, 18 skipped (7m40s and 7m47s, since avatars now walk). Fake: 23 scenarios, 22 passed, 1 skipped (raw: `fake-scenarios2.txt` in the session scratchpad).
 
 ## Gaps found
 
@@ -80,9 +80,8 @@ After the meeting-area availability work (gap 3), twice in a row: 23 scenarios, 
    pathfinding (`navTo`, `stopWithin: 16`; a position update only without a collision
    map), and steps that moved by fixed offsets go to `openSpotNear` (live: nearest open tile
    centre outside every meeting area plus a 32 px margin; fake: the point unchanged).
-   The intermittent "same meeting" failure did **not** recur in two full live runs (20
-   passed, 3 skipped each, 0 failed); its cause is still unexplained, but those runs had no
-   person near the spawn. Keep watching.
+   The intermittent "same meeting" failure did not recur in two full live runs (20
+   passed, 3 skipped each, 0 failed); its cause is still unexplained. Keep watching.
 
 A `contradicts` verdict means correcting the matching note in `docs/field-notes.md`.
 
@@ -114,3 +113,17 @@ start area") and the walls outline has no rows. Meeting areas come from the
    A start area comes from the `spawn` probe, confirmed the same way.
 3. Add a walls row per landmark. A row that fails live is a gap to report here, not a
    row to delete.
+
+### Review fixes (2026-10-10, after campey saw a proximity bubble in the Fire Pit)
+
+- Availability could stick at LIVEKIT: leaving the area while the dwell's join was in flight,
+  and a server-initiated leave. ONLINE now comes from `_leaveSpace` itself, and a join that
+  completes after we left the area leaves the space instead of announcing LIVEKIT.
+- Live `moveTo` to the Fire Pit's centre (the solid fire) could never arrive and looped for
+  120 s. Meeting-area steps now walk to `openSpotInside` (a free tile inside the area);
+  `moveTo` times out at 30 s, rejects when it does not arrive, and `close()` aborts walks,
+  leaves every space (so peers drop our tile) and sends ONLINE, then closes.
+- The "left the proximity meeting" step now also requires no other meeting still open and
+  the two avatars within proximity range.
+- Full live run after these fixes: 23 scenarios, 3 skipped, 20 passed; 137 steps, 119
+  passed, 18 skipped; 1m55s (`live3.txt`). Not yet re-watched by a person.
