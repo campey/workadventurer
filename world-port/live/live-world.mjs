@@ -1,7 +1,7 @@
 // Live WorldPort: a real WorkAdventureClient against a real server. Mirrors the
 // fake's event semantics (world-port/fake/fake-world.mjs).
 import { EventEmitter } from "node:events";
-import WebSocket from "ws";
+import { DefaultWebSocket } from "./proxied-ws.mjs";
 import { WorkAdventureClient } from "../../src/wa-client.mjs";
 import { isVersionRejection } from "../../src/server-rejected.mjs";
 import { record, save } from "../recorder.mjs";
@@ -10,7 +10,7 @@ const info = (p) => ({ userId: p.userId, name: p.name ?? "", x: p.x, y: p.y });
 
 export class LiveWorld extends EventEmitter {
   /** recordTo: array sink for recorded traffic; with RECORD=1 and no sink, saved on close(). */
-  constructor({ roomUrl, name, versionHash = null, recordTo = null, fetch = globalThis.fetch, WebSocketImpl = WebSocket }) {
+  constructor({ roomUrl, name, versionHash = null, recordTo = null, fetch = globalThis.fetch, WebSocketImpl = DefaultWebSocket }) {
     super();
     this.name = name;
     this.closed = false;
