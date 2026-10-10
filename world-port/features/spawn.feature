@@ -1,6 +1,6 @@
 Feature: Spawn
 
-  @needs-facts
+  @needs-start-area
   Scenario Outline: I appear in the world's start area
     Given the world "<world>"
     And avatar B is in the world

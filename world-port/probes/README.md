@@ -31,7 +31,7 @@ A `contradicts` verdict means correcting the matching note in `docs/field-notes.
 
 `worlds/*.json` hold facts the scenarios assert: `startArea` (`x,y,w,h,confirmedBy`)
 and `landmarks` (`name,x,y,solid,confirmedBy`). Nothing goes in unconfirmed; both
-files are currently `{ "landmarks": [] }`, so the `@needs-facts` spawn scenarios
+files are currently `{ "landmarks": [] }`, so the `@needs-start-area` spawn scenarios
 skip ("no confirmed start area") and the walls outline has no rows.
 
 1. List candidates (at least 2 solid and 2 open per world, one `.wam` furniture piece on

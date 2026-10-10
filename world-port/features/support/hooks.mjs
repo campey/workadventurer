@@ -12,15 +12,28 @@ Before({ tags: "@fake" }, function () {
   if (this.kind === "live") return "skipped";
 });
 
-// @needs-facts scenarios compare against a confirmed fact; with none on file there is nothing to assert.
+// One tag per fact a scenario needs; with that fact missing there is nothing confirmed to assert, so skip.
 // The world is named by the scenario's own `Given the world "<name>"` step (already expanded from the
-// Examples row), which has not run yet when this hook fires, so read it from the pickle.
-Before({ tags: "@needs-facts" }, function ({ pickle }) {
+// Examples row), which has not run yet when the hook fires, so read it from the pickle.
+const pickleWorld = (pickle) => {
   const m = pickle.steps.map((s) => /^the world "(.+)"$/.exec(s.text)).find(Boolean);
-  const world = m && WORLDS[m[1]];
-  this.worldId = m?.[1] ?? null;
-  if (!world || !this.facts.startArea) {
+  return m?.[1] ?? null;
+};
+
+Before({ tags: "@needs-start-area" }, function ({ pickle }) {
+  this.worldId = pickleWorld(pickle);
+  if (!WORLDS[this.worldId] || !this.facts.startArea) {
     this.log("skipped: no confirmed start area");
+    return "skipped";
+  }
+});
+
+Before({ tags: "@needs-meeting-area" }, function ({ pickle }) {
+  this.worldId = pickleWorld(pickle);
+  const m = pickle.steps.map((s) => /^avatar \w+ walks into the meeting area "(.+)"$/.exec(s.text)).find(Boolean);
+  const listed = (this.facts.meetingAreas ?? []).some((a) => a.name === m?.[1]);
+  if (!WORLDS[this.worldId] || !m || !listed) {
+    this.log(`skipped: no confirmed meeting area "${m?.[1] ?? "?"}"`);
     return "skipped";
   }
 });
