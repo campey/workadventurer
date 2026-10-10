@@ -70,10 +70,10 @@ Both **prod** worlds, chosen because they mark walls differently:
 First-round areas, each to be confirmed by a probe before it becomes a scenario. Sources in brackets.
 
 - **Connecting.** Our version hash is accepted. A stale hash gets the "new version" error screen ("When prod bumps", #56). This is the scenario that failed in #55.
-- **Joining and spawn.** I appear inside the world's `.wam` start area, not at the Tiled `start` layer, which on afrolabs sits about 600 px off ("Spawn point" in `docs/field-notes.md`). Spawn is decided client-side [campey: one of the past surprises].
-- **Walls.** I can't walk through a wall in either world, by either marking method [campey: the other past surprise]. *Note:* the CLI's map baker still uses an older approximation for furniture (#92), so this scenario may fail through today's code. That's the loop working, not a reason to drop the scenario.
+- **Joining and spawn.** The world tells me where its start area is: the `.wam` start area, not the Tiled `start` layer, which on afrolabs sits about 600 px off ("Spawn point" in `docs/field-notes.md`). I appear inside it. Spawn is chosen client-side [campey: one of the past surprises].
+- **Walls.** The world tells me what is solid, by either marking method: tile layer or `.wam` furniture [campey: the other past surprise]. The scenarios name landmarks a person can check, for example "the fire in the afrolabs open space is solid" or "this corridor on the campus is open" *(my guess at the form)*. *Note:* the CLI's map baker still uses an older approximation for furniture (#92), so a furniture scenario may fail through today's code. That's the loop working, not a reason to drop the scenario.
 
-  Spawn and walls are worked out client-side; the server never checks collisions. So live, **a second avatar of ours watches** where the first one appears and walks (positions the server relays), rather than the avatar trusting its own idea of where it is.
+  The server never checks collisions, and spawn is chosen client-side. So live, **a second avatar of ours watches** where the first one appears (a position the server relays), rather than the avatar trusting its own idea of where it is.
 - **Presence.** I see other players arrive, move and leave.
 - **Areas and area meetings.** Entering a meeting area puts me in its meeting, with the dwell debounce ("Map areas: dwell debounce").
 - **Proximity meetings.** Walking up to another avatar puts us in the same group.
@@ -87,7 +87,7 @@ Two-avatar scenarios use two of our own headless instances, which the notes alre
 
 ## Decided parts of the how
 
-- **Spawn, walls and pathfinding belong to the world, so they live inside the adapter** [campey: "they're part of a world"; pathfinding goes with walls, my reading]. WorkAdventure's map formats (Tiled, `.wam`, entity collections) are WorkAdventure's and can change with a version like anything else. The **fake has its own, independent implementation**. If it reused the adapter's map code, the spawn and wall scenarios would pass on both sides by construction and prove nothing.
+- **The adapter tells the client what is where; the client reasons about it** [campey]. Reading the world (where the walls, the start area and the map areas are) is part of a world, so it lives inside the adapter: WorkAdventure's map formats (Tiled, `.wam`, entity collections) can change with a version like anything else. **Pathfinding stays in the client** [campey], which plans routes over what the adapter reports. The **fake reports the world from its own, independent reading** of the map files. If it reused the adapter's map code, the spawn and wall scenarios would pass on both sides by construction and prove nothing.
 - **The live adapter may gain abilities the current client lacks** [campey], as additions that go through the `selfcheck` gate. Known so far: **sending** a meeting invitation (the Android client already has `sendInvite`; the Node client can only accept), and **reading other users' mic state** (the Node client only announces its own). Two of our own avatars can then run the invite and mic scenarios without a human.
 
 - **Scenarios are written in Gherkin (`.feature` files, Given/When/Then), run with cucumber-js in Node** [my call]. When #126 lands, the APK will run the same JavaScript adapter, so Node is the one place the suite needs to run.
