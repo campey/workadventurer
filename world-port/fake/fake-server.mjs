@@ -10,6 +10,7 @@ export class FakeServer {
     this.rejectAfterJoin = rejectAfterJoin;
     this.worlds = new Map(); // userId -> FakeWorld
     this.nextUserId = 1;
+    this.invites = new Map(); // "fromId>toId" -> true, while pending
     this.pairs = new Map(); // "lo-hi" userId pair -> shared meeting name, while within PROXIMITY_PX
   }
 
@@ -95,5 +96,35 @@ export class FakeServer {
       return;
     }
     throw new Error(`not a member of space ${spaceName}`);
+  }
+
+  /** The userId of the registered avatar called `name`, or null. */
+  idByName(name) {
+    for (const [id, w] of this.worlds) if (w.name === name) return id;
+    return null;
+  }
+
+  /** Space names of the shared meetings `userId` is in. */
+  spacesOf(userId) {
+    return [...this.pairs].filter(([k]) => k.split("-").map(Number).includes(userId)).map(([, n]) => n);
+  }
+
+  /** `fromId` invites `toName`: the target is told who invited them. Throws if no such avatar. */
+  // scenario: invites:An invitation is received, accepted and brings both avatars together
+  invite(fromId, toName) {
+    const toId = this.idByName(toName);
+    if (toId == null) throw new Error(`unknown player "${toName}"`);
+    this.invites.set(`${fromId}>${toId}`, true);
+    this.worlds.get(toId).emit("inviteReceived", { name: this.worlds.get(fromId).name });
+  }
+
+  /** `toId` accepts the pending invite from `fromName`: the inviter is told. Throws if none pending. */
+  // scenario: invites:An invitation is received, accepted and brings both avatars together
+  answerInvite(toId, fromName, accepted) {
+    const fromId = this.idByName(fromName);
+    const key = `${fromId}>${toId}`;
+    if (fromId == null || !this.invites.has(key)) throw new Error(`no pending invite from "${fromName}"`);
+    this.invites.delete(key);
+    this.worlds.get(fromId).emit("inviteAnswered", { accepted, name: this.worlds.get(toId).name });
   }
 }

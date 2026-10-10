@@ -117,6 +117,25 @@ export class FakeWorld extends EventEmitter {
     this.server.broadcast(this.userId, "emote", { userId: this.userId, name: this.name, emote: emoji });
   }
 
+  // scenario: invites:An invitation is received, accepted and brings both avatars together
+  invite(playerName) { this.server.invite(this.userId, playerName); }
+
+  /** Accepting walks us next to the inviter (as the real client does), which puts us in their meeting. */
+  // scenario: invites:An invitation is received, accepted and brings both avatars together
+  async acceptInvite(fromName) {
+    const fromId = this.server.idByName(fromName);
+    this.server.answerInvite(this.userId, fromName, true);
+    const t = this.server.worlds.get(fromId).self();
+    await this.moveTo(t.x - 32, t.y);
+  }
+
+  // scenario: mic:A peer's microphone state is seen by the other avatar in the meeting
+  setMic(on) {
+    for (const spaceName of this.server.spacesOf(this.userId)) {
+      this.server.relayToSpace(this.userId, spaceName, "peerMic", { name: this.name, on: !!on });
+    }
+  }
+
   /** The meeting areas listed in the facts file (the fake reads no maps). */
   meetingAreas() {
     return this.facts?.meetingAreas ?? [];

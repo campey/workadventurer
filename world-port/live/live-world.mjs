@@ -41,6 +41,7 @@ export class LiveWorld extends EventEmitter {
     });
     // The client deletes a player before emitting playerLeft (src/wa-client.mjs), so remember names here.
     const names = new Map(); // userId -> name
+    const pending = (this._pendingInvites = new Map()); // sender name -> uuid
     const remember = (p) => { if (p?.name) names.set(p.userId, p.name); };
     c.on("playerJoined", remember);
     c.on("playerMoved", remember);
@@ -55,7 +56,12 @@ export class LiveWorld extends EventEmitter {
     fwd("areaLeave", "areaLeft");
     fwd("spaceJoined", "meetingJoined");
     fwd("spaceLeft", "meetingLeft");
-    fwd("inviteReceived", "inviteReceived");
+    fwd("inviteReceived", "inviteReceived", (e) => {
+      if (e.uuid) pending.set(e.name, e.uuid); // kept for acceptInvite(); never surfaced
+      return { name: e.name };
+    });
+    fwd("inviteAnswered", "inviteAnswered");
+    fwd("peerMic", "peerMic", (e) => ({ name: e.name, on: e.on }));
     fwd("chatMessage", "chatMessage");
     fwd("emote", "emote");
   }
@@ -114,5 +120,28 @@ export class LiveWorld extends EventEmitter {
   speechBubble(text) { this.client.speechBubble(text); }
   thoughtBubble(text) { this.client.thoughtBubble(text); }
   clearBubble() { this.client.clearBubble(); }
+  invite(playerName) {
+    const p = this.client.listPlayers().find((q) => q.name === playerName);
+    if (!p) throw new Error(`unknown player "${playerName}"`);
+    if (!p.uuid) throw new Error(`no uuid known for player "${playerName}"`);
+    this.client.sendMeetingInvitation(p.uuid, p.userId ?? null);
+  }
+
+  /** Accept, then walk to the sender (the server only seats us once we are near). */
+  async acceptInvite(fromName) {
+    const uuid = this._pendingInvites.get(fromName);
+    if (!uuid) throw new Error(`no pending invite from "${fromName}"`);
+    this._pendingInvites.delete(fromName);
+    this.client.acceptMeetingInvitation(uuid);
+    const sender = () => this.client.listPlayers().find((q) => q.name === fromName);
+    if (!sender()) return;
+    await this.client.walkTo(sender().x, sender().y, { getTarget: () => sender() ?? null });
+  }
+
+  setMic(on) {
+    this.client.micOn = !!on;
+    for (const spaceName of this.client.spaces.keys()) this.client.setSpaceMicState(spaceName, on);
+  }
+
   emote(emoji) { this.client.sendEmote(emoji); }
 }

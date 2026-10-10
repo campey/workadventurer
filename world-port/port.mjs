@@ -17,6 +17,9 @@
  * @property {(text:string) => void} thoughtBubble
  * @property {() => void} clearBubble
  * @property {(emoji:string) => void} emote  others get `emote {userId, name, emote}`
+ * @property {(playerName:string) => void} invite  invite a known player over; throws if no such player. They get `inviteReceived {name}`, we get `inviteAnswered {accepted, name}`
+ * @property {(fromName:string) => Promise<void>} acceptInvite  accept the pending invite from that name; throws if none
+ * @property {(on:boolean) => void} setMic  others in our meeting get `peerMic {name, on}`
  * @property {(event:string, fn:Function) => void} on
  * @property {(event:string, fn:Function) => void} once
  * @property {(event:string, fn:Function) => void} off

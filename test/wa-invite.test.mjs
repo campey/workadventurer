@@ -75,3 +75,19 @@ test("sendEmote sends emotePromptMessage", () => {
   c.sendEmote("👋");
   assert.deepEqual(c.sent[0], { emotePromptMessage: { emote: "👋" } });
 });
+
+test("sendMeetingInvitation sends meetingInvitationRequestMessage", () => {
+  const c = client();
+  c.sendMeetingInvitation("u-2", 9);
+  assert.deepEqual(c.sent[0], {
+    meetingInvitationRequestMessage: { receiverUserUuid: "u-2", receiverUserId: 9 },
+  });
+});
+
+test("meetingInvitationResponseReceivedMessage -> inviteAnswered", () => {
+  const c = client();
+  let got;
+  c.on("inviteAnswered", (e) => (got = e));
+  c._handle({ meetingInvitationResponseReceivedMessage: { accepted: true, responderName: "Bea" } });
+  assert.deepEqual(got, { accepted: true, name: "Bea" });
+});

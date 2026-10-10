@@ -575,14 +575,30 @@ export class WorkAdventureClient extends EventEmitter {
       });
       return;
     }
-    if (obj.meetingInvitationResponseReceivedMessage || obj.meetingInvitationRequestClosedMessage) {
-      return; // outcomes of invites we sent — nothing to do
+    if (obj.meetingInvitationResponseReceivedMessage) {
+      // The player we invited answered.
+      const m = obj.meetingInvitationResponseReceivedMessage;
+      this.emit("inviteAnswered", { accepted: !!m.accepted, name: m.responderName ?? "" });
+      return;
+    }
+    if (obj.meetingInvitationRequestClosedMessage) {
+      return; // an invite we sent was closed — nothing to do
     }
     // roomConnectedMessage, worldConnectionMessage, refreshRoomMessage, etc. — ignored.
     if (process.env.WA_DEBUG) {
       const k = Object.keys(obj)[0];
       if (k && k !== "batchMessage") this.emit("log", `S2C ${k}: ${JSON.stringify(obj[k]).slice(0, 400)}`);
     }
+  }
+
+  _emitPeerMic(spaceName, u) {
+    if (!u?.spaceUserId || u.spaceUserId === this.spaces.get(spaceName)?.spaceUserId) return;
+    this.emit("peerMic", {
+      spaceName,
+      spaceUserId: u.spaceUserId,
+      name: u.name || this.spaceUserNames.get(u.spaceUserId) || "",
+      on: !!u.microphoneState,
+    });
   }
 
   _handleSub(sub) {
@@ -652,6 +668,7 @@ export class WorkAdventureClient extends EventEmitter {
       // the room's numeric userId at all.
       for (const u of users) if (u.spaceUserId && u.name) this.spaceUserNames.set(u.spaceUserId, u.name);
       this.emit("spaceUsers", { spaceName: sn, users });
+      for (const u of users) this._emitPeerMic(sn, u);
       return;
     }
     // The init snapshot only covers who was already in the space. Anyone who
@@ -662,6 +679,10 @@ export class WorkAdventureClient extends EventEmitter {
     if (sub.addSpaceUserMessage || sub.updateSpaceUserMessage) {
       const u = (sub.addSpaceUserMessage ?? sub.updateSpaceUserMessage).user;
       if (u?.spaceUserId && u.name) this.spaceUserNames.set(u.spaceUserId, u.name);
+      // A peer's mic state: always on add; on update only when the mask names it.
+      const upd = sub.updateSpaceUserMessage;
+      if (sub.addSpaceUserMessage) this._emitPeerMic(sub.addSpaceUserMessage.spaceName, u);
+      else if ((upd.updateMask?.paths ?? []).includes("microphoneState")) this._emitPeerMic(upd.spaceName, u);
     }
     if (sub.privateEvent) {
       const pe = sub.privateEvent;
@@ -748,6 +769,13 @@ export class WorkAdventureClient extends EventEmitter {
   /** Display name for a space-user id (the format webRTC peer events carry), or null. */
   spaceUserName(spaceUserId) {
     return this.spaceUserNames.get(spaceUserId) ?? null;
+  }
+
+  /** Invite the player with this uuid / room userId over ("invite to discussion"). */
+  sendMeetingInvitation(receiverUuid, receiverUserId = null) {
+    this._send({
+      meetingInvitationRequestMessage: { receiverUserUuid: receiverUuid, receiverUserId },
+    });
   }
 
   /** Accept a meeting invitation ("come over") from the player with this uuid. */
