@@ -2,7 +2,7 @@ Feature: Presence and proximity
   Background:
     Given the world "afrolabs open space"
 
-  # source: docs/field-notes.md "Two (or more) headless daemons can talk to each other"; live run NOT YET RUN
+  # source: docs/field-notes.md "Two (or more) headless daemons can talk to each other"; live run 2026-10-10 passed
   Scenario: A player's arrival, movement and departure are seen
     Given avatar A is in the world
     When avatar B connects
@@ -25,7 +25,7 @@ Feature: Presence and proximity
     When avatar B walks 100 px east
     Then avatar A sees avatar B move
 
-  # source: docs/field-notes.md "Two (or more) headless daemons can talk to each other"; live run NOT YET RUN
+  # source: docs/field-notes.md "Two (or more) headless daemons can talk to each other"; live run 2026-10-10 passed
   Scenario: Walking next to another avatar puts both in the same meeting
     Given avatar A is in the world
     And avatar B is in the world

@@ -17,6 +17,15 @@ the Tiled `.tmj`'s `start` tile layer. On shared template maps the `.tmj`
 (afrolabs: the tile layer sits ~600 px north of the actual "Spawn Point" by
 the fire).
 
+Re-tested against prod with the `spawn` probe, 2026-10-10:
+
+- **afrolabs** confirms: the `.wam` start area "Spawn Point" is
+  {x:1895, y:2099, w:169, h:119, isDefault:true}; another avatar saw ours at
+  (1961, 2136), inside it; the Tiled `start` layer sampled (2192, 1520).
+- **the academy (lean-iterator campus) has no `.wam` start area**, so spawn
+  falls back to the Tiled `start` layer: the avatar appeared at (976, 2928).
+  The "`.wam` beats `.tmj`" rule only applies on maps that have a start area.
+
 The client handles this in `connect()`: after `_loadAreas()` populates
 `this.areas` from the live `.wam`, `_wamSpawnPoint()` picks a random point
 inside the start area and sets `this.pos` before the join message goes out.

@@ -2,7 +2,7 @@ Feature: Voice signalling
   The port event is `voiceSignal {kind: "webrtc"|"livekit", with}`. Voice is off unless an avatar
   asks for it (enableVoice), so ordinary scenarios never start audio.
 
-  # source: probe voice-signalling, 2026-10-10 (confirms); docs/livekit.md (escalation to LiveKit follows mesh size)
+  # source: probe voice-signalling, 2026-10-10 (confirms); live run 2026-10-10 passed; docs/livekit.md (escalation to LiveKit follows mesh size)
   Scenario: A proximity pair sets up WEBRTC voice and is not invited to LiveKit
     Given the world "afrolabs open space"
     And avatar A has voice enabled

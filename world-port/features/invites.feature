@@ -7,7 +7,7 @@ Feature: Meeting invitations
     And avatar B is in the world
     And avatar B is 400 px away from avatar A
 
-  # source: docs/field-notes.md "Invite over" (MeetingInvitation); live run NOT YET RUN
+  # source: docs/field-notes.md "Invite over" (MeetingInvitation); live run 2026-10-10 passed
   Scenario: An invitation is received, accepted and brings both avatars together
     # A only knows B once the server has announced B to A (fake and live)
     Given avatar A sees avatar B arrive

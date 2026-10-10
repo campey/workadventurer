@@ -13,17 +13,22 @@ adapter (`world-port/live/live-world.mjs`, wraps the real client against prod).
 
 ## Status (2026-10-10)
 
-The live side has **not been run**. The cloud environment's network policy
-blocked play.workadventu.re. So:
+The live side has been run (network reachable; live commands need
+`NODE_USE_ENV_PROXY=1`). Results, details in `world-port/probes/README.md`:
 
-- every probe is NOT YET RUN (see the table in `world-port/probes/README.md`);
-- `world-port/worlds/*.json` are `{ "landmarks": [] }`: no confirmed facts yet;
-- the `@needs-start-area` scenarios skip, the walls outline has no rows, and
-  the voice scenarios wait for the `voice-signalling` probe.
+- probes: `version-hash` (afrolabs), `spawn` (afrolabs), `voice-signalling`
+  (afrolabs) and `meeting-area` (both worlds) confirm; `spawn` (the academy) is
+  **new**: no `.wam` start area, avatars land on the Tiled start layer.
+  `landmarks` and the academy `voice-signalling` have not been run;
+- `world-port/worlds/*.json` hold only probe-confirmed facts: afrolabs
+  `startArea` and `meetingAreas` ("Yellowish-Brownish Table"), the academy's
+  "Lean Coffee Table 1". `"landmarks": []` is still empty: they need campey's
+  browser check, so the walls outline has no rows and the academy spawn row skips;
+- `WORLD=live NODE_USE_ENV_PROXY=1 npm run scenarios`: 17 scenarios, 14 passed,
+  3 skipped (two `@fake`, the academy spawn row), 0 failed.
 
-Everything below describes the machinery as built. Nothing in it has been
-checked against prod yet, so treat the fake as "passes the scenarios", not as
-"matches prod".
+The first live run found one gap (invite before the server announced the peer):
+the fake was omniscient. Fixed test-first; see "Gaps found" in the probes README.
 
 ## The loop
 
@@ -84,9 +89,8 @@ A probe:
     node world-port/probes/run.mjs <probe> [--world "<name>"] [--at "name:x,y" ...]
 
 Probes live in `world-port/probes/` (`version-hash`, `spawn`, `landmarks`,
-`voice-signalling`). With no arguments the runner prints usage, the probe
-names and the world names. `--at` is repeatable and only the `landmarks` probe
-uses it. The probe prints its question, what it observed and a verdict:
+`voice-signalling`, `meeting-area`). With no arguments the runner prints usage, the probe
+names and the world names. `--at` is repeatable; `landmarks` takes points and `meeting-area` an area name. The probe prints its question, what it observed and a verdict:
 `confirms`, `contradicts` or `new`. It never gives a verdict from inconclusive
 evidence (a failed connect, an unexpected rejection): it exits 1 instead.
 Exit 0 means a verdict, 2 bad arguments. Results are logged in the table in
