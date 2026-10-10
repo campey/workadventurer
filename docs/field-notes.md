@@ -374,6 +374,24 @@ a no-op; stopping in a meeting area still works.
 no Jitsi transport. Walking into one is out of scope and has confused the
 daemon in the past.
 
+## Meeting areas and availability
+
+A browser client sends `setPlayerDetailsMessage { availabilityStatus }` as it moves
+through a `livekitRoomProperty` meeting area: **LIVEKIT (11)** on entering, **ONLINE (1)**
+on leaving (probe `meeting-availability`, 2026-10-10, campey walking a browser avatar
+into the "Fire Pit"; relayed to others as `playerDetailsUpdatedMessage`). Our client used
+to say ONLINE always (set once at join), and campey saw our two avatars' proximity bubble
+persist while they walked through the Fire Pit. Probe `firepit-meeting` (same day) had
+`wa-probe-a` send LIVEKIT/ONLINE like a browser: all five steps looked right to a person
+(one meeting, no bubble, clean exit).
+
+Since then the **wa-1.34 adapter** defines `meeting.areaAvailabilityStatus: 11` and
+`WorkAdventureClient` sends it when the dwell timer actually joins an area meeting, and
+ONLINE when the linger timer leaves it (ONLINE only once no area meeting remains). An
+adapter without the value (the frozen wa-1.33) behaves as before. Live check, scenario
+"A proximity pair walking into a meeting area leaves its bubble for the area meeting": it
+passes with the status sent and fails with it removed (the bubble persists).
+
 ---
 
 ## Movement niceties

@@ -41,6 +41,8 @@ only, never other players' names.
 
 Whole-suite result, `WORLD=live NODE_USE_ENV_PROXY=1 npm run scenarios`, 2026-10-10 (after the follow-ups): 17 scenarios, 14 passed, 3 skipped (two `@fake`, the academy spawn row), 0 failed.
 
+After the meeting-area availability work (gap 3), twice in a row: 23 scenarios, 20 passed, 3 skipped (same three), 0 failed; 137 steps, 119 passed, 18 skipped (7m40s and 7m47s, since avatars now walk). Fake: 23 scenarios, 22 passed, 1 skipped.
+
 ## Gaps found
 
 1. **Invite before the server announced the peer** (first live run, 2026-10-10).
@@ -57,20 +59,30 @@ Whole-suite result, `WORLD=live NODE_USE_ENV_PROXY=1 npm run scenarios`, 2026-10
    back to the Tiled start layer. The spawn row for the academy skips; documented in
    `spawn.feature` and `docs/field-notes.md`.
 
-3. **"Same meeting" failed twice in one live run, then passed; our bubble persisted through the firepit** (2026-10-10, during
-   the wall walk). In one full `WORLD=live` run, two scenarios failed at "avatars A and B
-   are in the same meeting"; the next full run passed 19/19 with 3 skipped. Not yet
-   explained. A real person (campey) was standing near the spawn at the time, which may
-   have pulled an avatar into a different proximity group. To probe: run the meeting
-   scenarios with and without a person nearby.
-   campey also saw our two avatars' proximity bubble persist while they walked
-   through the firepit, where a browser player's meeting area takes over.
-   `meeting-availability` (2026-10-10) found why, most likely: a browser client sends
-   `availabilityStatus` LIVEKIT on entering a meeting area and ONLINE on leaving; ours
-   always says ONLINE. `firepit-meeting` (2026-10-10) then had `wa-probe-a` send LIVEKIT
-   on entering and ONLINE on leaving: with campey coming and going, all five steps
-   looked right (one meeting, no bubble). Next: fix test-first: a scenario, the fake,
-   and the client sending its availability on meeting-area enter/leave.
+3. **Our proximity bubble persisted through the Fire Pit; "same meeting" failed twice in one live run, then passed** (2026-10-10).
+   campey saw our two avatars' proximity bubble persist while they walked through the Fire
+   Pit, where a browser player's meeting area takes over. `meeting-availability` found the
+   likely cause: a browser client sends `availabilityStatus` LIVEKIT (11) on entering a
+   meeting area and ONLINE (1) on leaving; ours always said ONLINE. `firepit-meeting` had
+   `wa-probe-a` do the same and a person saw all five steps right.
+   **Resolved (2026-10-10), test-first:** the wa-1.34 adapter has
+   `meeting.areaAvailabilityStatus: 11`; the client sends it when the dwell timer joins an
+   area meeting and ONLINE when the linger timer leaves (unit tests in
+   `test/wa-area-meeting-debounce.test.mjs`). New scenario "A proximity pair walking into a
+   meeting area leaves its bubble for the area meeting" (`meetings.feature`, Fire Pit row):
+   it failed on the fake before the fake kept an avatar in an area meeting out of proximity
+   bubbles. Live it passed (`meetings.feature:31`, 2m10s). The control confirms the cause:
+   with `areaAvailabilityStatus` removed the same live scenario **fails** at "have left the
+   proximity meeting" (the pair's bubble was never dissolved after both joined the Fire Pit).
+   So the live server does dissolve the bubble when we send LIVEKIT, and not otherwise.
+   The Fire Pit is in `meetingAreas` (`confirmedBy: "probe firepit-meeting, 2026-10-10"`).
+   Also changed: scenario movement. `LiveWorld.moveTo` now walks with the client's
+   pathfinding (`navTo`, `stopWithin: 16`; a position update only without a collision
+   map), and steps that moved by fixed offsets go to `openSpotNear` (live: nearest open tile
+   centre outside every meeting area plus a 32 px margin; fake: the point unchanged).
+   The intermittent "same meeting" failure did **not** recur in two full live runs (20
+   passed, 3 skipped each, 0 failed); its cause is still unexplained, but those runs had no
+   person near the spawn. Keep watching.
 
 A `contradicts` verdict means correcting the matching note in `docs/field-notes.md`.
 
