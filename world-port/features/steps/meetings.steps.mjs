@@ -33,6 +33,7 @@ Then("avatars {word} and {word} are in the same meeting", async function (r1, r2
   }
   assert.ok(joins[0].spaceName, "meetingJoined carried no spaceName");
   assert.equal(joins[0].spaceName, joins[1].spaceName);
+  this.proximitySpace = joins[0].spaceName;
 });
 
 // scenario: meetings:Walking into a meeting area joins its meeting
@@ -48,4 +49,44 @@ Then("avatar {word} joins the meeting for {string}", async function (r, areaName
   assert.ok(area, `meeting area "${areaName}" is not in the facts file`);
   const space = area.space ?? area.name;
   await this.observe(role(r), "meetingJoined", (p) => p.spaceName === space);
+});
+
+// scenario: meetings:A proximity pair walking into a meeting area leaves its bubble for the area meeting
+When("avatars {word} and {word} walk into the meeting area {string}", async function (r1, r2, areaName) {
+  const area = (this.facts?.meetingAreas ?? []).find((a) => a.name === areaName);
+  assert.ok(area, `meeting area "${areaName}" is not in the facts file`);
+  this.areaMark = {};
+  for (const r of [role(r1), role(r2)]) this.areaMark[r] = this.events.get(r)?.length ?? 0; // only what follows counts
+  const centre = [area.x + area.w / 2, area.y + area.h / 2];
+  // Together, so the pair stays a pair on the way in.
+  await Promise.all([r1, r2].map(async (r) => (await this.avatar(role(r))).moveTo(...centre)));
+});
+
+// scenario: meetings:A proximity pair walking into a meeting area leaves its bubble for the area meeting
+Then("avatars {word} and {word} join the meeting for {string}", async function (r1, r2, areaName) {
+  const area = (this.facts?.meetingAreas ?? []).find((a) => a.name === areaName);
+  const space = area.space ?? area.name;
+  for (const r of [role(r1), role(r2)]) {
+    await this.observe(r, "meetingJoined", (p) => p.spaceName === space, { since: this.areaMark?.[r] ?? 0 });
+  }
+});
+
+// Once both are in the area meeting, the last thing each was told about the proximity meeting is that it
+// ended. (The pair may separate and re-form on the way in; what matters is that the bubble is gone at the
+// end, with both in the area meeting, not that it ended at one particular moment.)
+// scenario: meetings:A proximity pair walking into a meeting area leaves its bubble for the area meeting
+Then("avatars {word} and {word} have left the proximity meeting for the meeting for {string}", async function (r1, r2, areaName) {
+  assert.ok(this.proximitySpace, "no proximity meeting was seen first");
+  const area = (this.facts?.meetingAreas ?? []).find((a) => a.name === areaName);
+  const space = area.space ?? area.name;
+  for (const r of [role(r1), role(r2)]) {
+    const log = this.events.get(r);
+    const proximityEvents = () =>
+      log.slice(this.areaMark?.[r] ?? 0).filter((e) => (e.event === "meetingJoined" || e.event === "meetingLeft") && e.payload?.spaceName === this.proximitySpace);
+    const inArea = () => log.some((e, i) => i >= (this.areaMark?.[r] ?? 0) && e.event === "meetingJoined" && e.payload?.spaceName === space);
+    const done = () => inArea() && proximityEvents().at(-1)?.event === "meetingLeft";
+    const deadline = Date.now() + 15000;
+    while (!done() && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100));
+    assert.ok(done(), `${r} is still in the proximity meeting ${this.proximitySpace} (events: ${JSON.stringify(proximityEvents().map((e) => e.event))})`);
+  }
 });

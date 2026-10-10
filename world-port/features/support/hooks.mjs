@@ -30,7 +30,7 @@ Before({ tags: "@needs-start-area" }, function ({ pickle }) {
 
 Before({ tags: "@needs-meeting-area" }, function ({ pickle }) {
   this.worldId = pickleWorld(pickle);
-  const m = pickle.steps.map((s) => /^avatar \w+ walks into the meeting area "(.+)"$/.exec(s.text)).find(Boolean);
+  const m = pickle.steps.map((s) => /^avatars? \w+(?: and \w+)? walks? into the meeting area "(.+)"$/.exec(s.text)).find(Boolean);
   const listed = (this.facts.meetingAreas ?? []).some((a) => a.name === m?.[1]);
   if (!WORLDS[this.worldId] || !m || !listed) {
     this.log(`skipped: no confirmed meeting area "${m?.[1] ?? "?"}"`);

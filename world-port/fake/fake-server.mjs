@@ -57,7 +57,9 @@ export class FakeServer {
    */
   // scenario: presence:Walking next to another avatar puts both in the same meeting
   updateProximity() {
-    const ids = [...this.worlds.keys()];
+    // An avatar in an area meeting is LIVEKIT, not in a proximity bubble.
+    // scenario: meetings:A proximity pair walking into a meeting area leaves its bubble for the area meeting
+    const ids = [...this.worlds].filter(([, w]) => !w.inAreaMeeting?.()).map(([id]) => id);
     const near = new Set();
     for (const a of ids) {
       for (const b of ids) {

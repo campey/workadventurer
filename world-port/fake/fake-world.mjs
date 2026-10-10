@@ -162,6 +162,16 @@ export class FakeWorld extends EventEmitter {
     }
   }
 
+  /**
+   * True while this avatar is in an area meeting. A browser reports availabilityStatus LIVEKIT then
+   * (probes meeting-availability, firepit-meeting, 2026-10-10) and the server keeps it out of
+   * proximity bubbles.
+   */
+  // scenario: meetings:A proximity pair walking into a meeting area leaves its bubble for the area meeting
+  inAreaMeeting() {
+    return [...this.inside.values()].some((st) => st.joined);
+  }
+
   /** The meeting areas listed in the facts file (the fake reads no maps). */
   meetingAreas() {
     return this.facts?.meetingAreas ?? [];
@@ -181,6 +191,8 @@ export class FakeWorld extends EventEmitter {
         s.dwell = setTimeout(() => {
           s.joined = true;
           this.emit("meetingJoined", { spaceName });
+          // scenario: meetings:A proximity pair walking into a meeting area leaves its bubble for the area meeting
+          this.server.updateProximity(); // now LIVEKIT: out of proximity bubbles
         }, this.dwellMs);
         s.dwell.unref?.();
       } else if (here && st) {
@@ -193,6 +205,8 @@ export class FakeWorld extends EventEmitter {
         st.linger = setTimeout(() => {
           this.inside.delete(a.name);
           this.emit("meetingLeft", { spaceName });
+          // scenario: meetings:A proximity pair walking into a meeting area leaves its bubble for the area meeting
+          this.server.updateProximity(); // back to ONLINE
         }, this.lingerMs);
         st.linger.unref?.();
       }
