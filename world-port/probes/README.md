@@ -24,6 +24,8 @@ only, never other players' names.
 | `spawn` | the academy | 2026-10-10 | NOT YET RUN — network policy blocked prod on 2026-10-10 | Same question, second world. |
 | `landmarks` | afrolabs open space | 2026-10-10 | NOT YET RUN — network policy blocked prod on 2026-10-10 | Which candidate points does the adapter's collision map call solid? |
 | `landmarks` | the academy | 2026-10-10 | NOT YET RUN — network policy blocked prod on 2026-10-10 | Same, including one `.wam` furniture piece (campus furniture gaps link #92). |
+| `voice-signalling` | afrolabs open space | 2026-10-10 | NOT YET RUN — network policy blocked prod on 2026-10-10 | Does a proximity pair see WEBRTC signalling between them (not a LiveKit invitation)? Area-meeting half skipped: no confirmed meeting area in the world facts. |
+| `voice-signalling` | the academy | 2026-10-10 | NOT YET RUN — network policy blocked prod on 2026-10-10 | Same, second world. |
 
 A `contradicts` verdict means correcting the matching note in `docs/field-notes.md`.
 

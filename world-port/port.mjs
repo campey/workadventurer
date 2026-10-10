@@ -20,6 +20,7 @@
  * @property {(playerName:string) => void} invite  invite a known player over; throws if no such player. They get `inviteReceived {name}`, we get `inviteAnswered {accepted, name}`
  * @property {(fromName:string) => Promise<void>} acceptInvite  accept the pending invite from that name; throws if none
  * @property {(on:boolean) => void} setMic  others in our meeting get `peerMic {name, on}`
+ * @property {() => Promise<void>} [enableVoice]  live only: attach WaAudio so voice signalling is answered; we then get `voiceSignal {kind:"webrtc"|"livekit", with:string|null}` (with = the peer's name, null if unknown or room-wide). Off by default.
  * @property {(event:string, fn:Function) => void} on
  * @property {(event:string, fn:Function) => void} once
  * @property {(event:string, fn:Function) => void} off
@@ -29,6 +30,7 @@ export const EVENTS = [
   "joined", "rejected", "playerJoined", "playerMoved", "playerLeft",
   "areaEntered", "areaLeft", "meetingJoined", "meetingLeft",
   "inviteReceived", "inviteAnswered", "chatMessage", "peerMic", "emote",
+  "voiceSignal",
 ];
 
 /** Resolve with the first `event` payload satisfying `predicate`; reject on timeout. */

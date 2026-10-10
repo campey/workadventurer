@@ -79,6 +79,8 @@ export class LiveWorld extends EventEmitter {
     if (this.closed) return;
     this.closed = true;
     try {
+      if (this._onVoiceEvent) this.client.off?.("spaceEvent", this._onVoiceEvent);
+      try { this.audio?.hangup?.("world closed"); } catch { /* best effort */ }
       this.client.close();
     } finally {
       if (this._saveOnClose) this.recordingPath = save(this._sink, this.name);
@@ -144,4 +146,26 @@ export class LiveWorld extends EventEmitter {
   }
 
   emote(emoji) { this.client.sendEmote(emoji); }
+
+  /**
+   * Attach WaAudio the way src/wa-daemon.mjs does (no listen/STT) and emit `voiceSignal`
+   * for the signalling the client sees: webRtcStartMessage -> webrtc, livekitInvitationMessage
+   * -> livekit. Opt-in so ordinary scenarios never start audio. `makeAudio(client)` is a test seam.
+   */
+  async enableVoice({ makeAudio } = {}) {
+    if (this.audio) return;
+    if (!makeAudio) {
+      const { WaAudio } = await import("../../src/wa-audio.mjs");
+      makeAudio = (client) => new WaAudio(client, { listen: false });
+    }
+    this.audio = makeAudio(this.client);
+    this._onVoiceEvent = ({ kind, senderUserId }) => {
+      if (kind === "webRtcStartMessage") {
+        this.emit("voiceSignal", { kind: "webrtc", with: this.client.spaceUserNames?.get(senderUserId) ?? null });
+      } else if (kind === "livekitInvitationMessage") {
+        this.emit("voiceSignal", { kind: "livekit", with: null });
+      }
+    };
+    this.client.on("spaceEvent", this._onVoiceEvent);
+  }
 }
