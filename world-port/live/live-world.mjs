@@ -75,6 +75,21 @@ export class LiveWorld extends EventEmitter {
     return { userId: c.myUserId, name: this.name, x: Math.round(c.pos.x), y: Math.round(c.pos.y) };
   }
 
+  /** The .wam start area, preferring isDefault (same rule as _wamSpawnPoint), or null. */
+  startArea() {
+    const isStart = (p) => p.type === "start";
+    const starts = (this.client.areas ?? []).filter((a) => (a.rawProps ?? []).some(isStart));
+    if (!starts.length) return null;
+    const a = starts.find((s) => s.rawProps.some((p) => isStart(p) && p.isDefault)) ?? starts[0];
+    return { x: a.x, y: a.y, w: a.w, h: a.h };
+  }
+
+  isSolid(x, y) {
+    const nav = this.client.nav;
+    if (!nav) throw new Error("no collision map for this room");
+    return !!nav.isPxBlocked(x, y);
+  }
+
   players() {
     return this.client.listPlayers().map(info);
   }

@@ -31,6 +31,9 @@ export class FakeWorld extends EventEmitter {
       return;
     }
     this.userId = this.server.join(this);
+    // scenario: spawn:I appear in the world's start area
+    const area = this.startArea();
+    if (area) this.pos = { x: area.x + area.w / 2, y: area.y + area.h / 2 };
     const me = this.self();
     queueMicrotask(() => this.emit("joined", me));
     // scenario: none yet — WorldPort contract (playerJoined)
@@ -53,6 +56,21 @@ export class FakeWorld extends EventEmitter {
   // scenario: connecting:Our version is accepted
   self() {
     return { userId: this.userId, name: this.name, ...this.pos };
+  }
+
+  /** The start rectangle from the facts file, or null if the facts have none. */
+  // scenario: spawn:I appear in the world's start area
+  startArea() {
+    const a = this.facts?.startArea;
+    return a ? { x: a.x, y: a.y, w: a.w, h: a.h } : null;
+  }
+
+  /** Answers only from the facts file's landmarks; any other point is an error, never a guess. */
+  // scenario: walls:The world says what is solid
+  isSolid(x, y) {
+    const l = (this.facts?.landmarks ?? []).find((m) => m.x === x && m.y === y);
+    if (!l) throw new Error(`fake has no fact for (${x},${y})`);
+    return l.solid;
   }
 
   // scenario: none yet — WorldPort contract

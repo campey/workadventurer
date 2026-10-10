@@ -6,7 +6,7 @@ import { WORLDS } from "../../worlds/index.mjs";
 
 const kind = process.env.WORLD ?? "fake";
 
-// Missing facts file (Task 4 creates them) loads as {}; anything else (bad JSON) throws.
+// Missing facts file loads as {}; anything else (bad JSON) throws.
 const loadFacts = (file) => {
   try {
     return JSON.parse(readFileSync(file, "utf8"));
@@ -25,6 +25,12 @@ class ScenarioWorld extends World {
     this.server = new FakeServer(); // shared per scenario so fake avatars see each other
   }
 
+  /** The facts file of the current world ({} if none). */
+  get facts() {
+    const world = WORLDS[this.worldId];
+    return world ? loadFacts(world.factsFile) : {};
+  }
+
   /** The avatar for `role`, created on first use with `opts`. Role "A" -> wa-probe-a. */
   async avatar(role, opts = {}) {
     if (this.avatars.has(role)) return this.avatars.get(role);
@@ -36,7 +42,7 @@ class ScenarioWorld extends World {
       const { LiveWorld } = await import("../../live/live-world.mjs"); // Task 2; only when WORLD=live
       port = new LiveWorld({ name, roomUrl: world.roomUrl, ...opts });
     } else {
-      port = new FakeWorld({ server: this.server, name, facts: loadFacts(world.factsFile), ...opts });
+      port = new FakeWorld({ server: this.server, name, facts: this.facts, ...opts });
     }
     this.avatars.set(role, port);
     return port;

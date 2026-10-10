@@ -16,16 +16,17 @@ const probes = () =>
 
 function usage() {
   console.error(
-    `usage: node world-port/probes/run.mjs <probe> [--world <key>]\n` +
+    `usage: node world-port/probes/run.mjs <probe> [--world <key>] [--at "name:x,y"]...\n` +
       `  probes: ${probes().join(", ")}\n` +
       `  worlds: ${Object.keys(WORLDS).map((k) => `"${k}"`).join(", ")}`,
   );
 }
 
 function parseArgs(argv) {
-  const out = { probe: null, world: null };
+  const out = { probe: null, world: null, at: [] };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--world") out.world = argv[++i] ?? null;
+    else if (argv[i] === "--at") out.at.push(argv[++i] ?? ""); // repeatable; used by the landmarks probe
     else if (!out.probe) out.probe = argv[i];
     else return { error: `unexpected argument: ${argv[i]}` };
   }
@@ -64,6 +65,7 @@ async function main() {
       avatars.set(role, { world: w, sink, name });
       return w;
     },
+    args: { at: args.at },
     log: (msg) => console.log(`  ${msg}`),
   };
 

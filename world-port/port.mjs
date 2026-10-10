@@ -10,6 +10,8 @@
  * @property {() => PlayerInfo} self
  * @property {() => PlayerInfo[]} players
  * @property {(x:number, y:number) => Promise<void>} moveTo  position update, no pathfinding
+ * @property {() => ({x:number,y:number,w:number,h:number}|null)} startArea  the room's start rectangle, null if none known
+ * @property {(x:number, y:number) => boolean} isSolid  throws if the adapter has no answer for that point
  * @property {(event:string, fn:Function) => void} on
  * @property {(event:string, fn:Function) => void} once
  * @property {(event:string, fn:Function) => void} off
