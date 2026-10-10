@@ -17,6 +17,15 @@
       "h": 140,
       "space": "9ida9r-5ee315f5-2eb0-4ded-8c6b-c8100ab5b852",
       "confirmedBy": "probe meeting-area, 2026-10-10"
+    },
+    {
+      "name": "Fire Pit",
+      "x": 2103,
+      "y": 2098,
+      "w": 369,
+      "h": 271,
+      "space": "9ida9r-fire-pit",
+      "confirmedBy": "probe firepit-meeting, 2026-10-10"
     }
   ],
   "landmarks": [
