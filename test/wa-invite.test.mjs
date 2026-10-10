@@ -59,14 +59,11 @@ test("playerByUuid resolves a tracked player, else null", () => {
   assert.equal(c.playerByUuid("nope"), null);
 });
 
-test("invite outcome messages are swallowed without an event or throw", () => {
+test("meetingInvitationRequestClosedMessage emits no inviteReceived and does not throw", () => {
   const c = client();
   let fired = false;
   c.on("inviteReceived", () => (fired = true));
-  assert.doesNotThrow(() => {
-    c._handle({ meetingInvitationResponseReceivedMessage: { accepted: true, responderName: "x" } });
-    c._handle({ meetingInvitationRequestClosedMessage: {} });
-  });
+  assert.doesNotThrow(() => c._handle({ meetingInvitationRequestClosedMessage: {} }));
   assert.equal(fired, false);
 });
 

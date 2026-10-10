@@ -34,6 +34,8 @@ export class LiveWorld extends EventEmitter {
     const c = this.client;
     const fwd = (from, to, map = (x) => x) => c.on(from, (p) => this.emit(to, map(p)));
     c.on("joined", () => this.emit("joined", this.self()));
+    // Only a drop we did not ask for: close() sets this.closed before the socket closes.
+    c.on("close", (e) => { if (!this.closed) this.emit("disconnected", { code: e?.code, reason: e?.reason }); });
     c.on("error", (e) => {
       // During connect() a rejection rejects connect(), as in the fake.
       if (isVersionRejection(e)) { if (!this._connecting) this.emit("rejected", e); }

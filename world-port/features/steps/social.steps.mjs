@@ -38,7 +38,7 @@ Then("avatar {word} is still connected", async function (r) {
   const log = this.events.get(role(r));
   assert.ok(log.some((e) => e.event === "joined"), "never joined");
   assert.ok(!log.some((e) => e.event === "rejected"), "was rejected");
-  assert.equal((await this.avatar(role(r))).closed, false, "closed");
+  assert.ok(!log.some((e) => e.event === "disconnected"), "was disconnected");
   assert.equal((await this.avatar(role(r))).self().name, nameOf(r));
 });
 

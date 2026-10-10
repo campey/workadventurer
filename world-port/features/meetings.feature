@@ -1,5 +1,6 @@
 Feature: Area meetings
 
+  # source: docs/field-notes.md "Map areas: dwell debounce"; live run NOT YET RUN
   @needs-meeting-area
   Scenario Outline: Walking into a meeting area joins its meeting
     Given the world "<world>"

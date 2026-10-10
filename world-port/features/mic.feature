@@ -8,6 +8,7 @@ Feature: Microphone state of others
     When avatar A walks next to avatar B
     Then avatars A and B are in the same meeting
 
+  # source: docs/field-notes.md "`#10` — the red mic, mic-state propagation"; live run NOT YET RUN
   Scenario: A peer's microphone state is seen by the other avatar in the meeting
     When avatar A turns the microphone on
     Then avatar B sees avatar A's microphone on

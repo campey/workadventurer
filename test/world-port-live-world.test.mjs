@@ -32,3 +32,19 @@ test("with RECORD=1, close() saves the recording even if client.close() throws",
     if (path) rmSync(path, { force: true });
   }
 });
+
+test("client `close` maps to `disconnected` unless we closed it ourselves", () => {
+  const mk = () => new LiveWorld({ roomUrl: "https://x.test/@/o/w/r", name: "wa-probe-d", fetch: stubFetch, WebSocketImpl: StubWS });
+  const w = mk();
+  const got = [];
+  w.on("disconnected", (e) => got.push(e));
+  w.client.emit("close", { code: 1006, reason: "gone" });
+  assert.deepEqual(got, [{ code: 1006, reason: "gone" }]);
+
+  const w2 = mk();
+  const got2 = [];
+  w2.on("disconnected", (e) => got2.push(e));
+  w2.client.close = () => w2.client.emit("close", { code: 1005, reason: "" }); // as the socket would
+  w2.close();
+  assert.deepEqual(got2, [], "our own close() is not a disconnect");
+});

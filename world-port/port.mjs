@@ -21,7 +21,7 @@
  * @property {(fromName:string) => Promise<void>} acceptInvite  accept the pending invite from that name; throws if none
  * @property {(on:boolean) => void} setMic  others in our meeting get `peerMic {name, on}`
  * @property {() => Promise<void>} [enableVoice]  live only: attach WaAudio so voice signalling is answered; we then get `voiceSignal {kind:"webrtc"|"livekit", with:string|null}` (with = the peer's name, null if unknown or room-wide). Off by default.
- * @property {(event:string, fn:Function) => void} on
+ * @property {(event:string, fn:Function) => void} on  `disconnected {code, reason}` is emitted if the connection drops without us calling close()
  * @property {(event:string, fn:Function) => void} once
  * @property {(event:string, fn:Function) => void} off
  */
@@ -30,15 +30,24 @@ export const EVENTS = [
   "joined", "rejected", "playerJoined", "playerMoved", "playerLeft",
   "areaEntered", "areaLeft", "meetingJoined", "meetingLeft",
   "inviteReceived", "inviteAnswered", "chatMessage", "peerMic", "emote",
-  "voiceSignal",
+  "voiceSignal", "disconnected",
 ];
 
-/** Resolve with the first `event` payload satisfying `predicate`; reject on timeout. */
+/**
+ * Resolve with the first `event` payload satisfying `predicate`; reject on timeout.
+ * The timer is unref'd (a pending waiter never keeps the process alive) and the returned
+ * promise has `.cancel()`, which detaches the listener and rejects it with "cancelled".
+ */
 export function waitFor(port, event, predicate = () => true, timeoutMs = 15000) {
-  return new Promise((resolve, reject) => {
+  let cancel;
+  const p = new Promise((resolve, reject) => {
     const done = (fn, v) => { clearTimeout(timer); port.off(event, onEvent); fn(v); };
     const onEvent = (payload) => { if (predicate(payload)) done(resolve, payload); };
     const timer = setTimeout(() => done(reject, new Error(`timed out waiting for ${event}`)), timeoutMs);
+    timer.unref?.();
+    cancel = () => done(reject, new Error(`cancelled waiting for ${event}`));
     port.on(event, onEvent);
   });
+  p.cancel = cancel;
+  return p;
 }

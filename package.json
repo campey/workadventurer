@@ -24,7 +24,7 @@
     "test": "node --test",
     "find-player": "node src/find-player.mjs",
     "build:collision": "node scripts/build-collision.mjs",
-    "scenarios": "cucumber-js"
+    "scenarios": "node scripts/scenarios.mjs"
   },
   "dependencies": {
     "@livekit/rtc-node": "^1.0.0",

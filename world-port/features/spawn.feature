@@ -1,5 +1,6 @@
 Feature: Spawn
 
+  # source: probe spawn (NOT YET RUN)
   @needs-start-area
   Scenario Outline: I appear in the world's start area
     Given the world "<world>"

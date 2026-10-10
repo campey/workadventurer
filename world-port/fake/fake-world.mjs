@@ -63,6 +63,10 @@ export class FakeWorld extends EventEmitter {
     }
   }
 
+  /** Simulate the server dropping us (not via close()). */
+  // scenario: social:Bubbles can be set and cleared without losing the connection
+  drop(code = 1006, reason = "") { this.emit("disconnected", { code, reason }); }
+
   // scenario: connecting:Our version is accepted
   self() {
     return { userId: this.userId, name: this.name, ...this.pos };

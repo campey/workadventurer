@@ -488,7 +488,9 @@ avatar against a real room. Dates are when each was observed.
   Ogg mux with a fake peer / no live socket.
 - **`npm run scenarios`** (cucumber, `world-port/features/`) — behavioural
   scenarios against the offline fake world. `WORLD=live npm run scenarios`
-  runs the same suite against prod (the gate for a new adapter);
+  runs the same suite against prod (the gate for a new adapter; as of
+  2026-10-10 it has **not been run**, prod was blocked from the cloud
+  environment: see the Status section of `docs/fakes-with-probes.md`);
   `node world-port/probes/run.mjs <probe>` re-tests one note live. See
   `docs/fakes-with-probes.md`.
 - **`node scripts/selfcheck.mjs [--target <id>] [--room <url>]`** — ephemeral

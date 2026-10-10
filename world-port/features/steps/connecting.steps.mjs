@@ -28,6 +28,7 @@ When("avatar {word} connects with the stale version {string}", async function (r
   const rejected = waitFor(a, "rejected");
   rejected.catch(() => {}); // avoid unhandled rejection if connect() throws first
   this.outcome = await a.connect().then(() => rejected, (e) => e).catch((e) => e);
+  rejected.cancel(); // no-op if settled; otherwise drop the listener and timer
 });
 
 Then("avatar {word} has joined the world", async function (r) {

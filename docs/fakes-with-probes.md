@@ -107,7 +107,8 @@ redacted output may be committed, and only into
 ## When the fake passes and live fails
 
 That is the loop's step 5, and the useful outcome. Do not patch the fake to
-make it match.
+hide the gap (no quick edit to make it match). Only once a probe has
+established the real behaviour (steps 1 to 4) do you fix the fake, test-first.
 
 1. Write down the question the failure raises ("does prod put the avatar in
    the `.wam` start area, or on the Tiled `start` layer?").

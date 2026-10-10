@@ -1,5 +1,6 @@
 Feature: Walls
 
+  # source: probe landmarks (NOT YET RUN)
   Scenario Outline: The world says what is solid
     Given the world "<world>"
     When avatar A connects
