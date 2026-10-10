@@ -70,7 +70,11 @@ export default {
 
     await step("1 they walk in", "1/5: walk into the Fire Pit, then 👍");
 
-    await c.navTo(pit.x + pit.w / 2, pit.y + pit.h / 2, { stopWithin: 16, timeoutMs: 45000 });
+    // The pit's centre is the fire (solid): aim for the nearest open tile inside the area.
+    let [tx, ty] = [pit.x + pit.w / 2, pit.y + pit.h / 2];
+    const free = c.nav?.nearestFree(...c.nav.pxToTile(tx, ty));
+    if (free) [tx, ty] = c.nav.tileCenterPx(free[0], free[1]);
+    await c.navTo(tx, ty, { stopWithin: 16, timeoutMs: 45000 });
     setStatus(LIVEKIT);
     note("we are in the Fire Pit", { at: [c.pos.x | 0, c.pos.y | 0] });
     await new Promise((r) => setTimeout(r, 4000)); // past the 1.5 s dwell

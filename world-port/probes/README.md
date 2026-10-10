@@ -29,6 +29,7 @@ only, never other players' names.
 | `meeting-area` | afrolabs open space | 2026-10-10 | confirms | 7 `livekitRoomProperty` areas listed; walking A into "Yellowish-Brownish Table" {x:1759,y:1264,w:202,h:140} joined space `9ida9r-5ee315f5-2eb0-4ded-8c6b-c8100ab5b852`. In `meetingAreas`. |
 | `meeting-area` | the academy | 2026-10-10 | confirms | 3 areas listed ("(unnamed)", "Lean Coffee Table 1", "Carte Blanche"). Walking into "(unnamed)" {1632,1728,192,224} joined `7e67gt-46769bf1-e571-4237-860a-eec29068035b`; with `--at "Lean Coffee Table 1"` {535,2680,207,160} joined `7e67gt-5cd72740-d3d0-4d90-8d17-172ad53300cc`. "Lean Coffee Table 1" is in `meetingAreas`; the unnamed one is not (no stable name). |
 | `meeting-availability` | afrolabs open space | 2026-10-10 | new | campey walked their browser avatar into "Fire Pit" (a `livekitRoomProperty` meeting area) and out. The browser client sent `availabilityStatus` **LIVEKIT (11)** on entering and **ONLINE (1)** on leaving (via `setPlayerDetailsMessage`, relayed as `playerDetailsUpdatedMessage`). Our client always reports ONLINE: likely why our proximity bubble persisted through the firepit (gap 3). |
+| `firepit-meeting` | afrolabs open space | 2026-10-10 | new | campey and `wa-probe-a` shared the "Fire Pit" meeting area, `wa-probe-a` sending LIVEKIT on entering and ONLINE on leaving like a browser. Five steps (campey in, we in, campey out, campey back, we out), all answered 👍: one meeting, no proximity bubble, clean leave. We joined and left space `9ida9r-fire-pit`. The Fire Pit's centre is solid (the fire), so walking to the centre stops beside it. |
 
 ### Raw observations (2026-10-10 13:05 UTC, run by the controller)
 
@@ -66,8 +67,10 @@ Whole-suite result, `WORLD=live NODE_USE_ENV_PROXY=1 npm run scenarios`, 2026-10
    through the firepit, where a browser player's meeting area takes over.
    `meeting-availability` (2026-10-10) found why, most likely: a browser client sends
    `availabilityStatus` LIVEKIT on entering a meeting area and ONLINE on leaving; ours
-   always says ONLINE. Next: probe whether our pair's bubble breaks when we send
-   LIVEKIT, then fix test-first.
+   always says ONLINE. `firepit-meeting` (2026-10-10) then had `wa-probe-a` send LIVEKIT
+   on entering and ONLINE on leaving: with campey coming and going, all five steps
+   looked right (one meeting, no bubble). Next: fix test-first: a scenario, the fake,
+   and the client sending its availability on meeting-area enter/leave.
 
 A `contradicts` verdict means correcting the matching note in `docs/field-notes.md`.
 
