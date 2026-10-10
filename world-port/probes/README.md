@@ -25,7 +25,7 @@ only, never other players' names.
 | `landmarks` | afrolabs open space | NOT YET RUN | - | Which candidate points does the adapter's collision map call solid? Needs candidates and campey's browser check. |
 | `landmarks` | the academy | NOT YET RUN | - | Same, including one `.wam` furniture piece (campus furniture gaps link #92). |
 | `voice-signalling` | afrolabs open space | 2026-10-10 | confirms | Proximity pair saw WEBRTC signalling (A: `{kind:"webrtc",with:null}`, B: `{kind:"webrtc",with:"wa-probe-a"}`), no LiveKit invitation. Area-meeting half skipped (no meeting area was confirmed at the time; `meeting-area` now has one). |
-| `voice-signalling` | the academy | NOT YET RUN | - | Same, second world. |
+| `voice-signalling` | the academy | 2026-10-10 | confirms | Same as afrolabs: A `{kind:"webrtc",with:null}`, B `{kind:"webrtc",with:"wa-probe-a"}`, no LiveKit invitation. Area-meeting half not exercised (the probe does not yet drive into a meeting area). |
 | `meeting-area` | afrolabs open space | 2026-10-10 | confirms | 7 `livekitRoomProperty` areas listed; walking A into "Yellowish-Brownish Table" {x:1759,y:1264,w:202,h:140} joined space `9ida9r-5ee315f5-2eb0-4ded-8c6b-c8100ab5b852`. In `meetingAreas`. |
 | `meeting-area` | the academy | 2026-10-10 | confirms | 3 areas listed ("(unnamed)", "Lean Coffee Table 1", "Carte Blanche"). Walking into "(unnamed)" {1632,1728,192,224} joined `7e67gt-46769bf1-e571-4237-860a-eec29068035b`; with `--at "Lean Coffee Table 1"` {535,2680,207,160} joined `7e67gt-5cd72740-d3d0-4d90-8d17-172ad53300cc`. "Lean Coffee Table 1" is in `meetingAreas`; the unnamed one is not (no stable name). |
 
@@ -35,6 +35,7 @@ only, never other players' names.
 - `spawn`, the academy: `startAreas` []; `aAsSeenByB` {x:976, y:2928}; `insideStartArea` false; `tiledStartLayerSample` [976,2928]; verdict new. A's position equals the Tiled start-layer sample, which is what supports "spawned on the Tiled start layer".
 - `version-hash`: `23c8eb8c` joined; `05489a87` rejected with NEW_VERSION ("A new version of WorkAdventure is available"); verdict confirms.
 - `voice-signalling`, afrolabs: proximity `aSaw` [{kind:"webrtc",with:null}], `bSaw` [{kind:"webrtc",with:"wa-probe-a"}]; area meeting skipped; verdict confirms.
+- `voice-signalling`, the academy (later run, 2026-10-10): proximity `aSaw` [{kind:"webrtc",with:null}], `bSaw` [{kind:"webrtc",with:"wa-probe-a"}]; areaMeeting "not implemented: confirmed meeting areas exist but this probe does not yet drive into one"; verdict confirms.
 
 Whole-suite result, `WORLD=live NODE_USE_ENV_PROXY=1 npm run scenarios`, 2026-10-10 (after the follow-ups): 17 scenarios, 14 passed, 3 skipped (two `@fake`, the academy spawn row), 0 failed.
 
