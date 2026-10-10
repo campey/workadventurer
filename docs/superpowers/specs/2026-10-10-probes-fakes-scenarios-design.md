@@ -1,6 +1,6 @@
 # Probes, recorder, fake world and BDD scenarios
 
-**Status:** design written from the 2026-10-10 brainstorm, awaiting campey's approval. Nothing is built until it's approved.
+**Status:** approved by campey, 2026-10-10. Next: implementation plan.
 **Issue:** #125 (part of #124, the World Port epic)
 **Sketch:** `assets/2026-10-10-ports-and-adapters-sketch.png`, the right-hand half (Fake World Adapter, Recording Mock Client, check, Fake Validator, Probes to Live).
 
