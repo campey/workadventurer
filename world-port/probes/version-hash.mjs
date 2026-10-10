@@ -1,18 +1,34 @@
+import { waitFor } from "../port.mjs";
+
 // Re-tests the "When prod bumps" note in docs/field-notes.md: prod accepts
 // apiVersionHash 23c8eb8c and answers 05489a87 with errorScreen NEW_VERSION.
 const ACCEPTED = "23c8eb8c";
 const STALE = "05489a87";
 
-async function attempt(avatar) {
+// Conclusive outcomes only: joined, or a ServerRejectedError (at connect, or
+// right after the join). Anything else (network failure) throws.
+async function attempt(avatar, { watchLateRejection = false } = {}) {
+  const late = watchLateRejection ? waitFor(avatar, "rejected", () => true, 5000).catch(() => null) : null;
   try {
     await avatar.connect();
-    return { joined: true };
   } catch (e) {
-    // Only a server answer is evidence; a network/transport failure is not.
     if (e.name !== "ServerRejectedError") throw e;
-    return { joined: false, error: e.name, code: e.code ?? null, message: e.message };
+    return { joined: false, code: e.code ?? null, message: e.message };
   }
+  const rej = late ? await late : null;
+  return rej ? { joined: false, code: rej.code ?? null, message: rej.message } : { joined: true };
 }
+
+const verdictFor = (accepted, stale) => {
+  for (const [hash, r] of [[ACCEPTED, accepted], [STALE, stale]]) {
+    if (!r.joined && r.code !== "NEW_VERSION") {
+      throw new Error(`inconclusive: ${hash} was rejected with code ${r.code} (${r.message})`);
+    }
+  }
+  if (!accepted.joined) return ["contradicts", `${ACCEPTED} was rejected with NEW_VERSION`];
+  if (stale.joined) return ["contradicts", `${STALE} joined and was not rejected within 5s`];
+  return ["confirms", "accepted hash joined; stale hash got NEW_VERSION"];
+};
 
 export default {
   question: `Does prod accept ${ACCEPTED} and turn away ${STALE} with a new-version error?`,
@@ -22,15 +38,9 @@ export default {
     const accepted = await attempt(a);
     ctx.log(`${ACCEPTED}: ${accepted.joined ? "joined" : accepted.message}`);
     const b = ctx.avatar("B", { versionHash: STALE });
-    const stale = await attempt(b);
+    const stale = await attempt(b, { watchLateRejection: true });
     ctx.log(`${STALE}: ${stale.joined ? "joined" : stale.message}`);
-    const confirms = accepted.joined && !stale.joined && stale.code === "NEW_VERSION";
-    return {
-      observed: { [ACCEPTED]: accepted, [STALE]: stale },
-      verdict: confirms ? "confirms" : "contradicts",
-      note: confirms
-        ? "accepted hash joined; stale hash got NEW_VERSION"
-        : "outcome differs from the note; check observed and correct docs/field-notes.md",
-    };
+    const [verdict, note] = verdictFor(accepted, stale);
+    return { observed: { [ACCEPTED]: accepted, [STALE]: stale }, verdict, note };
   },
 };
