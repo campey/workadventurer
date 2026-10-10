@@ -4,6 +4,8 @@ Project-specific rules for Claude Code sessions working in this repo.
 
 ## Docs
 
+- `docs/roadmap.md` — the three goals (Android in the car, agent presence,
+  blind accessibility), Android gate status, and where work fits.
 - `docs/field-notes.md` — hard-won knowledge from reverse-engineering and
   operating this client: failure modes, non-obvious mechanics, things that
   will bite a future session.
