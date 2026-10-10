@@ -12,6 +12,11 @@
  * @property {(x:number, y:number) => Promise<void>} moveTo  position update, no pathfinding
  * @property {() => ({x:number,y:number,w:number,h:number}|null)} startArea  the room's start rectangle, null if none known
  * @property {(x:number, y:number) => boolean} isSolid  throws if the adapter has no answer for that point
+ * @property {(spaceName:string, text:string) => void} chat  to the members of a space we are in; they get `chatMessage`
+ * @property {(text:string) => void} speechBubble
+ * @property {(text:string) => void} thoughtBubble
+ * @property {() => void} clearBubble
+ * @property {(emoji:string) => void} emote  others get `emote {userId, name, emote}`
  * @property {(event:string, fn:Function) => void} on
  * @property {(event:string, fn:Function) => void} once
  * @property {(event:string, fn:Function) => void} off

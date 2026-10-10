@@ -69,3 +69,9 @@ test("invite outcome messages are swallowed without an event or throw", () => {
   });
   assert.equal(fired, false);
 });
+
+test("sendEmote sends emotePromptMessage", () => {
+  const c = client();
+  c.sendEmote("👋");
+  assert.deepEqual(c.sent[0], { emotePromptMessage: { emote: "👋" } });
+});

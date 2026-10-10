@@ -83,4 +83,17 @@ export class FakeServer {
   broadcast(fromUserId, event, payload) {
     for (const [id, w] of this.worlds) if (id !== fromUserId) w.emit(event, payload);
   }
+
+  /** Deliver `event` to the other members of `spaceName` (the avatars paired in that proximity meeting). */
+  // scenario: social:A chat message in a shared meeting reaches the other avatar
+  relayToSpace(fromUserId, spaceName, event, payload) {
+    for (const [key, name] of this.pairs) {
+      if (name !== spaceName) continue;
+      const ids = key.split("-").map(Number);
+      if (!ids.includes(fromUserId)) throw new Error(`not a member of space ${spaceName}`);
+      for (const id of ids) if (id !== fromUserId) this.worlds.get(id)?.emit(event, payload);
+      return;
+    }
+    throw new Error(`not a member of space ${spaceName}`);
+  }
 }

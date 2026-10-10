@@ -1042,6 +1042,11 @@ export class WorkAdventureClient extends EventEmitter {
     this._send({ setPlayerDetailsMessage: { sayMessage: { message: "", type: 0 } } });
   }
 
+  // Show an emote above our avatar (C2S EmotePromptMessage); others get it as `emote`.
+  sendEmote(emote) {
+    this._send({ emotePromptMessage: { emote } });
+  }
+
   close() {
     if (this._keepAlive) clearInterval(this._keepAlive);
     for (const { reject, timer } of this._pendingQueries.values()) {

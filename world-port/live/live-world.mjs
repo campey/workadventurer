@@ -109,4 +109,10 @@ export class LiveWorld extends EventEmitter {
     this.client.pos.y = y;
     this.client._emitMove(false);
   }
+
+  chat(spaceName, text) { this.client.sendChatMessage(spaceName, text); }
+  speechBubble(text) { this.client.speechBubble(text); }
+  thoughtBubble(text) { this.client.thoughtBubble(text); }
+  clearBubble() { this.client.clearBubble(); }
+  emote(emoji) { this.client.sendEmote(emoji); }
 }

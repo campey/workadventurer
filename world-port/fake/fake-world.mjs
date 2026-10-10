@@ -98,6 +98,25 @@ export class FakeWorld extends EventEmitter {
     this._updateAreas();
   }
 
+  // scenario: social:A chat message in a shared meeting reaches the other avatar
+  chat(spaceName, text) {
+    this.server.relayToSpace(this.userId, spaceName, "chatMessage",
+      { spaceName, senderUserId: this.userId, name: this.name, text });
+  }
+
+  // Bubbles are only state on the avatar: the fake relays nothing and stays connected.
+  // scenario: social:Bubbles can be set and cleared without losing the connection
+  speechBubble(text) { this.bubble = { type: "speech", text }; }
+  // scenario: social:Bubbles can be set and cleared without losing the connection
+  thoughtBubble(text) { this.bubble = { type: "thought", text }; }
+  // scenario: social:Bubbles can be set and cleared without losing the connection
+  clearBubble() { this.bubble = null; }
+
+  // scenario: social:An emote reaches the other avatar
+  emote(emoji) {
+    this.server.broadcast(this.userId, "emote", { userId: this.userId, name: this.name, emote: emoji });
+  }
+
   /** The meeting areas listed in the facts file (the fake reads no maps). */
   meetingAreas() {
     return this.facts?.meetingAreas ?? [];
