@@ -35,7 +35,7 @@ export default {
   world: "afrolabs open space",
   async run(ctx) {
     const a = ctx.avatar("A", { versionHash: ACCEPTED });
-    const accepted = await attempt(a);
+    const accepted = await attempt(a, { watchLateRejection: true });
     ctx.log(`${ACCEPTED}: ${accepted.joined ? "joined" : accepted.message}`);
     const b = ctx.avatar("B", { versionHash: STALE });
     const stale = await attempt(b, { watchLateRejection: true });
