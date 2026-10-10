@@ -12,6 +12,10 @@ Project-specific rules for Claude Code sessions working in this repo.
   WEBRTC codec negotiation against real browser peers, the subscribe path's
   known gotcha for whoever builds it next.
 
+- `docs/fakes-with-probes.md` — how we use fakes with probes for ports & adapters
+  (#124/#125): the probe → recorder → scenario → fake → gap loop, `npm run scenarios`,
+  `WORLD=live`, `RECORD=1`, `world-port/probes/run.mjs`, the `confirmedBy` rule.
+
 - `android/docs/field-notes.md` — the Android client's gate-by-gate findings, led by a
   "Protocol and behaviour reference" (spaces, roles, mic state and mute, libwebrtc
   quirks, maps, server versions) with each fact tagged live / code / guess.

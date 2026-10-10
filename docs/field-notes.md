@@ -486,6 +486,11 @@ avatar against a real room. Dates are when each was observed.
 - **`npm test`** (`node --test`) covers pure logic only: adapter resolution,
   the area-meeting debounce timers, invite message shapes, the mic-prime and
   Ogg mux with a fake peer / no live socket.
+- **`npm run scenarios`** (cucumber, `world-port/features/`) — behavioural
+  scenarios against the offline fake world. `WORLD=live npm run scenarios`
+  runs the same suite against prod (the gate for a new adapter);
+  `node world-port/probes/run.mjs <probe>` re-tests one note live. See
+  `docs/fakes-with-probes.md`.
 - **`node scripts/selfcheck.mjs [--target <id>] [--room <url>]`** — ephemeral
   client, real join: connect / adapter match / move / bubble / area-meeting
   join / audio (SKIP without a second participant). The prod run is the merge
