@@ -25,6 +25,7 @@ export class FakeWorld extends EventEmitter {
       this.userId = this.server.join(this);
       queueMicrotask(() => {
         this.server.leave(this.userId);
+        this.userId = null; // never announced: close() must not broadcast playerLeft
         this.emit("rejected", err);
       });
       return;
@@ -36,7 +37,9 @@ export class FakeWorld extends EventEmitter {
     this.server.broadcast(this.userId, "playerJoined", me);
   }
 
-  // scenario: none yet — WorldPort contract
+  // scenario: connecting:Our version is accepted
+  // scenario: connecting:A stale version is turned away
+  // scenario: connecting:A version turned away after joining
   close() {
     if (this.closed) return;
     this.closed = true;

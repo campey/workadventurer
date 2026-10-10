@@ -27,6 +27,7 @@ export class FakeServer {
   }
 
   // scenario: connecting:Our version is accepted
+  // scenario: connecting:A version turned away after joining
   join(world) {
     const userId = this.nextUserId++;
     this.worlds.set(userId, world);
