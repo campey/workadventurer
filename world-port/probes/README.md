@@ -29,6 +29,13 @@ only, never other players' names.
 | `meeting-area` | afrolabs open space | 2026-10-10 | confirms | 7 `livekitRoomProperty` areas listed; walking A into "Yellowish-Brownish Table" {x:1759,y:1264,w:202,h:140} joined space `9ida9r-5ee315f5-2eb0-4ded-8c6b-c8100ab5b852`. In `meetingAreas`. |
 | `meeting-area` | the academy | 2026-10-10 | confirms | 3 areas listed ("(unnamed)", "Lean Coffee Table 1", "Carte Blanche"). Walking into "(unnamed)" {1632,1728,192,224} joined `7e67gt-46769bf1-e571-4237-860a-eec29068035b`; with `--at "Lean Coffee Table 1"` {535,2680,207,160} joined `7e67gt-5cd72740-d3d0-4d90-8d17-172ad53300cc`. "Lean Coffee Table 1" is in `meetingAreas`; the unnamed one is not (no stable name). |
 
+### Raw observations (2026-10-10 13:05 UTC, run by the controller)
+
+- `spawn`, afrolabs open space: `startAreas` [{name:"Spawn Point", x:1895, y:2099, w:169, h:119, isDefault:true}]; `aAsSeenByB` {x:1961, y:2136}; `insideStartArea` true; `tiledStartLayerSample` [2192,1520]; verdict confirms.
+- `spawn`, the academy: `startAreas` []; `aAsSeenByB` {x:976, y:2928}; `insideStartArea` false; `tiledStartLayerSample` [976,2928]; verdict new. A's position equals the Tiled start-layer sample, which is what supports "spawned on the Tiled start layer".
+- `version-hash`: `23c8eb8c` joined; `05489a87` rejected with NEW_VERSION ("A new version of WorkAdventure is available"); verdict confirms.
+- `voice-signalling`, afrolabs: proximity `aSaw` [{kind:"webrtc",with:null}], `bSaw` [{kind:"webrtc",with:"wa-probe-a"}]; area meeting skipped; verdict confirms.
+
 Whole-suite result, `WORLD=live NODE_USE_ENV_PROXY=1 npm run scenarios`, 2026-10-10 (after the follow-ups): 17 scenarios, 14 passed, 3 skipped (two `@fake`, the academy spawn row), 0 failed.
 
 ## Gaps found

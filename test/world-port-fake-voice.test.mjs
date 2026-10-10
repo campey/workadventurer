@@ -18,11 +18,11 @@ const pair = async ({ voiceA = true, voiceB = true } = {}) => {
   return { a, b, got };
 };
 
-test("a proximity pair with voice enabled sees WEBRTC signalling naming the peer, never LiveKit", async () => {
+test("a proximity pair with voice enabled sees WEBRTC signalling (with: null, as live for the walker), never LiveKit", async () => {
   const { a, b, got } = await pair();
   await b.moveTo(a.self().x + 32, a.self().y);
-  assert.deepEqual(got.a, [{ kind: "webrtc", with: "wa-probe-b" }]);
-  assert.deepEqual(got.b, [{ kind: "webrtc", with: "wa-probe-a" }]);
+  assert.deepEqual(got.a, [{ kind: "webrtc", with: null }]);
+  assert.deepEqual(got.b, [{ kind: "webrtc", with: null }]);
   a.close(); b.close();
 });
 

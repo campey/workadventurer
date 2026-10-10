@@ -73,10 +73,11 @@ export class FakeServer {
       for (const id of key.split("-")) this.worlds.get(Number(id))?.emit("meetingJoined", { spaceName });
       // Probe voice-signalling 2026-10-10: a proximity pair sees WEBRTC signalling, no LiveKit invitation.
       // scenario: voice:A proximity pair sets up WEBRTC voice and is not invited to LiveKit
-      const [x, y] = key.split("-").map(Number);
-      for (const [id, peer] of [[x, y], [y, x]]) {
-        const w = this.worlds.get(id);
-        if (w?.voice) w.emit("voiceSignal", { kind: "webrtc", with: this.worlds.get(peer)?.name ?? null });
+      // Live, A (who walked up) saw with:null and B saw with:"wa-probe-a"; when live fills `with` is not
+      // yet probed, so the fake states only what is certain for both: null.
+      for (const id of key.split("-")) {
+        const w = this.worlds.get(Number(id));
+        if (w?.voice) w.emit("voiceSignal", { kind: "webrtc", with: null });
       }
     }
     for (const [key, spaceName] of [...this.pairs]) {
@@ -89,7 +90,8 @@ export class FakeServer {
   /**
    * Tell the others about a newcomer, and the newcomer about those already there, one event-loop
    * turn later (live, the announcement trails the join). The payload is read at delivery time;
-   * an avatar that left in between is never announced.
+   * an avatar that left in between is never announced. That identity re-check (the worlds map
+   * still holds the same object) replaces clearing the setImmediate timers on close().
    */
   // scenario: invites:An invitation is received, accepted and brings both avatars together
   // scenario: presence:A player's arrival, movement and departure are seen

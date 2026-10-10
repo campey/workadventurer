@@ -63,8 +63,11 @@ correcting the note.
   computed them, the fake and the scenario could agree on a wrong answer.
 - **Facts need `confirmedBy`.** An entry goes into `world-port/worlds/*.json`
   only with `"confirmedBy": "<who>, <how>, <date>"` (e.g. `campey, browser,
-  2026-10-12`): a person saw the browser agree with the probe. Unconfirmed
-  facts stay out.
+  2026-10-12`): a person saw the browser agree with the probe. A fact a live
+  probe observes directly (a start area, a meeting area joined) may instead be
+  `"confirmedBy": "probe <name>, <date>"`. Landmarks (walls) still need a person's
+  browser check: the server never enforces collisions, so no probe can confirm
+  them. Unconfirmed facts stay out.
 - **A missing fact skips, it does not fail.** Scenarios tagged
   `@needs-start-area` or `@needs-meeting-area` are skipped, with a logged
   reason, when the world has no such confirmed fact
