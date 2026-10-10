@@ -71,6 +71,13 @@ export class FakeServer {
       const spaceName = `proximity-${key}`;
       this.pairs.set(key, spaceName);
       for (const id of key.split("-")) this.worlds.get(Number(id))?.emit("meetingJoined", { spaceName });
+      // Probe voice-signalling 2026-10-10: a proximity pair sees WEBRTC signalling, no LiveKit invitation.
+      // scenario: voice:A proximity pair sets up WEBRTC voice and is not invited to LiveKit
+      const [x, y] = key.split("-").map(Number);
+      for (const [id, peer] of [[x, y], [y, x]]) {
+        const w = this.worlds.get(id);
+        if (w?.voice) w.emit("voiceSignal", { kind: "webrtc", with: this.worlds.get(peer)?.name ?? null });
+      }
     }
     for (const [key, spaceName] of [...this.pairs]) {
       if (near.has(key)) continue;

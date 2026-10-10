@@ -144,6 +144,10 @@ export class FakeWorld extends EventEmitter {
     await this.moveTo(t.x - 32, t.y);
   }
 
+  /** Opt in to voice signalling (off by default, as live). */
+  // scenario: voice:A proximity pair sets up WEBRTC voice and is not invited to LiveKit
+  async enableVoice() { this.voice = true; }
+
   // scenario: mic:A peer's microphone state is seen by the other avatar in the meeting
   setMic(on) {
     for (const spaceName of this.server.spacesOf(this.userId)) {
