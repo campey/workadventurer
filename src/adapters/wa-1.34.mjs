@@ -47,6 +47,12 @@ export default {
   },
   // A SET: a patch release can shift the hash with no behaviour change — append
   // here (computed by scripts/vendor-proto.mjs), never fork a new adapter file.
+  // Probe `meeting-availability` (2026-10-10, live, a browser client): entering a
+  // `livekitRoomProperty` meeting area makes the browser send
+  // `setPlayerDetailsMessage { availabilityStatus: LIVEKIT (11) }`, and leaving sends
+  // ONLINE (1). Probe `firepit-meeting` confirmed a person sees the right thing when we
+  // do the same. Not in the frozen wa-1.33 baseline.
+  meeting: { ...wa133.meeting, areaAvailabilityStatus: 11 },
   apiVersionHashes: ["23c8eb8c"], // v1.34.0
   protoPath: "proto/wa-1.34/messages.proto",
 };

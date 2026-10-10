@@ -438,8 +438,9 @@ export class WorkAdventureClient extends EventEmitter {
         t.join = null;
         if (!this.currentAreas.has(key) || this.spaces.has(spaceName)) return;
         this.emit("log", `meeting area "${area.name}" → joining space ${spaceName}`);
-        this._joinSpace(spaceName).catch((e) =>
-          this.emit("log", `area meeting join failed: ${e.message}`)
+        this._joinSpace(spaceName).then(
+          () => this._setAreaAvailability(spaceName, true),
+          (e) => this.emit("log", `area meeting join failed: ${e.message}`)
         );
       }, DWELL_MS);
     } else {
@@ -449,7 +450,29 @@ export class WorkAdventureClient extends EventEmitter {
         t.leave = null;
         if (this.currentAreas.has(key)) return; // walked back in
         this._leaveSpace(spaceName);
+        this._setAreaAvailability(spaceName, false);
       }, LINGER_MS);
+    }
+  }
+
+  /**
+   * A browser client reports availabilityStatus LIVEKIT while it is in a meeting area and ONLINE
+   * when it leaves (probe meeting-availability, 2026-10-10); the server uses it to let the area
+   * meeting take over from a proximity bubble. Only for adapters that define the value
+   * (`meeting.areaAvailabilityStatus`); ONLINE only once no area meeting remains.
+   */
+  _setAreaAvailability(spaceName, joined) {
+    const status = this.adapter?.meeting?.areaAvailabilityStatus;
+    if (status == null) return;
+    this._areaMeetingsJoined ??= new Set();
+    if (joined) {
+      this._areaMeetingsJoined.add(spaceName);
+      this._send({ setPlayerDetailsMessage: { availabilityStatus: status } });
+    } else {
+      this._areaMeetingsJoined.delete(spaceName);
+      if (this._areaMeetingsJoined.size === 0) {
+        this._send({ setPlayerDetailsMessage: { availabilityStatus: AVAILABILITY_ONLINE } });
+      }
     }
   }
 
