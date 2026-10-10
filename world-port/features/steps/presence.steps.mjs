@@ -4,7 +4,7 @@ import { FakeWorld } from "../../fake/fake-world.mjs";
 
 const role = (r) => r.toUpperCase();
 const nameOf = (r) => `wa-probe-${r.toLowerCase()}`;
-const STEP_PX = 100;
+const ARRIVED_PX = 24; // live avatars stop within 16 px of the spot they walk to; the fake lands exactly
 
 // Presence is matched by our avatar's name, so strangers in a live world are ignored.
 
@@ -24,15 +24,16 @@ Then("avatar {word} sees avatar {word} arrive", async function (viewer, subject)
 When("avatar {word} walks {int} px east", async function (r, px) {
   const b = await this.avatar(role(r));
   const { x, y } = b.self();
-  this.walkedTo = { name: nameOf(r), x: x + px, y };
-  await b.moveTo(x + px, y);
+  const p = b.openSpotNear(x + px, y);
+  this.walkedTo = { name: nameOf(r), x: p.x, y: p.y };
+  await b.moveTo(p.x, p.y);
 });
 
 // scenario: presence:A player's arrival, movement and departure are seen
 Then("avatar {word} sees avatar {word} move", async function (viewer, subject) {
   assert.equal(this.walkedTo?.name, nameOf(subject), "no preceding walk by that avatar");
   const { name, x, y } = this.walkedTo;
-  await this.observe(role(viewer), "playerMoved", (p) => p.name === name && p.x === x && p.y === y);
+  await this.observe(role(viewer), "playerMoved", (p) => p.name === name && Math.hypot(p.x - x, p.y - y) <= ARRIVED_PX);
 });
 
 When("avatar {word} leaves", async function (r) {

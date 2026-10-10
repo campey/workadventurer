@@ -5,19 +5,24 @@ const role = (r) => r.toUpperCase();
 const AWAY_PX = 400;
 const NEXT_TO_PX = 32; // well inside the 64 px proximity radius
 
+// Destinations are open floor outside meeting areas, never a raw offset into a wall or an area.
+export const spot = (avatar, x, y) => { const p = avatar.openSpotNear(x, y); return [p.x, p.y]; };
+
 // scenario: presence:Walking next to another avatar puts both in the same meeting
 Given("avatar {word} is {int} px away from avatar {word}", async function (mover, px, other) {
   const a = await this.avatar(role(other));
   assert.equal(px, AWAY_PX);
   const { x, y } = a.self();
-  await (await this.avatar(role(mover))).moveTo(x + px, y);
+  const walker = await this.avatar(role(mover));
+  await walker.moveTo(...spot(walker, x + px, y));
 });
 
 When("avatar {word} walks next to avatar {word}", async function (walker, target) {
   this.mark = {};
   for (const r of ["A", "B"]) this.mark[r] = this.events.get(r)?.length ?? 0; // only meetings from now on count
   const t = (await this.avatar(role(target))).self();
-  await (await this.avatar(role(walker))).moveTo(t.x - NEXT_TO_PX, t.y);
+  const w = await this.avatar(role(walker));
+  await w.moveTo(...spot(w, t.x - NEXT_TO_PX, t.y));
 });
 
 // scenario: presence:Walking next to another avatar puts both in the same meeting

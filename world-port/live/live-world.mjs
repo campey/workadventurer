@@ -109,12 +109,45 @@ export class LiveWorld extends EventEmitter {
     return !!nav.isPxBlocked(x, y);
   }
 
+  /**
+   * The nearest open floor to (x,y) that is outside every meeting area (plus a margin, so an
+   * avatar that stops a few px short is still outside). The adapter works it out from the
+   * collision map and the room's areas; without a map it can only return the point.
+   */
+  openSpotNear(x, y) {
+    const nav = this.client.nav;
+    if (!nav) return { x, y };
+    const PAD = 32;
+    const meetings = (this.client.areas ?? []).filter((a) => (a.rawProps ?? []).some((p) => p.type === "livekitRoomProperty"));
+    const inMeeting = (px, py) =>
+      meetings.some((a) => px >= a.x - PAD && px <= a.x + a.w + PAD && py >= a.y - PAD && py <= a.y + a.h + PAD);
+    let best = null;
+    for (let ty = 0; ty < nav.h; ty++) {
+      for (let tx = 0; tx < nav.w; tx++) {
+        if (nav.isTileBlocked(tx, ty)) continue;
+        const [cx, cy] = nav.tileCenterPx(tx, ty);
+        const d = Math.hypot(cx - x, cy - y);
+        if ((best && d >= best.d) || inMeeting(cx, cy)) continue;
+        best = { x: cx, y: cy, d };
+      }
+    }
+    if (!best) throw new Error(`no open spot near (${x},${y})`);
+    return { x: best.x, y: best.y };
+  }
+
   players() {
     return this.client.listPlayers().map(info);
   }
 
-  // Position update, no pathfinding.
+  /**
+   * Walk there with the client's pathfinding (people watching see a walk, not a glide through
+   * walls), resolving when it arrives or stops. Only with no collision map: a position update.
+   */
   async moveTo(x, y) {
+    if (this.client.nav) {
+      await this.client.navTo(x, y, { stopWithin: 16 });
+      return;
+    }
     this.client.pos.x = x;
     this.client.pos.y = y;
     this.client._emitMove(false);

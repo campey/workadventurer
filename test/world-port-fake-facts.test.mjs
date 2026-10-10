@@ -87,3 +87,7 @@ test("live playerLeft carries the name, though the client deletes the player fir
   w.client.emit("playerLeft", 7); // client.players no longer has 7
   assert.deepEqual(got, [{ userId: 7, name: "wa-probe-b" }]);
 });
+
+test("fake openSpotNear states the point unchanged (it never computes)", () => {
+  assert.deepEqual(fake(facts).openSpotNear(10, 20), { x: 10, y: 20 });
+});

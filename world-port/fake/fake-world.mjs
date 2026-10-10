@@ -94,6 +94,13 @@ export class FakeWorld extends EventEmitter {
     return l.solid;
   }
 
+  /** The fake states the point; it does not compute open floor (live, the adapter does). */
+  // scenario: presence:Walking next to another avatar puts both in the same meeting
+  // scenario: presence:A player's arrival, movement and departure are seen
+  openSpotNear(x, y) {
+    return { x, y };
+  }
+
   // scenario: presence:A player's arrival, movement and departure are seen
   players() {
     return [...this.known.values()].map((p) => ({ ...p }));

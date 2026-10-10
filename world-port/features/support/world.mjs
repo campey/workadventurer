@@ -1,11 +1,14 @@
 import { readFileSync } from "node:fs";
-import { setWorldConstructor, World } from "@cucumber/cucumber";
+import { setDefaultTimeout, setWorldConstructor, World } from "@cucumber/cucumber";
 import { FakeServer } from "../../fake/fake-server.mjs";
 import { FakeWorld } from "../../fake/fake-world.mjs";
 import { EVENTS, waitFor } from "../../port.mjs";
 import { WORLDS } from "../../worlds/index.mjs";
 
 const kind = process.env.WORLD ?? "fake";
+
+// Live avatars now walk (pathfinding), so a step can take far longer than cucumber's default 5 s.
+setDefaultTimeout(kind === "live" ? 180000 : 5000);
 
 // Missing facts file loads as {}; anything else (bad JSON) throws.
 const loadFacts = (file) => {
