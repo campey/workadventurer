@@ -1,6 +1,6 @@
 # World Port: ports & adapters refactor
 
-**Status:** draft. Written from campey's sketch (2026-10-10); not yet reviewed
+**Status:** draft. Written from campey's sketch (2026-10-10); scope decisions recorded below
 **Scope:** put one **World Port** between the two front-ends (the `wa` CLI/daemon
 and the Android APK) and everything that talks to a WorkAdventure server. Behind
 that port sits a **catalog of World Adapters, one per server version/channel**,
@@ -20,7 +20,7 @@ plus a **Fake World Adapter** that is kept honest against live servers.
 | `check` → `Fake Validator` | replays the recordings against the fake and fails when it diverges |
 | `Probes to Live` | scheduled/manual probes that run against live WorkAdventure to refresh the recordings |
 | `API?` (green, dashed) | a possible future official API between us and Pusher |
-| `Catalog of ports per version` | the adapters that can be plugged in: **Adapter v1.3x** (Live, Direct to Pusher), **Adapter #&lt;sha&gt;** (Staging, Direct to Pusher), **API Adapter** (future) |
+| `Catalog of ports per version` | the adapters that can be plugged in: **Adapter v1.3x** (Live, Direct to Pusher; today that is v1.34), **Adapter #&lt;sha&gt;** (Staging, Direct to Pusher), **API Adapter** (future) |
 
 ## Where we are today
 
@@ -164,9 +164,11 @@ is then *transport × profile*:
 ### 4. API Adapter (the green "API?")
 
 WorkAdventure exposes no official client API today; we speak the Pusher's
-private WebSocket protocol. The port makes an `ApiWorldAdapter` a drop-in if one
-appears. Until then it is a placeholder in the catalog and an open question,
-not work.
+private WebSocket protocol. "API?" is a **hoped-for** API. If we end up
+building one ourselves, it lives in its own repo, **not in this client repo**.
+Either way, this repo only ever holds the `ApiWorldAdapter` that talks to it.
+The port makes that adapter a drop-in. Until then it is a placeholder in the
+catalog, not work.
 
 ## Phased plan
 
@@ -213,15 +215,20 @@ untyped surface; Android follows because it already has most of the seams.
   Probe scenarios use our own avatars in quiet rooms, and the recorder
   redacts other players' names and chat text.
 
+## Decisions (2026-10-10)
+
+1. **"v1.3" in the sketch is the current live line.** The live catalog entry
+   tracks whatever prod runs, which is `wa-1.34` today.
+2. **The API is hoped for, not planned.** If we build one, it goes in its own
+   repo; this client repo only gets the adapter.
+3. **Keep prototyping in this repo.** `world-port/` (the contract and
+   recordings) and `catalog/` live here, at the repo root, next to `proto/`,
+   until Android graduates. They are what moves to the shared core repo
+   later.
+
 ## Open questions
 
-1. Is the sketch's "v1.3" the current live line (v1.34), or a version
-   numbering for our own adapters?
-2. Should avatar services (follow, greet, nav) be shared across languages
-   (for example as fixtures-defined behaviour), or written once per language?
-   The proposal above is once per language, tested against the shared fake.
-3. Where does the shared `world-port/` + `catalog/` live before Android
-   graduates: in this repo (proposed), or in a new core repo now?
-4. What did "API?" mean: a hoped-for upstream WorkAdventure API, or our own
-   API layer (for example, the daemon's HTTP routes promoted to a public
-   API that other clients call)?
+1. Should avatar services (follow, greet, nav) be shared across languages
+   (for example as behaviour defined by fixtures), or written once per
+   language? The proposal above is once per language, tested against the
+   shared fake.
