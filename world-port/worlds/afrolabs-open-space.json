@@ -1,1 +1,14 @@
-{ "landmarks": [] }
+{
+  "startArea": {
+    "name": "Spawn Point", "x": 1895, "y": 2099, "w": 169, "h": 119, "isDefault": true,
+    "confirmedBy": "probe spawn, 2026-10-10"
+  },
+  "meetingAreas": [
+    {
+      "name": "Yellowish-Brownish Table", "x": 1759, "y": 1264, "w": 202, "h": 140,
+      "space": "9ida9r-5ee315f5-2eb0-4ded-8c6b-c8100ab5b852",
+      "confirmedBy": "probe meeting-area, 2026-10-10"
+    }
+  ],
+  "landmarks": []
+}
