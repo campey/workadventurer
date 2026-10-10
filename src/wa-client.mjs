@@ -44,6 +44,9 @@ export class WorkAdventureClient extends EventEmitter {
     super();
     this.cfg = { ...DEFAULTS, ...opts };
     this.adapter = opts.adapter ?? null;
+    // Driven-port seam: swap the network (recorders, fakes). Defaults are the real ones.
+    this._fetch = opts.fetch ?? ((...a) => globalThis.fetch(...a));
+    this._WebSocket = opts.WebSocketImpl ?? WebSocket;
     this._target = this.cfg.target ?? "auto";
     this.token = null;
     this.ws = null;
@@ -126,7 +129,7 @@ export class WorkAdventureClient extends EventEmitter {
   }
 
   async _anonymLogin() {
-    const res = await fetch(`${this.cfg.pusherUrl}${this.adapter.endpoints.anonymLogin}`, {
+    const res = await this._fetch(`${this.cfg.pusherUrl}${this.adapter.endpoints.anonymLogin}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
@@ -172,7 +175,7 @@ export class WorkAdventureClient extends EventEmitter {
   // the avatar walks into a meeting / silent / megaphone zone. Best-effort:
   // a failure just leaves `this.areas` empty.
   async _loadAreas() {
-    const get = (u) => fetch(u, { signal: AbortSignal.timeout(8000) }).then((r) => r.json());
+    const get = (u) => this._fetch(u, { signal: AbortSignal.timeout(8000) }).then((r) => r.json());
     try {
       const mapInfo = await get(
         `${this.cfg.pusherUrl}${this.adapter.endpoints.map}?playUri=${encodeURIComponent(this.cfg.roomUrl)}`
@@ -259,7 +262,7 @@ export class WorkAdventureClient extends EventEmitter {
     const url = this._wsUrl();
     this.emit("log", `connecting ${url}`);
     // The JWT is smuggled as the WebSocket subprotocol (see IoSocketController).
-    this.ws = new WebSocket(url, [this.token], {
+    this.ws = new this._WebSocket(url, [this.token], {
       headers: { Origin: "https://play.workadventu.re" },
     });
 

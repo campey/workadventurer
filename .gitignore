@@ -34,3 +34,7 @@ test/fixtures/stt-real/
 
 # STT worker sockets (per daemon pid, #57)
 .wa-stt.*sock
+
+# World-port recordings: raw traffic holds other people's names and chat; only redacted ones may be committed
+world-port/recordings/*
+!world-port/recordings/redacted/
