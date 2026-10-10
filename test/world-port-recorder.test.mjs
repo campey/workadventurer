@@ -65,3 +65,27 @@ test("save writes jsonl under world-port/recordings", () => {
     assert.deepEqual(JSON.parse(readFileSync(p, "utf8").trim()), { t: 0, port: "ws", dir: "in" });
   } finally { rmSync(p, { force: true }); }
 });
+
+test("redact drops real recorded ws frames (names/chat inside protobuf bytes)", () => {
+  class InnerWS {
+    constructor() { this.h = {}; }
+    on(ev, fn) { this.h[ev] = fn; return this; }
+    send() {}
+  }
+  const sink = [];
+  const { WebSocketImpl } = record({ fetch: async () => ({}), WebSocketImpl: InnerWS }, sink);
+  const ws = new WebSocketImpl("wss://p.test/ws/room");
+  let frame = Buffer.concat([Buffer.from([10, 3]), Buffer.from("Ana"), Buffer.from([18, 11]), Buffer.from("hello there")]);
+  ws.on("message", () => {});
+  ws.h.message(frame);
+  const out = JSON.stringify(redact(sink));
+  for (const s of ["Ana", "hello there", Buffer.from("Ana").toString("base64"), Buffer.from("hello there").toString("base64"), frame.toString("base64")]) {
+    assert.ok(!out.includes(s), `leaked ${s}`);
+  }
+  assert.ok(out.includes(`"length":${frame.length}`));
+});
+
+test("redact ignores 1-2 character names when collecting secrets", () => {
+  const e = [{ t: 0, port: "http", dir: "in", url: "https://p.test/map?x=abc", decoded: { name: "a" } }];
+  assert.equal(redact(e)[0].url, "https://p.test/map?x=abc");
+});

@@ -10,7 +10,7 @@ const info = (p) => ({ userId: p.userId, name: p.name ?? "", x: p.x, y: p.y });
 
 export class LiveWorld extends EventEmitter {
   /** recordTo: array sink for recorded traffic; with RECORD=1 and no sink, saved on close(). */
-  constructor({ roomUrl, name, versionHash = null, recordTo = null }) {
+  constructor({ roomUrl, name, versionHash = null, recordTo = null, fetch = globalThis.fetch, WebSocketImpl = WebSocket }) {
     super();
     this.name = name;
     this.closed = false;
@@ -18,13 +18,14 @@ export class LiveWorld extends EventEmitter {
     this._sink = recordTo ?? (process.env.RECORD === "1" ? [] : null);
     this._saveOnClose = recordTo == null && this._sink != null;
     const seam = this._sink
-      ? record({ fetch: globalThis.fetch, WebSocketImpl: WebSocket }, this._sink)
+      ? record({ fetch, WebSocketImpl }, this._sink)
       : {};
     this.client = new WorkAdventureClient({
       roomUrl,
       name,
       ...(versionHash ? { version: versionHash } : {}),
-      ...(seam.fetch ? { fetch: seam.fetch, WebSocketImpl: seam.WebSocketImpl } : {}),
+      fetch: seam.fetch ?? fetch,
+      WebSocketImpl: seam.WebSocketImpl ?? WebSocketImpl,
     });
     this._wire();
   }
@@ -62,8 +63,11 @@ export class LiveWorld extends EventEmitter {
   close() {
     if (this.closed) return;
     this.closed = true;
-    this.client.close();
-    if (this._saveOnClose) save(this._sink, this.name);
+    try {
+      this.client.close();
+    } finally {
+      if (this._saveOnClose) this.recordingPath = save(this._sink, this.name);
+    }
   }
 
   self() {

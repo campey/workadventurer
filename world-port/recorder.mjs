@@ -63,7 +63,7 @@ function collectSecrets(node, out) {
   if (Array.isArray(node)) node.forEach((n) => collectSecrets(n, out));
   else if (node && typeof node === "object") {
     for (const [k, v] of Object.entries(node)) {
-      if (SENSITIVE_KEYS.has(k) && typeof v === "string" && v) out.add(v);
+      if (SENSITIVE_KEYS.has(k) && typeof v === "string" && v.length >= 3) out.add(v); // short values would mangle everything
       else collectSecrets(v, out);
     }
   }
@@ -103,7 +103,11 @@ export function redact(entries) {
   return entries.map((e) => {
     const { bytes, decoded, ...rest } = e;
     const out = walk(rest);
-    if (bytes != null) out.bytes = scrubBytes(bytes);
+    // ws frames are protobuf: names/chat sit in the bytes, so drop them and keep the length.
+    if (e.port === "ws" && bytes != null) {
+      out.bytes = "<redacted>";
+      out.length = Buffer.from(bytes, "base64").length;
+    } else if (bytes != null) out.bytes = scrubBytes(bytes);
     if (decoded !== undefined) out.decoded = walk(decoded);
     return out;
   });
