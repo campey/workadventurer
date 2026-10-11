@@ -24,7 +24,10 @@ Then("avatar {word} sees avatar {word} arrive", async function (viewer, subject)
 When("avatar {word} walks {int} px east", async function (r, px) {
   const b = await this.avatar(role(r));
   const { x, y } = b.self();
-  const p = b.openSpotNear(x + px, y);
+  let p = b.openSpotNear(x + px, y);
+  // East of the spawn is the Fire Pit: from the eastern half of the start area the nearest open spot
+  // outside it is no move at all (the spawn is random). Then the walk goes the other way.
+  if (Math.hypot(p.x - x, p.y - y) <= ARRIVED_PX) p = b.openSpotNear(x - px, y);
   assert.ok(Math.hypot(p.x - x, p.y - y) > ARRIVED_PX, `(${p.x},${p.y}) is no move from (${x},${y})`);
   this.walkedTo = { name: nameOf(r), x: p.x, y: p.y };
   await b.moveTo(p.x, p.y);

@@ -31,9 +31,12 @@ When("avatar {word} walks next to avatar {word}", async function (walker, target
 
 // scenario: presence:Walking next to another avatar puts both in the same meeting
 Then("avatars {word} and {word} are in the same meeting", async function (r1, r2) {
+  // A walk can cross a meeting area on the way (a browser joins it at once, wa-1.34): that is not the
+  // proximity meeting we are after, so area meetings are skipped.
+  const areaSpaces = new Set((this.facts?.meetingAreas ?? []).map((a) => a.space ?? a.name));
   const joins = [];
   for (const r of [role(r1), role(r2)]) {
-    joins.push(await this.observe(r, "meetingJoined", () => true, { since: this.mark?.[r] ?? 0 }));
+    joins.push(await this.observe(r, "meetingJoined", (p) => !areaSpaces.has(p.spaceName), { since: this.mark?.[r] ?? 0 }));
   }
   assert.ok(joins[0].spaceName, "meetingJoined carried no spaceName");
   assert.equal(joins[0].spaceName, joins[1].spaceName);
