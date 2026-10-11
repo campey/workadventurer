@@ -619,6 +619,16 @@ worked, in order:
    on the newest release.
 5. `node bin/wa.mjs selfcheck --target production` against the live server.
 
+**Patch releases move the hash too (v1.34.0 → v1.34.1, 2026-10-11).** The hash covers
+`messages.proto` *and* `libs/messages/src/JsonMessages/*`; 1.34.1 changed only the analytics
+JSON files, so `messages.proto` was byte-identical but the hash went `23c8eb8c` → `b82fc568` and
+prod answered the old one with `NEW_VERSION`. Same-minor fix: add the new hash to the front of
+the adapter's `apiVersionHashes`, bump `releaseTag`, refresh `proto/<name>/SOURCE`, run `selfcheck`
+(no new adapter needed when the proto diff is empty). To compute the hash from a checkout (the
+GitHub API can be blocked, a shallow `git clone --depth 1 --branch vX.Y.Z` works): from `messages/`,
+`sha1sum protos/messages.proto ../libs/messages/src/JsonMessages/* | sha1sum | cut -c1-8`
+(paths must be relative to `messages/`, or the result is wrong).
+
 **What this process cannot see:** a behaviour change behind an unchanged message
 shape. The adapter's `verified` record states what was exercised live and what
 wasn't; treat `unexercised` as inherited on faith.

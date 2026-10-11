@@ -23,7 +23,7 @@ export default {
   id: "wa-1.34",
   waVersion: "1.34",
   stability: "frozen",
-  releaseTag: "v1.34.0",
+  releaseTag: "v1.34.1",
   verifiedDate: "2026-10-05",
   verified: {
     // Live against play.workadventu.re (several daemons over a few hours, incl.
@@ -62,6 +62,8 @@ export default {
   // 420-520 px/s (12 windows from one stretch: low confidence, median about 460). Speed is client-side;
   // the server doesn't enforce it. Used by walkTo/navTo `pace: "walk" | "run"` (step = speed * 100 ms).
   movement: { walkPxPerS: 180, runPxPerS: 460 },
-  apiVersionHashes: ["23c8eb8c"], // v1.34.0
+  // v1.34.1 (prod from 2026-10-11) first, then v1.34.0. messages.proto is byte-identical between them; only
+  // libs/messages JsonMessages (analytics) changed, which moves the hash but not the wire.
+  apiVersionHashes: ["b82fc568", "23c8eb8c"],
   protoPath: "proto/wa-1.34/messages.proto",
 };
