@@ -130,8 +130,14 @@ export function analyseVoice(events) {
     laps.push({
       lap: s.lap,
       spaceJoinMs: d(first((e) => e.kind === "own" && e.who === "A" && e.what === "joined space" && /fire-pit/.test(e.spaceName ?? ""))),
+      strategy: first((e) => e.kind === "lkOwn" && e.who === "A" && e.what === "strategy")?.detail ?? null,
+      signalMs: d(first((e) => e.kind === "lkOwn" && e.who === "A" && /^signal /.test(e.what))),
+      signal: first((e) => e.kind === "lkOwn" && e.who === "A" && /^signal /.test(e.what))?.what ?? null,
       invitationMs: d(first((e) => e.kind === "lkOwn" && e.who === "A" && e.what === "invitation")),
-      connectedMs: d(first((e) => e.kind === "lkOwn" && e.who === "A" && e.what === "connected+publishing")),
+      iceMs: Object.fromEntries(events.filter((e) => inLap(e) && e.kind === "lkOwn" && e.who === "A" && /^ice /.test(e.what)).map((e) => [e.what, e.t - enter.t])),
+      connectedMs: d(first((e) => e.kind === "lkOwn" && e.who === "A" && (e.what === "connected+publishing" || e.what === "p2p connected"))),
+      transport: first((e) => e.kind === "lkOwn" && e.who === "A" && (e.what === "connected+publishing" || e.what === "p2p connected"))?.what ?? null,
+      errors: events.filter((e) => inLap(e) && e.kind === "lkOwn" && e.who === "A" && e.what === "error").map((e) => e.detail),
       bSawParticipantMs: d(first((e) => e.kind === "lkRoom" && e.what === "participantConnected" && e.name === "wa-probe-a")),
       bSawTrackMs: d(first((e) => e.kind === "lkRoom" && e.what === "trackPublished" && e.name === "wa-probe-a")),
     });
@@ -221,11 +227,19 @@ export default {
       return subB(sub);
     };
     if (voice) {
-      for (const [w, tag] of [[A, "A"], [B, "B"]]) w.audio.on("log", (m) => {
-        if (/^LiveKit invitation/.test(m)) rec({ kind: "lkOwn", who: tag, what: "invitation" }, `${tag} got the LiveKit invitation`);
-        else if (/^LiveKit connected/.test(m)) rec({ kind: "lkOwn", who: tag, what: "connected+publishing" }, `${tag} LiveKit connected and publishing`);
-        else if (/^LiveKit disconnected/.test(m)) rec({ kind: "lkOwn", who: tag, what: "disconnected" }, `${tag} LiveKit disconnected`);
-      });
+      for (const [w, tag] of [[A, "A"], [B, "B"]]) {
+        w.audio.on("log", (m) => {
+          let x;
+          if (/^LiveKit invitation/.test(m)) rec({ kind: "lkOwn", who: tag, what: "invitation" }, `${tag} got the LiveKit invitation`);
+          else if (/^LiveKit connected/.test(m)) rec({ kind: "lkOwn", who: tag, what: "connected+publishing" }, `${tag} LiveKit connected and publishing`);
+          else if (/^LiveKit disconnected/.test(m)) rec({ kind: "lkOwn", who: tag, what: "disconnected" }, `${tag} LiveKit disconnected`);
+          else if (/^meeting strategy/.test(m)) rec({ kind: "lkOwn", who: tag, what: "strategy", detail: m }, `${tag} ${m}`);
+          else if ((x = /\] pc (\w+)$/.exec(m))) rec({ kind: "lkOwn", who: tag, what: `p2p ${x[1]}` }, `${tag} peer connection ${x[1]}`);
+          else if ((x = /\] ice (\w+)$/.exec(m))) rec({ kind: "lkOwn", who: tag, what: `ice ${x[1]}` }, `${tag} ice ${x[1]}`);
+          else if (/webRtcStart failed|LiveKit connect failed|failed/i.test(m)) rec({ kind: "lkOwn", who: tag, what: "error", detail: m.slice(0, 160) }, `${tag} audio: ${m.slice(0, 120)}`);
+        });
+        w.on("voiceSignal", (v) => rec({ kind: "lkOwn", who: tag, what: `signal ${v.kind}` }, `${tag} voice signal: ${v.kind}`));
+      }
     }
     for (const [w, tag] of [[A, "A"], [B, "B"]]) {
       const c = w.client;
@@ -282,12 +296,12 @@ export default {
         rec({ kind: "lap", lap, what: "start" });
         await ca.navTo(east.x, east.y, { stopWithin: 16, timeoutMs: 60000, pace: "walk" });
         const t0 = Date.now();
-        while (Date.now() - t0 < 30000 && !A.audio?._livekit) await sleep(100);
-        rec({ kind: "lap", lap, what: A.audio?._livekit ? "connected" : "no livekit within 30 s" }, `lap ${lap}: ${A.audio?._livekit ? "audio connected" : "NO audio within 30 s"}`);
+        while (Date.now() - t0 < 30000 && !A.audio?.connected) await sleep(100);
+        rec({ kind: "lap", lap, what: A.audio?.connected ? "connected" : "no audio within 30 s" }, `lap ${lap}: ${A.audio?.connected ? "audio connected" : "NO audio within 30 s"}`);
         await sleep(3000);
         await ca.navTo(spotA.x, spotA.y, { stopWithin: 16, timeoutMs: 60000, pace: "walk" });
         const t1 = Date.now();
-        while (Date.now() - t1 < 15000 && (A.audio?._livekit || [...ca.spaces.keys()].some((x) => /fire-pit/.test(x)))) await sleep(100);
+        while (Date.now() - t1 < 15000 && (A.audio?.connected || [...ca.spaces.keys()].some((x) => /fire-pit/.test(x)))) await sleep(100);
         await sleep(3000);
       }
       rec({ kind: "phase", what: "humans" }, "phase 2: your turn: loop Fire Pit -> our avatar -> other player");
