@@ -57,6 +57,8 @@ correcting the note.
   pathfinding, collision or spawn logic of its own. It reads the world facts
   (start area, which landmarks are solid) and answers from them. If it
   computed them, the fake and the scenario could agree on a wrong answer.
+  (Live, pathfinding stays in the client over a grid the adapter supplies; the
+  reasoning is in the design spec, "Where pathfinding lives, and why".)
 - **Facts need `confirmedBy`.** An entry goes into `world-port/worlds/*.json`
   only with `"confirmedBy": "<who>, <how>, <date>"` (e.g. `campey, browser,
   2026-10-12`): a person saw the browser agree with the probe. A fact a live
