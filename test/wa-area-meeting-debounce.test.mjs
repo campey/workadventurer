@@ -181,3 +181,77 @@ test("availability: a server-initiated leave sends ONLINE", async () => {
   await c._leaveSpace("space-m1"); // leaveSpaceRequestMessage
   assert.deepEqual(sent.filter((m) => m.setPlayerDetailsMessage), [status(LIVEKIT), status(ONLINE)]);
 });
+
+// wa-1.34: a browser flips LIVEKIT and joins the meeting space the instant it enters a meeting area,
+// and ONLINE as it leaves; no dwell, no linger (probe observe-humans, 2026-10-11). The timing is adapter
+// data: meeting.areaDwellMs / areaLingerMs. Without them the client keeps 1500 / 2500.
+const NO_DEBOUNCE = { areaAvailabilityStatus: LIVEKIT, areaDwellMs: 0, areaLingerMs: 0 };
+
+test("0/0: entering joins at once and sends LIVEKIT when the join completes", async () => {
+  const { joins, sent, enter } = harness({ meeting: NO_DEBOUNCE });
+  enter();
+  assert.deepEqual(joins, ["space-m1"], "joined synchronously, no timer");
+  await sleep(10);
+  assert.deepEqual(sent, [status(LIVEKIT)]);
+});
+
+test("0/0: leaving leaves at once and sends ONLINE", async () => {
+  const { leaves, sent, enter, leave } = harness({ meeting: NO_DEBOUNCE });
+  enter();
+  await sleep(10);
+  leave();
+  assert.deepEqual(leaves, ["space-m1"], "left synchronously, no timer");
+  await sleep(10);
+  assert.deepEqual(sent, [status(LIVEKIT), status(ONLINE)]);
+});
+
+test("0/0: enter and leave inside one tick joins, leaves cleanly and ends ONLINE", async () => {
+  const { c, joins, leaves, sent, enter, leave } = harness({ meeting: NO_DEBOUNCE });
+  enter();
+  leave(); // join still in flight
+  await sleep(50);
+  assert.deepEqual(joins, ["space-m1"]);
+  assert.deepEqual(leaves, ["space-m1"], "the stray space is left");
+  assert.ok(!c.spaces.has("space-m1"));
+  const last = sent.at(-1)?.setPlayerDetailsMessage.availabilityStatus;
+  assert.ok(last === undefined || last === ONLINE, `must not end LIVEKIT, got ${last}`);
+});
+
+test("0/0: leaving while the join query is in flight sends no LIVEKIT and leaves the space", async () => {
+  const { c, leaves, sent, enter, leave } = harness({ meeting: NO_DEBOUNCE });
+  let finish;
+  c._joinSpace = () => new Promise((res) => { finish = () => { c.spaces.set("space-m1", { spaceUserId: "x" }); res(); }; });
+  enter();
+  leave();
+  finish();
+  await sleep(50);
+  assert.deepEqual(sent, []);
+  assert.deepEqual(leaves, ["space-m1"]);
+});
+
+test("0/0: a repeat enter while joined does not join twice", async () => {
+  const { joins, enter } = harness({ meeting: NO_DEBOUNCE });
+  enter();
+  await sleep(10);
+  enter();
+  assert.deepEqual(joins, ["space-m1"]);
+});
+
+test("explicit 1500/2500 debounces exactly like no values", async () => {
+  const { joins, enter, leave } = harness({ meeting: { areaDwellMs: 1500, areaLingerMs: 2500 } });
+  enter();
+  await sleep(400);
+  assert.deepEqual(joins, []);
+  leave();
+  await sleep(1500);
+  assert.deepEqual(joins, []);
+});
+
+test("wa-1.33 carries the explicit debounce values; wa-1.34 turns them off", async () => {
+  const { default: a133 } = await import("../src/adapters/wa-1.33.mjs");
+  const { default: a134 } = await import("../src/adapters/wa-1.34.mjs");
+  assert.deepEqual(a133.meeting, { webrtcStrategyName: "WEBRTC", livekitStrategyName: "LIVEKIT", areaDwellMs: 1500, areaLingerMs: 2500 });
+  assert.equal(a134.meeting.areaDwellMs, 0);
+  assert.equal(a134.meeting.areaLingerMs, 0);
+  assert.equal(a134.meeting.areaAvailabilityStatus, 11);
+});
