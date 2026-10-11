@@ -210,8 +210,9 @@ export class WorkAdventureClient extends EventEmitter {
     if (!this.areas.length) return;
     try {
       const now = new Set();
+      for (const a of this.areasAt()) now.add(a.id ?? a.name);
+      this._areasNow = now; // read by _handleAreaMeeting for overlapping rectangles
       for (const a of this.areasAt()) {
-        now.add(a.id ?? a.name);
         if (!this.currentAreas.has(a.id ?? a.name)) {
           this.emit("areaEnter", a);
           this._handleAreaMeeting(a, true);
@@ -225,6 +226,7 @@ export class WorkAdventureClient extends EventEmitter {
         }
       }
       this.currentAreas = now;
+      this._areasNow = null;
     } catch (e) {
       this.emit("log", `area update error: ${e.message}`);
     }
@@ -423,10 +425,11 @@ export class WorkAdventureClient extends EventEmitter {
   // space — the server never invites a headless client to an area meeting the
   // way it does for proximity bubbles.
   //
-  // Debounced: only join after DWELL_MS continuously inside (so *walking through*
-  // a meeting area — common on area-dense maps — doesn't spin a WebRTC peer up
-  // and straight back down), and linger LINGER_MS after leaving before tearing
-  // it down. Rapid join/leave churn here OOMs the daemon and floods the browser.
+  // Dwell and linger are adapter data (`meeting.areaDwellMs` / `areaLingerMs`). wa-1.33 debounces
+  // (join after 1500 ms inside, leave 2500 ms after exiting) because rapid join/leave churn OOMs the
+  // daemon and floods the browser. wa-1.34 sets 0 / 0, as a real browser does, and instead enforces
+  // REJOIN_COOLDOWN_MS between a leave and the next join of the same space, which caps the churn from
+  // an avatar crossing an area edge back and forth.
   _handleAreaMeeting(area, entering) {
     const prop = (area.rawProps ?? []).find((p) => p.type === "livekitRoomProperty");
     if (!prop) return;
@@ -436,6 +439,7 @@ export class WorkAdventureClient extends EventEmitter {
     // joins and leaves at once (probe observe-humans, 2026-10-11). 0 means no timer at all.
     const DWELL_MS = this.adapter.meeting?.areaDwellMs ?? 1500;
     const LINGER_MS = this.adapter.meeting?.areaLingerMs ?? 2500;
+    const REJOIN_COOLDOWN_MS = 250;
     this._meetingTimers ??= new Map(); // spaceName -> { join?, leave? }
     const t = this._meetingTimers.get(spaceName) ?? {};
     this._meetingTimers.set(spaceName, t);
@@ -462,12 +466,27 @@ export class WorkAdventureClient extends EventEmitter {
     if (entering) {
       if (t.leave) { clearTimeout(t.leave); t.leave = null; } // was leaving, stay
       if (this.spaces.has(spaceName) || t.join || t.joining) return;
-      if (DWELL_MS <= 0) return doJoin(true);
+      if (DWELL_MS <= 0) {
+        const wait = REJOIN_COOLDOWN_MS - (Date.now() - (t.leftAt ?? -Infinity));
+        if (wait <= 0) return doJoin(true);
+        t.join = setTimeout(() => doJoin(), wait);
+        return;
+      }
       t.join = setTimeout(() => doJoin(), DWELL_MS);
     } else {
       if (t.join) { clearTimeout(t.join); t.join = null; return; } // left before we joined
       if (!this.spaces.has(spaceName) || t.leave) return;
-      if (LINGER_MS <= 0) return void this._leaveSpace(spaceName);
+      if (LINGER_MS <= 0) {
+        // Another area we are still in may share this meeting room (adjacent rectangles).
+        const stay = [...(this._areasNow ?? [])].some((k) => {
+          const z = this.areas.find((q) => (q.id ?? q.name) === k);
+          const pr = (z?.rawProps ?? []).find((p) => p.type === "livekitRoomProperty");
+          return pr && this._areaSpaceName(pr) === spaceName;
+        });
+        if (stay) return;
+        t.leftAt = Date.now();
+        return void this._leaveSpace(spaceName);
+      }
       t.leave = setTimeout(() => {
         t.leave = null;
         if (this.currentAreas.has(key)) return; // walked back in

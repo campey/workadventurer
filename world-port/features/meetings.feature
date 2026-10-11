@@ -30,7 +30,7 @@ Feature: Area meetings
       | world               | area     |
       | afrolabs open space | Fire Pit |
 
-  # source: probe observe-humans, 2026-10-11 (real browsers flip LIVEKIT and join on entering a meeting area, ONLINE on leaving, even for a graze: no dwell, no linger)
+  # source: probe observe-humans, 2026-10-11 (real browsers flip LIVEKIT and join on entering a meeting area, ONLINE on leaving: no dwell, no linger)
   @needs-meeting-area
   Scenario Outline: A quick pass through a meeting area joins and leaves its meeting
     Given the world "<world>"

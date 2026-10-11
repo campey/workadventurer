@@ -1,6 +1,6 @@
-// Walking *through* a livekitRoomProperty area must not spin a meeting space
-// up and back down — that churn OOMs the daemon and floods peers. Only a real
-// dwell joins; a brief exit lingers before tearing down.
+// wa-1.33 values (1500 / 2500): walking *through* a livekitRoomProperty area must not spin a meeting
+// space up and back down — that churn OOMs the daemon and floods peers. Only a real dwell joins; a
+// brief exit lingers before tearing down. wa-1.34 (0 / 0) joins at once but has a rejoin cooldown.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -277,4 +277,15 @@ test("0/0: joins when called from _updateAreas, which assigns currentAreas only 
   await sleep(50);
   assert.ok(!c.spaces.has("space-m1"));
   assert.equal(sent.at(-1).setPlayerDetailsMessage.availabilityStatus, ONLINE);
+});
+
+test("0/0: re-entering within the rejoin cooldown waits instead of joining at once", async () => {
+  const { joins, leaves, enter, leave } = harness({ meeting: { areaDwellMs: 0, areaLingerMs: 0 } });
+  enter(); await sleep(20);
+  leave(); await sleep(5);
+  enter();
+  assert.equal(joins.length, 1, "no immediate second join");
+  await sleep(350);
+  assert.equal(joins.length, 2, "joined once the cooldown passed");
+  assert.equal(leaves.length, 1);
 });

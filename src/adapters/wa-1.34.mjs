@@ -56,7 +56,7 @@ export default {
   // No dwell, no linger: probe `observe-humans` (2026-10-11, two real browser players, 12 min) saw the
   // browser flip LIVEKIT and join the meeting space at the same instant it enters the area (118-336 ms
   // before the first relayed position inside; 6/6), and flip ONLINE within 0-183 ms of the first position
-  // outside, space leave first or together; even a graze flips both. wa-1.33 keeps 1500 / 2500.
+  // outside, space leave first or together; the status flips even on a graze. wa-1.33 keeps 1500 / 2500.
   meeting: { ...wa133.meeting, areaAvailabilityStatus: 11, areaDwellMs: 0, areaLingerMs: 0 },
   // observe-humans 2026-10-11: walking median 181 px/s (steady laps 173-183), running (shift) about
   // 420-520 px/s (12 windows from one stretch: low confidence, median about 460). Speed is client-side;

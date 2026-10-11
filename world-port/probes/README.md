@@ -52,10 +52,14 @@ sample, roughly 36 px at walking speed. Times are the observer's receive times, 
 | what | real browser clients | our client today |
 |---|---|---|
 | status when entering a meeting area | `LIVEKIT` **at the moment of entry**: 5/5 for player 1 (118 to 336 ms before the first relayed position inside our rectangle) and 1/1 for player 2 (187 ms before) | `LIVEKIT` only after a **1.5 s dwell** plus the join (about 1.6 s); wa-1.34 now joins at once (dwell 0) |
-| meeting-space join | **same instant** as the status flip (within 1 to 2 ms), and the browser's own `currentPlace` = "Fire Pit" marker arrives with them | after the dwell, with the status |
-| status when leaving | `ONLINE` within 0 to 183 ms of the first relayed position outside our rectangle; the space leave comes first or together (0 to 200 ms earlier) | `ONLINE` after a **2.5 s linger** |
-| quick pass-through of another meeting area ("Blue table") | status `LIVEKIT` then `ONLINE` after **0.8 s**, **1.1 s**, and **under 0.1 s** (a corner graze): the browser flips even for a graze; whether it also joined that table's space was not observable | nothing (shorter than the dwell) |
-| speed | **median 181 px/s** (1 s windows: p90 221, max 521); player 2: median 193, p90 201 | `navTo` steps 40 px per 100 ms = **400 px/s**, 2.2 times faster |
+| meeting-space join | **same instant** as the status flip (within 1 to 2 ms), and the browser's own `currentPlace` = "Fire Pit" marker arrives with them | wa-1.34: at once, with the status (wa-1.33: after the dwell) |
+| status when leaving | `ONLINE` within 0 to 183 ms of the first relayed position outside our rectangle; the space leave comes first or together (0 to 200 ms earlier) | wa-1.34: `ONLINE` at once (wa-1.33: after a 2.5 s linger); rejoin cooldown 250 ms |
+| quick pass-through of another meeting area ("Blue table") | status `LIVEKIT` then `ONLINE` after **0.8 s**, **1.1 s**, and **under 0.1 s** (a corner graze): the browser flips even for a graze; whether it also joined that table's space was not observable | wa-1.34: joins and leaves (wa-1.33: nothing, shorter than the dwell) |
+| speed | **median 181 px/s** (1 s windows: p90 221, max 521); player 2: median 193, p90 201 | `navTo` steps 40 px per 100 ms = **400 px/s** unless `pace` is given (`walk` 180, `run` 460 on wa-1.34), 2.2 times faster |
+
+Speed detail (observe-humans, 2026-10-11): steady walking laps 173 to 183 px/s; running (shift held) 420 to 520 px/s over 12 one-second windows from a single stretch, median about 460 (low confidence).
+
+Live whole-suite after dropping dwell/linger: 24 scenarios, 21 passed, 3 skipped, 0 failed, 2m15s (was about 7m40s).
 | position update rate | about 5 per second | one per 100 ms while walking |
 
 Geometry: when a browser's `LIVEKIT` flip arrived, the last relayed position was 28 to 61 px outside our Fire Pit
