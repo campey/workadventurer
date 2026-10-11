@@ -3,7 +3,7 @@
 // their status flips and when their position enters the area, how fast they
 // move, and where they are when the browser decides they've entered or left.
 //
-//   OBSERVE_MINUTES=12 node world-port/probes/run.mjs observe-humans --world "afrolabs open space"
+//   OBSERVE_MINUTES=12 [OBSERVE_VOICE=0] node world-port/probes/run.mjs observe-humans --world "afrolabs open space"
 //   node world-port/probes/observe-humans.mjs --analyse world-port/recordings/observe-humans-<time>.jsonl
 //
 // Two of our avatars:
@@ -14,6 +14,10 @@
 //     proximity groups and emotes for every non-probe player in view.
 // The people just walk around (e.g. Fire Pit -> our avatar -> another player -> Fire Pit);
 // they can mark moments with emotes: 👍 = "I heard a chime now", 😂 = "that looked wrong".
+// With audio on (default; OBSERVE_VOICE=0 turns it off) both avatars run the audio stack, and
+// phase 1 has wa-probe-a walk into the Fire Pit three times so its own join can be timed (space join ->
+// LiveKit invitation -> connected and publishing) and, from wa-probe-b's LiveKit room, when each real
+// player appears in the room and publishes a track (the browser's own audio-join time).
 // Stops after OBSERVE_MINUTES (default 10) or on SIGTERM/SIGINT.
 //
 // The raw log (JSONL) names real players, so it goes to the git-ignored
@@ -111,6 +115,35 @@ export function analyse(events, pit) {
   return out;
 }
 
+/** Audio-join timings: our avatar's laps (enter -> space join -> LiveKit invitation -> connected) and each real player's
+ *  space join -> LiveKit participant connected -> track published, as seen by wa-probe-b sitting in the meeting. */
+export function analyseVoice(events) {
+  const laps = [], humans = {};
+  const starts = events.filter((e) => e.kind === "lap" && e.what === "start");
+  for (const s of starts) {
+    const next = starts.find((x) => x.lap === s.lap + 1);
+    const inLap = (e) => e.t >= s.t && (!next || e.t < next.t);
+    const first = (pred) => events.find((e) => inLap(e) && pred(e));
+    const enter = first((e) => e.kind === "own" && e.who === "A" && e.what === "entered the area");
+    if (!enter) { laps.push({ lap: s.lap, note: "never entered" }); continue; }
+    const d = (e) => (e ? e.t - enter.t : null);
+    laps.push({
+      lap: s.lap,
+      spaceJoinMs: d(first((e) => e.kind === "own" && e.who === "A" && e.what === "joined space" && /fire-pit/.test(e.spaceName ?? ""))),
+      invitationMs: d(first((e) => e.kind === "lkOwn" && e.who === "A" && e.what === "invitation")),
+      connectedMs: d(first((e) => e.kind === "lkOwn" && e.who === "A" && e.what === "connected+publishing")),
+      bSawParticipantMs: d(first((e) => e.kind === "lkRoom" && e.what === "participantConnected" && e.name === "wa-probe-a")),
+      bSawTrackMs: d(first((e) => e.kind === "lkRoom" && e.what === "trackPublished" && e.name === "wa-probe-a")),
+    });
+  }
+  for (const add of events.filter((e) => e.kind === "spaceAdd" && !e.initial && !isProbe(e.name) && /fire-pit/.test(e.spaceName ?? ""))) {
+    const near = (what) => events.find((e) => e.kind === "lkRoom" && e.what === what && e.name === add.name && e.t >= add.t - 2000 && e.t <= add.t + 60000);
+    const part = near("participantConnected"), track = near("trackPublished");
+    (humans[add.name] ??= []).push({ spaceJoinT: add.t, participantMs: part ? part.t - add.t : null, trackMs: track ? track.t - add.t : null });
+  }
+  return { ours: laps, humans };
+}
+
 export default {
   question: "How do real browser players behave around a meeting area: when do they join the meeting space relative to their status flip and position, how fast do they move, and where are they when the browser decides they've entered or left?",
   world: "afrolabs open space",
@@ -133,6 +166,9 @@ export default {
     const nameOf = (uid, c) => names.get(uid) ?? c?.players?.get(uid)?.name ?? `user${uid}`;
 
     await A.connect(); await B.connect();
+    const voice = process.env.OBSERVE_VOICE !== "0";
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    if (voice) { await A.enableVoice(); await B.enableVoice(); }
     const ca = A.client, cb = B.client;
     const pit = (ca.areas ?? []).find((z) => /fire\s*pit/i.test(z.name));
     if (!pit) throw new Error("inconclusive: no Fire Pit area in this world");
@@ -184,8 +220,17 @@ export default {
       if (r) { const n = spaceUsers.get(r.spaceUserId) ?? r.spaceUserId; if (!isProbe(n)) rec({ kind: "spaceRemove", by: "B", spaceName: r.spaceName, name: n }, `SPACE ${n} LEFT ${r.spaceName}`); }
       return subB(sub);
     };
+    if (voice) {
+      for (const [w, tag] of [[A, "A"], [B, "B"]]) w.audio.on("log", (m) => {
+        if (/^LiveKit invitation/.test(m)) rec({ kind: "lkOwn", who: tag, what: "invitation" }, `${tag} got the LiveKit invitation`);
+        else if (/^LiveKit connected/.test(m)) rec({ kind: "lkOwn", who: tag, what: "connected+publishing" }, `${tag} LiveKit connected and publishing`);
+        else if (/^LiveKit disconnected/.test(m)) rec({ kind: "lkOwn", who: tag, what: "disconnected" }, `${tag} LiveKit disconnected`);
+      });
+    }
     for (const [w, tag] of [[A, "A"], [B, "B"]]) {
       const c = w.client;
+      c.on("areaEnter", (a) => /fire\s*pit/i.test(a.name) && rec({ kind: "own", who: tag, what: "entered the area" }, `${tag} entered the ${a.name}`));
+      c.on("areaLeave", (a) => /fire\s*pit/i.test(a.name) && rec({ kind: "own", who: tag, what: "left the area" }, `${tag} left the ${a.name}`));
       c.on("spaceJoined", ({ spaceName }) => rec({ kind: "own", who: tag, what: "joined space", spaceName }, `${tag} joined space ${spaceName}`));
       c.on("spaceLeft", ({ spaceName }) => rec({ kind: "own", who: tag, what: "left space", spaceName }, `${tag} left space ${spaceName}`));
       c.on("bubbleEntered", () => rec({ kind: "own", who: tag, what: "bubble in" }, `${tag} entered a proximity bubble`));
@@ -197,6 +242,22 @@ export default {
     for (const p of ca.listPlayers()) {
       names.set(p.userId, p.name ?? "");
       if (!isProbe(p.name)) rec({ kind: "pos", uid: p.userId, name: p.name, x: p.x ?? 0, y: p.y ?? 0, moving: false, initial: true }, `already here: ${p.name}`);
+    }
+
+    let roomPoll = null;
+    if (voice) {
+      const { RoomEvent } = await import("@livekit/rtc-node");
+      const seen = new WeakSet();
+      const label = (p) => p?.name || "participant";
+      roomPoll = setInterval(() => {
+        const room = B.audio?._livekit?.room;
+        if (!room || seen.has(room)) return;
+        seen.add(room);
+        rec({ kind: "lkRoom", what: "B attached", already: [...room.remoteParticipants.values()].map(label) }, "B is in the LiveKit room");
+        room.on(RoomEvent.ParticipantConnected, (p) => rec({ kind: "lkRoom", what: "participantConnected", name: label(p) }, `LIVEKIT ${label(p)} connected to the room`));
+        room.on(RoomEvent.ParticipantDisconnected, (p) => rec({ kind: "lkRoom", what: "participantDisconnected", name: label(p) }, `LIVEKIT ${label(p)} left the room`));
+        room.on(RoomEvent.TrackPublished, (pub, p) => rec({ kind: "lkRoom", what: "trackPublished", name: label(p), source: String(pub?.source ?? "") }, `LIVEKIT ${label(p)} published a track`));
+      }, 100);
     }
 
     // Place B inside the Fire Pit (joins its meeting), A well outside every meeting area.
@@ -214,6 +275,23 @@ export default {
     await ca.navTo(spotA.x, spotA.y, { stopWithin: 16, timeoutMs: 45000 });
     rec({ kind: "setup", pit: rect, spotA, spotB: inB, meetingAreas: meetingRects.map((z) => z.name) }, `setup: A at ${spotA.x | 0},${spotA.y | 0} (outside), B at ${inB.x | 0},${inB.y | 0} (inside the ${rect.name})`);
 
+    if (voice) {
+      rec({ kind: "phase", what: "our laps" }, "phase 1: wa-probe-a walks into the Fire Pit 3 times with audio on. Stand in the Fire Pit to see/hear it");
+      const east = A.openSpotInside(rect.x + rect.w / 2, rect.y + 40, rect.w / 2 - 20, rect.h - 80);
+      for (let lap = 1; lap <= 3; lap++) {
+        rec({ kind: "lap", lap, what: "start" });
+        await ca.navTo(east.x, east.y, { stopWithin: 16, timeoutMs: 60000, pace: "walk" });
+        const t0 = Date.now();
+        while (Date.now() - t0 < 30000 && !A.audio?._livekit) await sleep(100);
+        rec({ kind: "lap", lap, what: A.audio?._livekit ? "connected" : "no livekit within 30 s" }, `lap ${lap}: ${A.audio?._livekit ? "audio connected" : "NO audio within 30 s"}`);
+        await sleep(3000);
+        await ca.navTo(spotA.x, spotA.y, { stopWithin: 16, timeoutMs: 60000, pace: "walk" });
+        const t1 = Date.now();
+        while (Date.now() - t1 < 15000 && (A.audio?._livekit || [...ca.spaces.keys()].some((x) => /fire-pit/.test(x)))) await sleep(100);
+        await sleep(3000);
+      }
+      rec({ kind: "phase", what: "humans" }, "phase 2: your turn: loop Fire Pit -> our avatar -> other player");
+    }
     let stop = false;
     const onStop = () => { stop = true; };
     process.on("SIGTERM", onStop); process.on("SIGINT", onStop);
@@ -223,15 +301,16 @@ export default {
     const ticker = setInterval(banner, 60000);
     const end = T0 + minutes * 60000;
     while (!stop && Date.now() < end) await new Promise((r) => setTimeout(r, 500));
-    clearInterval(ticker);
+    clearInterval(ticker); if (roomPoll) clearInterval(roomPoll);
     A.speechBubble("observer done, thanks!");
     await new Promise((r) => setTimeout(r, 1500));
     sink.end();
 
     const result = analyse(events, rect);
+    const voiceResult = voice ? analyseVoice(events) : null;
     if (!Object.keys(result).length) throw new Error("inconclusive: no other player was seen");
     return {
-      observed: { pit: rect, durationS: Math.round((Date.now() - T0) / 1000), rawLog: path.relative(process.cwd(), file), players: result },
+      observed: { pit: rect, durationS: Math.round((Date.now() - T0) / 1000), rawLog: path.relative(process.cwd(), file), players: result, voice: voiceResult },
       verdict: "new",
       note: "observation, no pass/fail: read the per-player timings (entry vs status flip vs space join, speeds, flip distances to the area edge)",
     };
