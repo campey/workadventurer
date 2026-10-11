@@ -155,3 +155,12 @@ start area") and the walls outline has no rows. Meeting areas come from the
   the two avatars within proximity range.
 - Full live run after these fixes: 23 scenarios, 3 skipped, 20 passed; 137 steps, 119
   passed, 18 skipped; 1m55s (`live3.txt`). Not yet re-watched by a person.
+
+## Audio join: our avatars vs a real browser (observe-humans, 2026-10-11, prod v1.34.1)
+
+Fire Pit meeting with two participants is a P2P WEBRTC call (`voice signal: webrtc`), not LiveKit.
+
+- **Our avatar with our avatar**: audio connected in 842 to 864 ms from entering the space (space join about 125 ms, signalling about 345 ms, ICE connected about 730 ms). 8 of 8 laps connected.
+- **Our avatar with a real browser player**: **0 of 12** peer connections ever reached `connected`. Each one signals within 0.1 s, then sits at `peer connection connecting` / `ice checking` until the browser leaves (about 8 s). No `ice failed` is logged: it just never completes.
+- So the test avatars aren't slow to join the audio stream, they don't join it at all when the other end is a browser. Likely cause (unverified): from this container the only ICE candidates are host/private ones, with no reachable UDP path or relay (TURN) to the browser, so connectivity checks never succeed; two avatars in the same container connect over host candidates. Next probes: log the candidates each side gathers; try with the server's TURN credentials if the join message supplies them.
+- Raw: `world-port/recordings/observe-humans-2026-10-11T20-40-33.514Z.jsonl` (git-ignored).
