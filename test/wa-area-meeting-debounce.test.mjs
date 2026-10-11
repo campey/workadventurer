@@ -255,3 +255,26 @@ test("wa-1.33 carries the explicit debounce values; wa-1.34 turns them off", asy
   assert.equal(a134.meeting.areaLingerMs, 0);
   assert.equal(a134.meeting.areaAvailabilityStatus, 11);
 });
+
+test("0/0: joins when called from _updateAreas, which assigns currentAreas only afterwards", async () => {
+  const { c, joins, leaves, sent } = harness({ meeting: NO_DEBOUNCE });
+  const area = { id: "A1", name: "Meeting", x: 0, y: 0, w: 100, h: 100, rawProps: [{ type: "livekitRoomProperty", id: "m1" }] };
+  c.areas = [area];
+  let inside = true;
+  c.areasAt = () => (inside ? [area] : []);
+  c._updateAreas(); // enter
+  await sleep(10);
+  assert.deepEqual(joins, ["space-m1"]);
+  assert.deepEqual(sent, [status(LIVEKIT)]);
+  inside = false;
+  c._updateAreas(); // leave
+  await sleep(10);
+  assert.deepEqual(leaves, ["space-m1"]);
+  assert.deepEqual(sent, [status(LIVEKIT), status(ONLINE)]);
+  // enter and leave in consecutive updates, join still in flight: ends left, ONLINE
+  inside = true; c._updateAreas();
+  inside = false; c._updateAreas();
+  await sleep(50);
+  assert.ok(!c.spaces.has("space-m1"));
+  assert.equal(sent.at(-1).setPlayerDetailsMessage.availabilityStatus, ONLINE);
+});

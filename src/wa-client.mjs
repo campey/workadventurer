@@ -440,9 +440,11 @@ export class WorkAdventureClient extends EventEmitter {
     const t = this._meetingTimers.get(spaceName) ?? {};
     this._meetingTimers.set(spaceName, t);
 
-    const doJoin = () => {
+    // `entering`: called straight from _updateAreas, which only assigns currentAreas after this returns,
+    // so the "still inside" check applies to the timer path only (the join's .then re-checks later).
+    const doJoin = (direct = false) => {
       t.join = null;
-      if (!this.currentAreas.has(key) || this.spaces.has(spaceName) || t.joining) return;
+      if ((!direct && !this.currentAreas.has(key)) || this.spaces.has(spaceName) || t.joining) return;
       this.emit("log", `meeting area "${area.name}" → joining space ${spaceName}`);
       t.joining = true;
       this._joinSpace(spaceName).then(
@@ -460,8 +462,8 @@ export class WorkAdventureClient extends EventEmitter {
     if (entering) {
       if (t.leave) { clearTimeout(t.leave); t.leave = null; } // was leaving, stay
       if (this.spaces.has(spaceName) || t.join || t.joining) return;
-      if (DWELL_MS <= 0) return doJoin();
-      t.join = setTimeout(doJoin, DWELL_MS);
+      if (DWELL_MS <= 0) return doJoin(true);
+      t.join = setTimeout(() => doJoin(), DWELL_MS);
     } else {
       if (t.join) { clearTimeout(t.join); t.join = null; return; } // left before we joined
       if (!this.spaces.has(spaceName) || t.leave) return;
