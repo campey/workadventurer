@@ -96,7 +96,7 @@ in-flight guard synchronously at function entry, before its own awaits, so
 two near-simultaneous calls (a prime racing a real clip, or two peers
 connecting a few ms apart) can't both slip past the guard and corrupt each
 other; and `_leaveSpace` clears any pending `micReannounceMs` timers so a
-fast leave→rejoin (routine with the area-meeting dwell/linger debounce)
+fast leave→rejoin (routine with the wa-1.33 area-meeting dwell/linger debounce)
 can't have a stale timer fire against a later membership.
 
 ---
@@ -365,10 +365,32 @@ through several — spinning a WebRTC peer up and straight back down per
 crossing. That churn balloons werift (800 MB+, 100 % CPU) and floods the
 browser with offer/answer negotiation (observed: Chrome crashed).
 
-**Debounced (PR #28):** join only after **1.5 s continuously inside** (a real
-dwell, not a walk-through), and linger **2.5 s** after leaving before tearing
-down. Timers keyed by space name, cleared on `close()`. Walking through is now
-a no-op; stopping in a meeting area still works.
+**Debounced (PR #28), now adapter data:** the client reads `adapter.meeting.areaDwellMs` /
+`areaLingerMs` (fallback 1500 / 2500). The frozen **wa-1.33** adapter keeps them explicitly:
+join only after **1.5 s continuously inside** (a real dwell, not a walk-through), and linger
+**2.5 s** after leaving before tearing down. Timers keyed by space name, cleared on `close()`.
+
+**What a real browser does (probe `observe-humans`, 2026-10-11, two real players, 12 min):**
+no dwell and no linger. It flips `LIVEKIT` and joins the meeting space at the same instant it
+enters the area (118 to 336 ms before the first relayed position inside the rectangle; 6/6
+entries), and sends `ONLINE` within 0 to 183 ms of the first position outside, the space leave
+first or together. It flips even for a graze (passes of the "Blue table" lasted 0.8 s, 1.1 s and
+under 0.1 s, each LIVEKIT then ONLINE). So **wa-1.34 sets `areaDwellMs: 0, areaLingerMs: 0`**:
+join immediately on entering, leave immediately on leaving, no timers. The stuck-status guards
+stay: the join's `.then` re-checks `currentAreas` and leaves the space if we have since left,
+and `_leaveSpace` does the ONLINE bookkeeping. Scenario "A quick pass through a meeting area
+joins and leaves its meeting". (The churn the debounce prevented, #28, was on a 73-area map with
+werift peers; if it returns on wa-1.34, the fix belongs in the transport, not a dwell the
+browser does not have.)
+
+**Speed (same probe):** a real browser walks at a median **181 px/s** (1 s windows; steady laps
+173 to 183) with a position update about every 200 ms; running (shift held) is about 420 to
+520 px/s (12 windows from one stretch: low confidence, median about 460). Our `navTo` used 40 px
+per 100 ms = 400 px/s. **Speed is client-side; the server does not enforce it.** wa-1.34 has
+`movement: { walkPxPerS: 180, runPxPerS: 460 }`; `walkTo`/`navTo` take `pace: "walk" | "run"`
+and then step `speed * 100 ms / 1000` per 100 ms tick. With no pace (the default) or an adapter
+without the speed, nothing changes (40 px / 100 ms). `LiveWorld.moveTo` defaults to
+`pace: "walk"`; `wa goto <x> <y> --walk|--run` opts in from the CLI.
 
 `jitsiRoomProperty` areas are detected but not handled at all — the client has
 no Jitsi transport. Walking into one is out of scope and has confused the
@@ -386,8 +408,8 @@ persist while they walked through the Fire Pit. Probe `firepit-meeting` (same da
 (one meeting, no bubble, clean exit).
 
 Since then the **wa-1.34 adapter** defines `meeting.areaAvailabilityStatus: 11` and
-`WorkAdventureClient` sends it when the dwell timer actually joins an area meeting, and
-ONLINE when the linger timer leaves it (ONLINE only once no area meeting remains). An
+`WorkAdventureClient` sends it when it actually joins an area meeting (after the dwell on wa-1.33,
+at once on wa-1.34), and ONLINE when it leaves it (after the linger / at once) (ONLINE only once no area meeting remains). An
 adapter without the value (the frozen wa-1.33) behaves as before. Live check, scenario
 "A proximity pair walking into a meeting area leaves its bubble for the area meeting": it
 passes with the status sent and fails with it removed (the bubble persists).

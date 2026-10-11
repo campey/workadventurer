@@ -51,7 +51,7 @@ sample, roughly 36 px at walking speed. Times are the observer's receive times, 
 
 | what | real browser clients | our client today |
 |---|---|---|
-| status when entering a meeting area | `LIVEKIT` **at the moment of entry**: 5/5 for player 1 (118 to 336 ms before the first relayed position inside our rectangle) and 1/1 for player 2 (187 ms before) | `LIVEKIT` only after a **1.5 s dwell** plus the join (about 1.6 s) |
+| status when entering a meeting area | `LIVEKIT` **at the moment of entry**: 5/5 for player 1 (118 to 336 ms before the first relayed position inside our rectangle) and 1/1 for player 2 (187 ms before) | `LIVEKIT` only after a **1.5 s dwell** plus the join (about 1.6 s); wa-1.34 now joins at once (dwell 0) |
 | meeting-space join | **same instant** as the status flip (within 1 to 2 ms), and the browser's own `currentPlace` = "Fire Pit" marker arrives with them | after the dwell, with the status |
 | status when leaving | `ONLINE` within 0 to 183 ms of the first relayed position outside our rectangle; the space leave comes first or together (0 to 200 ms earlier) | `ONLINE` after a **2.5 s linger** |
 | quick pass-through of another meeting area ("Blue table") | status `LIVEKIT` then `ONLINE` after **0.8 s**, **1.1 s**, and **under 0.1 s** (a corner graze): the browser flips even for a graze; whether it also joined that table's space was not observable | nothing (shorter than the dwell) |
@@ -65,8 +65,7 @@ about 35 px from this data.
 
 Not covered by this run: a real player **already in a proximity bubble** walking into a meeting area (the loop left
 each bubble by distance before the next area), so whether the server dissolves a real client's bubble at the flip is
-still unobserved (our own pair's bubble ended 0.1 to 0.2 s after our `LIVEKIT`). The two marks (👍 at 80.6 s,
-😂 at 101.0 s) had no matching observable event; 80.6 s was 20 s into a stay with nothing joining or leaving.
+still unobserved (our own pair's bubble ended 0.1 to 0.2 s after our `LIVEKIT`). The two marks: campey's 👍 at 80.6 s marked completing a lap, and 😂 at 101.0 s was a joke about wanting a chime. Neither was a problem report, and no chime was heard in the whole run.
 
 ## Gaps found
 
