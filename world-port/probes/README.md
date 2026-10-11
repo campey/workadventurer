@@ -30,6 +30,7 @@ only, never other players' names.
 | `meeting-area` | the academy | 2026-10-10 | confirms | 3 areas listed ("(unnamed)", "Lean Coffee Table 1", "Carte Blanche"). Walking into "(unnamed)" {1632,1728,192,224} joined `7e67gt-46769bf1-e571-4237-860a-eec29068035b`; with `--at "Lean Coffee Table 1"` {535,2680,207,160} joined `7e67gt-5cd72740-d3d0-4d90-8d17-172ad53300cc`. "Lean Coffee Table 1" is in `meetingAreas`; the unnamed one is not (no stable name). |
 | `meeting-availability` | afrolabs open space | 2026-10-10 | new | campey walked their browser avatar into "Fire Pit" (a `livekitRoomProperty` meeting area) and out. The browser client sent `availabilityStatus` **LIVEKIT (11)** on entering and **ONLINE (1)** on leaving (via `setPlayerDetailsMessage`, relayed as `playerDetailsUpdatedMessage`). Our client always reports ONLINE: likely why our proximity bubble persisted through the firepit (gap 3). |
 | `firepit-meeting` | afrolabs open space | 2026-10-10 | new | campey and `wa-probe-a` shared the "Fire Pit" meeting area, `wa-probe-a` sending LIVEKIT on entering and ONLINE on leaving like a browser. Five steps (campey in, we in, campey out, campey back, we out), all answered 👍: one meeting, no proximity bubble, clean leave. We joined and left space `9ida9r-fire-pit`. The Fire Pit's centre is solid (the fire), so walking to the centre stops beside it. |
+| `observe-humans` | afrolabs open space | 2026-10-11 | new | Two real browser players (campey and a second player) walked in and out of the "Fire Pit" and other meeting areas for 12 min while `wa-probe-b` sat in the Fire Pit meeting and `wa-probe-a` stood outside. See "Real-client observations" below. |
 
 ### Raw observations (2026-10-10 13:05 UTC, run by the controller)
 
@@ -42,6 +43,30 @@ only, never other players' names.
 Whole-suite result, `WORLD=live NODE_USE_ENV_PROXY=1 npm run scenarios`, 2026-10-10 (after the follow-ups): 17 scenarios, 14 passed, 3 skipped (two `@fake`, the academy spawn row), 0 failed.
 
 After the meeting-area availability work (gap 3), twice in a row: 23 scenarios, 20 passed, 3 skipped (same three), 0 failed; 137 steps, 119 passed, 18 skipped (7m40s and 7m47s, since avatars now walk). Fake: 23 scenarios, 22 passed, 1 skipped (raw: `fake-scenarios2.txt` in the session scratchpad).
+
+## Real-client observations (2026-10-11, `observe-humans`, 12 min, 5 Fire Pit entries by player 1 and 1 by player 2)
+
+Position samples arrive about every 200 ms (median; p90 290 to 380 ms), so edge distances below are good to about one
+sample, roughly 36 px at walking speed. Times are the observer's receive times, in ms, "−" meaning earlier.
+
+| what | real browser clients | our client today |
+|---|---|---|
+| status when entering a meeting area | `LIVEKIT` **at the moment of entry**: 5/5 for player 1 (118 to 336 ms before the first relayed position inside our rectangle) and 1/1 for player 2 (187 ms before) | `LIVEKIT` only after a **1.5 s dwell** plus the join (about 1.6 s) |
+| meeting-space join | **same instant** as the status flip (within 1 to 2 ms), and the browser's own `currentPlace` = "Fire Pit" marker arrives with them | after the dwell, with the status |
+| status when leaving | `ONLINE` within 0 to 183 ms of the first relayed position outside our rectangle; the space leave comes first or together (0 to 200 ms earlier) | `ONLINE` after a **2.5 s linger** |
+| quick pass-through of another meeting area ("Blue table") | status `LIVEKIT` then `ONLINE` after **0.8 s**, **1.1 s**, and **under 0.1 s** (a corner graze): the browser flips even for a graze; whether it also joined that table's space was not observable | nothing (shorter than the dwell) |
+| speed | **median 181 px/s** (1 s windows: p90 221, max 521); player 2: median 193, p90 201 | `navTo` steps 40 px per 100 ms = **400 px/s**, 2.2 times faster |
+| position update rate | about 5 per second | one per 100 ms while walking |
+
+Geometry: when a browser's `LIVEKIT` flip arrived, the last relayed position was 28 to 61 px outside our Fire Pit
+rectangle (and 5 to 36 px inside at the next sample); the first relayed position after leaving was 3 to 53 px outside.
+That is within about one sample of the rectangle edge, so no systematic offset is visible; we cannot resolve below
+about 35 px from this data.
+
+Not covered by this run: a real player **already in a proximity bubble** walking into a meeting area (the loop left
+each bubble by distance before the next area), so whether the server dissolves a real client's bubble at the flip is
+still unobserved (our own pair's bubble ended 0.1 to 0.2 s after our `LIVEKIT`). The two marks (👍 at 80.6 s,
+😂 at 101.0 s) had no matching observable event; 80.6 s was 20 s into a stay with nothing joining or leaving.
 
 ## Gaps found
 

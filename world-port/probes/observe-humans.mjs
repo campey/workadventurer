@@ -192,6 +192,13 @@ export default {
       c.on("bubbleLeft", () => rec({ kind: "own", who: tag, what: "bubble out" }, `${tag} left the proximity bubble`));
     }
 
+    // Players already in view when we connected have no join message: seed their position and name.
+    names.set(ca.myUserId, "wa-probe-a"); names.set(cb.myUserId, "wa-probe-b");
+    for (const p of ca.listPlayers()) {
+      names.set(p.userId, p.name ?? "");
+      if (!isProbe(p.name)) rec({ kind: "pos", uid: p.userId, name: p.name, x: p.x ?? 0, y: p.y ?? 0, moving: false, initial: true }, `already here: ${p.name}`);
+    }
+
     // Place B inside the Fire Pit (joins its meeting), A well outside every meeting area.
     const inB = B.openSpotInside(rect.x, rect.y, rect.w, rect.h);
     await cb.navTo(inB.x, inB.y, { stopWithin: 16, timeoutMs: 30000 });
