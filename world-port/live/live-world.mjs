@@ -162,21 +162,27 @@ export class LiveWorld extends EventEmitter {
     return { x: best.x, y: best.y };
   }
 
+  /** LIVEKIT while the client has joined an area meeting (the status it sent), else ONLINE. */
+  availability() {
+    return this.client._areaMeetingsJoined?.size ? "LIVEKIT" : "ONLINE";
+  }
+
   players() {
     return this.client.listPlayers().map(info);
   }
 
   /**
    * Walk there with the client's pathfinding (people watching see a walk, not a glide through
-   * walls). Resolves on arrival; rejects if the avatar stops short (unreachable or blocked
+   * walls) at human walking speed (`pace: "walk"`, the default; "run" to override; the fake has no speed).
+   * Resolves on arrival; rejects if the avatar stops short (unreachable or blocked
    * goal, 30 s timeout) or the world is closed mid-walk. Only with no collision map: a position update.
    */
-  async moveTo(x, y) {
+  async moveTo(x, y, { pace = "walk" } = {}) {
     if (this.client.nav) {
       const walk = new AbortController();
       this._walks.add(walk);
       try {
-        const r = await this.client.navTo(x, y, { stopWithin: 16, timeoutMs: 30000, signal: walk.signal });
+        const r = await this.client.navTo(x, y, { stopWithin: 16, timeoutMs: 30000, signal: walk.signal, pace });
         if (!r?.arrived) throw new Error(`${this.name} did not arrive at (${x},${y}): ${r?.reason ?? "unknown"}`);
       } finally {
         this._walks.delete(walk);

@@ -92,6 +92,12 @@ test("fake openSpotNear states the point unchanged (it never computes)", () => {
   assert.deepEqual(fake(facts).openSpotNear(10, 20), { x: 10, y: 20 });
 });
 
+test("fake openSpotNear moves a point inside a listed meeting area out of its west side", () => {
+  const w = fake({ meetingAreas: [{ name: "r", x: 1000, y: 1000, w: 100, h: 100, confirmedBy: "fixture" }] });
+  assert.deepEqual(w.openSpotNear(1050, 1050), { x: 967, y: 1050 });
+  assert.deepEqual(w.openSpotNear(500, 1050), { x: 500, y: 1050 });
+});
+
 test("fake openSpotInside states the rectangle's centre (it never computes)", () => {
   assert.deepEqual(fake(facts).openSpotInside(100, 200, 64, 32), { x: 132, y: 216 });
 });

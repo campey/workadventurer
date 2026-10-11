@@ -45,9 +45,23 @@ test("leaving a joined meeting area ends the meeting after the linger", async ()
   w.close();
 });
 
-test("default dwell is 1.5 s and linger 2.5 s (docs/field-notes.md)", () => {
+test("default dwell and linger are 0, as wa-1.34 and a real browser (observe-humans, 2026-10-11)", () => {
   const w = new FakeWorld({ server: new FakeServer(), name: "wa-probe-t" });
-  assert.deepEqual([w.dwellMs, w.lingerMs], [1500, 2500]);
+  assert.deepEqual([w.dwellMs, w.lingerMs], [0, 0]);
+});
+
+test("with 0 / 0 a walk across a meeting area joins on entering and leaves on exiting", async () => {
+  const server = new FakeServer();
+  const w = new FakeWorld({ server, name: "wa-probe-t", facts });
+  const log = [];
+  for (const e of ["areaEntered", "meetingJoined", "areaLeft", "meetingLeft"]) w.on(e, (p) => log.push(e));
+  await w.connect();
+  await w.moveTo(900, 1050);
+  assert.equal(w.availability(), "ONLINE");
+  await w.moveTo(1300, 1050); // crosses the area without stopping
+  assert.deepEqual(log, ["areaEntered", "meetingJoined", "areaLeft", "meetingLeft"]);
+  assert.equal(w.availability(), "ONLINE");
+  w.close();
 });
 
 test("avatars within 64 px share a meeting; moving apart ends it", async () => {

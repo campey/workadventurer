@@ -1,6 +1,6 @@
 Feature: Area meetings
 
-  # source: docs/field-notes.md "Map areas: dwell debounce"; probe meeting-area, 2026-10-10 (confirms); live run 2026-10-10 passed
+  # source: probe meeting-area, 2026-10-10 (confirms); live run 2026-10-10 passed; probe observe-humans, 2026-10-11 (a browser joins on entering, no dwell; docs/field-notes.md "Map areas: dwell debounce")
   @needs-meeting-area
   Scenario Outline: Walking into a meeting area joins its meeting
     Given the world "<world>"
@@ -25,6 +25,19 @@ Feature: Area meetings
     When avatars A and B walk into the meeting area "<area>"
     Then avatars A and B join the meeting for "<area>"
     And avatars A and B have left the proximity meeting for the meeting for "<area>"
+
+    Examples:
+      | world               | area     |
+      | afrolabs open space | Fire Pit |
+
+  # source: probe observe-humans, 2026-10-11 (real browsers flip LIVEKIT and join on entering a meeting area, ONLINE on leaving, even for a graze: no dwell, no linger)
+  @needs-meeting-area
+  Scenario Outline: A quick pass through a meeting area joins and leaves its meeting
+    Given the world "<world>"
+    And avatar A is in the world
+    When avatar A walks through the meeting area "<area>" without stopping
+    Then avatar A has joined and then left the meeting for "<area>"
+    And avatar A is ONLINE
 
     Examples:
       | world               | area     |

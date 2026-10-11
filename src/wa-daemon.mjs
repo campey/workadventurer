@@ -324,7 +324,7 @@ const server = http.createServer(async (req, res) => {
           }
           if (typeof gx !== "number" || typeof gy !== "number")
             return send(400, { ok: false, error: "need {x,y} or {player}" });
-          wa.navTo(gx, gy, { stopWithin: body.stopWithin ?? 48, timeoutMs: 90_000 }).then((r) =>
+          wa.navTo(gx, gy, { stopWithin: body.stopWithin ?? 48, timeoutMs: 90_000, pace: body.pace === "walk" || body.pace === "run" ? body.pace : null }).then((r) =>
             log("goto result", JSON.stringify(r))
           );
           return send(202, { ok: true, goingTo: { x: Math.round(gx), y: Math.round(gy) } });

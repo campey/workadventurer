@@ -121,6 +121,16 @@ test("moveTo uses a short timeout and rejects when the avatar does not arrive", 
   assert.ok(opts.signal instanceof AbortSignal);
 });
 
+test("moveTo walks at human speed by default; pace overrides", async () => {
+  const w = mkLive();
+  w.client.nav = mkNav();
+  const paces = [];
+  w.client.navTo = async (x, y, o) => { paces.push(o.pace); return { arrived: true }; };
+  await w.moveTo(300, 200);
+  await w.moveTo(300, 200, { pace: "run" });
+  assert.deepEqual(paces, ["walk", "run"]);
+});
+
 test("close() during a moveTo aborts the walk", async () => {
   const w = mkLive();
   w.client.nav = mkNav();

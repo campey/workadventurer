@@ -2,10 +2,10 @@
 import { EventEmitter } from "node:events";
 
 export class FakeWorld extends EventEmitter {
-    // Meeting-area timing, from docs/field-notes.md "Map areas: dwell debounce":
-  // "join only after **1.5 s continuously inside** (a real dwell, not a walk-through),
-  // and linger **2.5 s** after leaving before tearing down." Tests pass short values.
-  constructor({ server, name, versionHash = "23c8eb8c", facts = {}, dwellMs = 1500, lingerMs = 2500 }) {
+  // Meeting-area timing: 0 / 0, what wa-1.34 does, because a real browser joins the instant it enters a
+  // meeting area and leaves as it exits (probe observe-humans, 2026-10-11). Pass dwellMs/lingerMs to
+  // exercise the wa-1.33 debounce (1500 / 2500, docs/field-notes.md "Map areas: dwell debounce").
+  constructor({ server, name, versionHash = "23c8eb8c", facts = {}, dwellMs = 0, lingerMs = 0 }) {
     super();
     this.server = server;
     this.name = name;
@@ -98,7 +98,13 @@ export class FakeWorld extends EventEmitter {
   // scenario: presence:Walking next to another avatar puts both in the same meeting
   // scenario: presence:A player's arrival, movement and departure are seen
   openSpotNear(x, y) {
-    return { x, y };
+    // The port promises a point outside every meeting area (live computes it). The fake only states
+    // the point, except that one inside a listed area (plus the live adapter's 32 px margin) is moved
+    // out of its west side: an avatar there would join the area meeting at once and leave the proximity
+    // bubbles (wa-1.34, no dwell).
+    const PAD = 32;
+    const a = this.meetingAreas().find((m) => x >= m.x - PAD && x <= m.x + m.w + PAD && y >= m.y - PAD && y <= m.y + m.h + PAD);
+    return a ? { x: a.x - PAD - 1, y } : { x, y };
   }
 
   /** The fake states the rectangle's centre; live, the adapter finds open floor inside it. */
@@ -115,7 +121,17 @@ export class FakeWorld extends EventEmitter {
   // scenario: presence:A player's arrival, movement and departure are seen
   // scenario: presence:Walking next to another avatar puts both in the same meeting
   // scenario: meetings:Walking into a meeting area joins its meeting
+  // scenario: meetings:A quick pass through a meeting area joins and leaves its meeting
   async moveTo(x, y) {
+    // A straight walk, sampled every STEP_PX, so a pass through a meeting area is seen entering and
+    // leaving it (a teleport would skip it). Still no speed: nothing waits.
+    const STEP_PX = 40;
+    const { x: x0, y: y0 } = this.pos;
+    const n = Math.max(1, Math.ceil(Math.hypot(x - x0, y - y0) / STEP_PX));
+    for (let i = 1; i < n; i++) {
+      this.pos = { x: x0 + ((x - x0) * i) / n, y: y0 + ((y - y0) * i) / n };
+      this._updateAreas();
+    }
     this.pos = { x, y };
     this.server.broadcast(this.userId, "playerMoved", this.self());
     this.server.updateProximity();
@@ -178,6 +194,12 @@ export class FakeWorld extends EventEmitter {
     return [...this.inside.values()].some((st) => st.joined);
   }
 
+  /** What a browser reports in this state: LIVEKIT in an area meeting, else ONLINE. */
+  // scenario: meetings:A quick pass through a meeting area joins and leaves its meeting
+  availability() {
+    return this.inAreaMeeting() ? "LIVEKIT" : "ONLINE";
+  }
+
   /** The meeting areas listed in the facts file (the fake reads no maps). */
   meetingAreas() {
     return this.facts?.meetingAreas ?? [];
@@ -194,13 +216,14 @@ export class FakeWorld extends EventEmitter {
         const s = { dwell: null, linger: null, joined: false };
         this.inside.set(a.name, s);
         this.emit("areaEntered", { name: a.name });
-        s.dwell = setTimeout(() => {
+        const join = () => {
           s.joined = true;
           this.emit("meetingJoined", { spaceName });
           // scenario: meetings:A proximity pair walking into a meeting area leaves its bubble for the area meeting
           this.server.updateProximity(); // now LIVEKIT: out of proximity bubbles
-        }, this.dwellMs);
-        s.dwell.unref?.();
+        };
+        if (this.dwellMs <= 0) join();
+        else { s.dwell = setTimeout(join, this.dwellMs); s.dwell.unref?.(); }
       } else if (here && st) {
         clearTimeout(st.linger); // came back inside during the linger: stay in the meeting
         st.linger = null;
@@ -208,13 +231,14 @@ export class FakeWorld extends EventEmitter {
         this.emit("areaLeft", { name: a.name });
         clearTimeout(st.dwell);
         if (!st.joined) { this.inside.delete(a.name); continue; }
-        st.linger = setTimeout(() => {
+        const leave = () => {
           this.inside.delete(a.name);
           this.emit("meetingLeft", { spaceName });
           // scenario: meetings:A proximity pair walking into a meeting area leaves its bubble for the area meeting
           this.server.updateProximity(); // back to ONLINE
-        }, this.lingerMs);
-        st.linger.unref?.();
+        };
+        if (this.lingerMs <= 0) leave();
+        else { st.linger = setTimeout(leave, this.lingerMs); st.linger.unref?.(); }
       }
     }
   }

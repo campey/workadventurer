@@ -57,7 +57,7 @@ class ScenarioWorld extends World {
       const { LiveWorld } = await import("../../live/live-world.mjs"); // Task 2; only when WORLD=live
       port = new LiveWorld({ name, roomUrl: world.roomUrl, ...opts });
     } else {
-      port = new FakeWorld({ server: this.server, name, facts: this.facts, dwellMs: 50, lingerMs: 50, ...opts });
+      port = new FakeWorld({ server: this.server, name, facts: this.facts, ...opts });
     }
     const log = [];
     for (const event of EVENTS) port.on(event, (payload) => log.push({ event, payload }));

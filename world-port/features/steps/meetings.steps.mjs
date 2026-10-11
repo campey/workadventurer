@@ -114,3 +114,39 @@ Then("avatars {word} and {word} have left the proximity meeting for the meeting 
   }
   assert.deepEqual(found, [], "the area meeting did not take over from the proximity bubble");
 });
+
+// Open floor just outside the area on its west and east sides, level with its middle: a walk from one to the
+// other crosses it without stopping inside.
+const OUTSIDE_PX = 100;
+
+// scenario: meetings:A quick pass through a meeting area joins and leaves its meeting
+When("avatar {word} walks through the meeting area {string} without stopping", { timeout: 120000 }, async function (r, areaName) {
+  const area = (this.facts?.meetingAreas ?? []).find((a) => a.name === areaName);
+  assert.ok(area, `meeting area "${areaName}" is not in the facts file`);
+  const a = await this.avatar(role(r));
+  const cy = area.y + area.h / 2;
+  await a.moveTo(...spot(a, area.x - OUTSIDE_PX, cy)); // west of it
+  this.passMark = this.events.get(role(r))?.length ?? 0; // only what the pass causes counts
+  await a.moveTo(...spot(a, area.x + area.w + OUTSIDE_PX, cy)); // east of it: the path crosses the area
+});
+
+// scenario: meetings:A quick pass through a meeting area joins and leaves its meeting
+Then("avatar {word} has joined and then left the meeting for {string}", { timeout: 30000 }, async function (r, areaName) {
+  const area = (this.facts?.meetingAreas ?? []).find((a) => a.name === areaName);
+  const space = area.space ?? area.name;
+  const order = () => (this.events.get(role(r)) ?? []).slice(this.passMark ?? 0)
+    .filter((e) => (e.event === "meetingJoined" || e.event === "meetingLeft") && e.payload?.spaceName === space)
+    .map((e) => e.event);
+  const deadline = Date.now() + (this.kind === "live" ? 15000 : 3000);
+  while (order().join() !== "meetingJoined,meetingLeft" && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100));
+  assert.deepEqual(order(), ["meetingJoined", "meetingLeft"], `events for ${space} after the pass`);
+});
+
+// A browser reports ONLINE when it is in no area meeting (probes meeting-availability, observe-humans).
+// scenario: meetings:A quick pass through a meeting area joins and leaves its meeting
+Then("avatar {word} is ONLINE", { timeout: 30000 }, async function (r) {
+  const a = await this.avatar(role(r));
+  const deadline = Date.now() + (this.kind === "live" ? 15000 : 3000);
+  while (a.availability() !== "ONLINE" && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100));
+  assert.equal(a.availability(), "ONLINE");
+});
