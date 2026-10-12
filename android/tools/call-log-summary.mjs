@@ -6,7 +6,8 @@ import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const LINE = /^(\d\d):(\d\d):(\d\d)\.(\d{3}) (\S+) (.*)$/;
-const STATS = /^\[([0-9a-f-]+)\] audio sent=(\d+) recv=(\d+) .*?dir=(\S*) mic=(on|off)/;
+const STATS = /^\[([0-9a-f-]+)\] audio sent=(\d+) recv=(\d+) ice=(\S+) conn=(\S+) .*?dir=(\S*) mic=(on|off)/;
+const SLOW_CONNECT_MS = 15_000; // a link that takes longer than this to come up
 const STALL_SAMPLES = 2; // sample intervals (5 s each) with no new packets while the mic is on
 const RED_MIC_AFTER_MS = 10_000; // mic announced on, still nothing sent this long afterwards
 
@@ -28,7 +29,7 @@ export function summarize(text) {
   let day = 0, prev = -1, first = null, last = null, connectingAt = null;
 
   const peer = (id) => {
-    if (!peers.has(id)) peers.set(id, { conn: id, initiator: null, startMs: null, audioLinesInOffers: [], offerLog: [], reOffers: 0, firstRecvAt: null, firstSentAt: null, timeToFirstRecvMs: null, samples: [], stalls: [] });
+    if (!peers.has(id)) peers.set(id, { conn: id, initiator: null, startMs: null, audioLinesInOffers: [], offerLog: [], reOffers: 0, firstRecvAt: null, firstSentAt: null, timeToFirstRecvMs: null, failedAt: null, connectedAfterMs: null, samples: [], stalls: [] });
     return peers.get(id);
   };
 
@@ -80,8 +81,10 @@ export function summarize(text) {
       } else if ((w = /^\[([0-9a-f-]+)\] re-offered/.exec(msg))) peer(w[1]).reOffers++;
       else if ((w = STATS.exec(msg))) {
         const p = peer(w[1]);
-        const sample = { ms, at, sent: +w[2], recv: +w[3], dir: w[4], mic: w[5] };
+        const sample = { ms, at, sent: +w[2], recv: +w[3], ice: w[4], conn: w[5], dir: w[6], mic: w[7] };
         p.samples.push(sample);
+        if (p.failedAt === null && (sample.conn === "FAILED" || sample.ice === "FAILED")) p.failedAt = at;
+        if (p.connectedAfterMs === null && sample.conn === "CONNECTED" && p.startMs !== null) p.connectedAfterMs = ms - p.startMs;
         if (p.firstRecvAt === null && sample.recv > 0) { p.firstRecvAt = at; if (p.startMs !== null) p.timeToFirstRecvMs = ms - p.startMs; }
         if (p.firstSentAt === null && sample.sent > 0) p.firstSentAt = at;
       }
@@ -95,6 +98,11 @@ export function summarize(text) {
     p.stalls = stalls(p.samples);
     for (const a of announcements) {
       if (p.startMs === null || p.startMs > a.ms) continue;
+      // A link that had already closed (no sample after the announcement) can't be blamed for sending nothing: it was gone.
+      if (!p.samples.some((x) => x.ms > a.ms)) continue;
+      // Nor one that wasn't connected yet when the mic was announced: that is a connection problem (reported on its own), not a mic one.
+      const ref = [...p.samples].reverse().find((x) => x.ms <= a.ms) ?? p.samples.find((x) => x.ms > a.ms);
+      if (!ref || ref.conn !== "CONNECTED") continue;
       const baseline = [...p.samples].reverse().find((x) => x.ms <= a.ms)?.sent ?? 0;
       const resumed = p.samples.find((x) => x.ms > a.ms && x.sent > baseline);
       const waited = (resumed ? resumed.ms : last) - a.ms;
@@ -136,6 +144,10 @@ export function format(s) {
   for (const p of s.peers) {
     out.push(`peer ${p.conn.slice(0, 8)}: we ${p.initiator === null ? "?" : p.initiator ? "offered" : "answered"}, audio lines in offers [${p.audioLinesInOffers.join(", ")}], ` +
       `${p.reOffers} re-offer(s), first heard ${p.firstRecvAt ?? "never"} (${secs(p.timeToFirstRecvMs)} after start), first sent ${p.firstSentAt ?? "never"}`);
+    if (p.failedAt) out.push(`  LINK FAILED peer ${p.conn.slice(0, 8)}: connection failed at ${p.failedAt}`);
+    else if (p.connectedAfterMs !== null && p.connectedAfterMs > SLOW_CONNECT_MS) out.push(`  SLOW CONNECT peer ${p.conn.slice(0, 8)}: took ${secs(p.connectedAfterMs)} to connect`);
+    else if (p.connectedAfterMs === null && p.samples.length > 0) out.push(`  NEVER CONNECTED peer ${p.conn.slice(0, 8)}: never reached CONNECTED`);
+    if (p.firstRecvAt === null && p.samples.length > 0) out.push(`  heard nothing from peer ${p.conn.slice(0, 8)} in ${p.samples.length} samples`);
     for (const x of p.stalls) out.push(`  STALL mic on but nothing sent ${x.fromAt} -> ${x.toAt}${x.resumed ? "" : " (never resumed)"}`);
   }
   for (const r of s.redMicSuspects) {

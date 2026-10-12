@@ -4,6 +4,8 @@ import app.workadventurer.nav.Navigator
 import app.workadventurer.nav.Pt
 import app.workadventurer.nav.Target
 import app.workadventurer.nav.frontOf
+import app.workadventurer.nav.nearestFreeOutside
+import app.workadventurer.nav.nearestOutside
 import app.workadventurer.nav.snapToFree
 import app.workadventurer.protocol.Area
 import app.workadventurer.protocol.Group
@@ -36,6 +38,9 @@ sealed interface Command {
     data class WalkToArea(val areaKey: String) : Command // Area.id ?: Area.name
     data object StopMoving : Command
 
+    /** Leave the bubble or meeting area we are in. The protocol has no such message, so this walks out of it. */
+    data object LeaveConversation : Command
+
     /** "Invite to discussion": ask a player to come over to us. */
     data class InvitePlayer(val userId: Int) : Command
 
@@ -57,6 +62,7 @@ sealed interface Connection {
 sealed interface Activity {
     data object Idle : Activity
     data class WalkingTo(val label: String) : Activity
+    data class WalkingOut(val label: String) : Activity
 }
 
 /** The state of the last invite *we* sent. */
@@ -111,6 +117,7 @@ private const val ARRIVE_WITHIN_PX = 8.0
 // at, which moves when they do), and it gives up after a while instead of chasing someone who keeps walking away.
 // Without both, "Walking to X" never went away on a real phone and looked like the old follow loop.
 private const val BUBBLE_ARRIVE_PX = 44.0
+private const val BUBBLE_LEAVE_PX = 96.0 // clear of a bubble's ~48 px reach, with room to spare
 private const val WALK_TO_PLAYER_TIMEOUT_MS = 30_000L
 
 /**
@@ -190,6 +197,23 @@ class WaSession(
                         val centre = Pt(a.x + a.w / 2.0, a.y + a.h / 2.0)
                         nav.navTo(c.grid.value?.snapToFree(centre.x, centre.y) ?: centre, stopWithin = 24.0)
                     }
+                }
+                Command.LeaveConversation -> startMovement { c ->
+                    val st = _state.value
+                    val group = st.myGroupId?.let { id -> st.groups.firstOrNull { it.groupId == id } }
+                    val areas = st.inAreas
+                    val inside: (Pt) -> Boolean
+                    val label: String
+                    if (group != null) {
+                        inside = { hypot(it.x - group.x, it.y - group.y) <= BUBBLE_LEAVE_PX }
+                        label = "the bubble"
+                    } else if (areas.isNotEmpty()) {
+                        inside = { p -> areas.any { p.x >= it.x && p.x < it.x + it.w && p.y >= it.y && p.y < it.y + it.h } }
+                        label = areas.first().name
+                    } else return@startMovement null
+                    val me = c.position()
+                    val out = (c.grid.value?.nearestFreeOutside(me, inside) ?: nearestOutside(me, inside)) ?: return@startMovement null
+                    Plan(Activity.WalkingOut(label)) { nav -> nav.navTo(out, stopWithin = ARRIVE_WITHIN_PX) }
                 }
                 is Command.SetMuted -> {
                     // Remembered either way; only applied to a live connection. A Join starts from its own config, see SessionState.
