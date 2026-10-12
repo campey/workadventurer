@@ -159,6 +159,21 @@ class NavigatorTest {
         assertFalse(sink.moves.last().moving)
     }
 
+    // A goal inside a solid (a table or wall) is snapped by findPath to the nearest free tile. The walk used to
+    // stand on that tile and keep re-planning a zero-length route until its timeout, because the arrival test
+    // was against the original point (reported from the afrolabs Red Table, walking out to the north-east).
+    @Test
+    fun navToAGoalInsideASolidEndsOnTheNearestFreeTile() = runTest {
+        val g = gridOf(".....", ".....", "..#..", ".....", ".....")
+        val goal = g.tileCenterPx(2, 2) // the solid tile
+        val sink = FakeSink(g.tileCenterPx(0, 0))
+        val nav = Navigator({ g }, sink, { testScheduler.currentTime })
+        assertEquals(Outcome.ARRIVED, nav.navTo(goal, stopWithin = 8.0, timeoutMs = 20_000))
+        assertTrue(testScheduler.currentTime < 5_000, "took ${testScheduler.currentTime} ms")
+        assertFalse(g.isPxBlocked(sink.pos.x, sink.pos.y), "ended inside a solid at ${sink.pos}")
+        assertFalse(sink.moves.last().moving)
+    }
+
     @Test
     fun navToReachesAnOffCentreGoalInTheTileItStartsIn() = runTest {
         val g = gridOf(".....", ".....", ".....", ".....", ".....")

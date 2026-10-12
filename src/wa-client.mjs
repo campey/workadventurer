@@ -954,6 +954,24 @@ export class WorkAdventureClient extends EventEmitter {
         return { arrived: true };
       }
       const path = this.nav.findPath(this.pos.x, this.pos.y, gx, gy);
+      // A route's waypoints are tile CENTRES, so it ends up to ~22 px from the real goal, further than a tight
+      // stopWithin (moveTo uses 16): the walk would stop on the centre, never count as arrived, and re-plan a
+      // zero-length route until the timeout. Walk the last step to the exact goal when it is on a free tile.
+      // A goal inside a solid (a table, a wall) is snapped by findPath to the nearest free tile; standing on
+      // that centre is as close as we can get, so finish there ({arrived, snapped}) instead of looping.
+      const nav = this.nav;
+      const blocked = nav.isPxBlocked?.(gx, gy);
+      if (path?.length && blocked) {
+        const [ex, ey] = path[path.length - 1];
+        if (Math.hypot(ex - this.pos.x, ey - this.pos.y) <= 12) {
+          this.pos.moving = false;
+          this._emitMove(false);
+          lookAt();
+          return { arrived: true, snapped: true };
+        }
+      } else if (path?.length && blocked === false) {
+        path[path.length - 1] = [gx, gy];
+      }
       if (!path || path.length === 0) {
         // Trust walkTo()'s own result instead of discarding it.
         const r = await this.walkTo(gx, gy, { stopWithin, timeoutMs: repathMs, getTarget, signal, ...(paced ?? {}) });

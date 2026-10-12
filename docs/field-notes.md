@@ -590,6 +590,15 @@ avatar against a real room. Dates are when each was observed.
   that was *joined* and is then rejected on reconnect (the fake only rejects) —
   that path is unit-tested through the reconnector only.
 
+### navTo never finished: goal vs tile centre, and goals inside a solid (2026-10-12)
+
+Reported from the afrolabs "Red Table" pocket: walking out to the north-east got stuck, in the CLI and the APK.
+A route's waypoints are tile **centres**, so it ends up to about 22 px from the real goal.
+- **Free goal, Node only**: with `stopWithin` 16 (what `LiveWorld.moveTo` uses) the walk stopped on the centre, never counted as arrived, and re-planned a zero-length route until its 120 s timeout. 3 of 6 test goals north-east of the pocket hit it. The Kotlin `Navigator` already walked the last step to the exact goal (`withExactGoal`); Node now does too.
+- **Goal inside a solid, Node and Kotlin**: `findPath` snaps the goal to the nearest free tile, but the arrival test was against the original point, so the same spin. Both now finish on that tile (Node returns `{arrived: true, snapped: true}`).
+- Not fixed, noted: when the snapped goal is on a free tile that is **unreachable** (a disconnected island such as the 942-tile east region of afrolabs, separated by a one-tile diagonal wall), `findPath` returns null and `navTo` falls back to a straight-line walk, which crosses walls. It ends "arrived" inside the island. Worth deciding whether `navTo` should fail instead.
+- The Kotlin change is untested here: Gradle can't resolve its plugins in the cloud container. Run `./gradlew :nav:test` (new test `navToAGoalInsideASolidEndsOnTheNearestFreeTile`).
+
 ### When prod bumps
 
 Prod moved from `v1.33.8` to `v1.34.0` without notice (2026-10-05) and every
