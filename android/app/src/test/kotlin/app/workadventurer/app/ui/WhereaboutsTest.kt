@@ -115,4 +115,27 @@ class WhereaboutsTest {
     fun nobodyWeDoNotKnowIsAnywhere() {
         assertNull(whereIsOrNull(99, state(listOf(player(2, "Noor")))))
     }
+
+    // The "Right now" row opens the conversation they are in; a plain area or the open map has none.
+    @Test
+    fun theRightNowRowOpensABubbleOrAMeetingAreaButNotAPlainAreaOrTheMap() {
+        val bubble = state(listOf(player(2, "Maya"), player(3, "Sam")), groups = listOf(Group(5, 0, 0, listOf(2, 3))))
+        assertEquals(ConversationKey.Bubble(5), whereIs(2, bubble).conversation())
+
+        val meeting = area("m", "Red Table", 0, 0, meeting = true)
+        val plain = area("p", "Spawn", 0, 0, meeting = false)
+        assertEquals(ConversationKey.AreaKey("m"), whereIs(2, state(listOf(player(2, "Maya", 50, 50)), areas = listOf(meeting))).conversation())
+        assertNull(whereIs(2, state(listOf(player(2, "Maya", 50, 50)), areas = listOf(plain))).conversation())
+        assertNull(whereIs(2, state(listOf(player(2, "Maya")))).conversation())
+    }
+
+    @Test
+    fun togetherSaysWhichKindOfConversationYouShare() {
+        val bubble = state(listOf(player(2, "Maya")), groups = listOf(Group(5, 0, 0, listOf(1, 2))), myGroupId = 5)
+        assertEquals("You are already in this bubble together", togetherNote(whereIs(2, bubble)))
+        val meeting = area("m", "Red Table", 0, 0, meeting = true)
+        val inArea = state(listOf(player(2, "Maya", 50, 50)), areas = listOf(meeting), inAreas = listOf(meeting))
+        assertEquals("You are already in this area together", togetherNote(whereIs(2, inArea)))
+        assertNull(togetherNote(Whereabouts.OnTheMap))
+    }
 }

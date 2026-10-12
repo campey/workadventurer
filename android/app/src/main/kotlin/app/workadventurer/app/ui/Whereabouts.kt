@@ -18,6 +18,20 @@ sealed interface Whereabouts {
         is InArea -> meeting && withYou && !jitsi
         OnTheMap -> false
     }
+
+    /** The conversation this person is in, which their "Right now" row opens; null for a plain area or the open map. */
+    fun conversation(): ConversationKey? = when (this) {
+        is InBubble -> key
+        is InArea -> if (meeting) key else null
+        OnTheMap -> null
+    }
+}
+
+/** Under the button that opens a conversation you already share with them; null when you are not together. */
+fun togetherNote(w: Whereabouts): String? = when {
+    !w.isTogether() -> null
+    w is Whereabouts.InBubble -> "You are already in this bubble together"
+    else -> "You are already in this area together"
 }
 
 /** Where [userId] is, or null for somebody we don't know about. A bubble beats a meeting area, which beats a plain area. */
