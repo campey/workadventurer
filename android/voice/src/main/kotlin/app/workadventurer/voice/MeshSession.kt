@@ -145,7 +145,7 @@ class MeshSession(
         // A browser that joined muted offers without an audio line; then there is nothing to send our mic on (issue #97).
         log("[${e.connectionId}] audio lines in offer: ${Regex("(?m)^m=audio ").findAll(offer.sdp).count()}${if (again) " (re-offer)" else ""}")
         val sdp = try { l.acceptOffer(offer.sdp) } catch (c: CancellationException) { throw c } catch (t: Throwable) {
-            log("[${e.connectionId}] offer failed: ${t.message}"); null
+            log("[${e.connectionId}] offer failed: ${t.message}; the offer was ${sdpShape(offer.sdp)}"); null
         }
         if (sdp == null) {
             // A first offer we can't answer is a dead connection; a re-offer we can't answer leaves the working one alone.
