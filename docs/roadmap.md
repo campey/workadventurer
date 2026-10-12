@@ -4,8 +4,9 @@ Where this project is going and why. The README says what exists; this says
 what we're building toward, so you can see where a contribution fits.
 
 Work is tracked on the
-[workadventurer board](https://github.com/users/campey/projects/1). Issues are
-grouped by the three goals below (GitHub milestones of the same names).
+[workadventurer board](https://github.com/users/campey/projects/1). Some of the
+goals below (accessibility, car mode, agent social cues) don't have issues yet;
+they're deliberately left here until they're ready to be broken down.
 
 ## Why this exists
 

@@ -393,7 +393,7 @@ daemon in the past.
 `## Version targets` for selection logic. Field notes:
 
 - **Prod is one server.** `play.workadventu.re` hosts afrolabs, lean-iterator,
-  tcm, … all on the tagged release (`v1.34.0` → `wa-1.34`; was `v1.33.x` → `wa-1.33` until 2026-10-05).
+  tcm, … all on the tagged release (`v1.34.1` → `wa-1.34`, hash `b82fc568`, proto unchanged from `v1.34.0`; was `v1.33.x` → `wa-1.33` until 2026-10-05).
 - **Staging is rolling `master`**, untagged — `play.staging.workadventu.re`.
   Its commit sha *moves between sessions* (`7c5ff99b` → `7d628838` → …), and
   each move can shift the `apiVersionHash`. `wa-master` warns on sha drift;
