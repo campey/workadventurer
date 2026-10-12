@@ -185,3 +185,7 @@ OBSERVE_MINUTES=8 node world-port/probes/run.mjs observe-humans --world "afrolab
 - Read the result: the per-lap `voice.ours` block (`spaceJoinMs`, `signalMs`, `iceMs`, `connectedMs`, `transport`) and the log lines after phase 2: `peer connection connecting` followed by `connected` (or never) for each real player's join. P2P WEBRTC at two participants, LiveKit once the call is bigger (`meeting strategy`).
 - Compare with the cloud numbers above (our avatar with our avatar: connected in about 0.85 s; with a real client: never, from the container).
 - Recordings land in `world-port/recordings/` (git-ignored: they name real players). Add the findings to this README, not to a PR comment.
+
+### Intermittent "same meeting" after an accepted invite (2026-10-12)
+
+The full live suite failed once on `An invitation is received, accepted and brings both avatars together` (`timed out waiting for meetingJoined` at the "same meeting" step), then the invites feature alone failed 1 of 4 runs. Likely cause: `LiveWorld.acceptInvite` walked to the sender in a straight line (`walkTo`), which can end against a wall so the proximity meeting never forms, and it ignored the result. It now paths with `navTo` like `moveTo` and throws if it doesn't arrive. After the change: invites feature 6 of 6 passes, full live suite 24 scenarios, 21 passed, 3 skipped, 0 failed (2m21s). The sample is small, so treat the cause as likely, not proven: if it recurs, the new error message names the reason.

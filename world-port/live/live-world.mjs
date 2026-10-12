@@ -213,7 +213,15 @@ export class LiveWorld extends EventEmitter {
     this.client.acceptMeetingInvitation(uuid);
     const sender = () => this.client.listPlayers().find((q) => q.name === fromName);
     if (!sender()) return;
-    await this.client.walkTo(sender().x, sender().y, { getTarget: () => sender() ?? null });
+    // Path around walls like moveTo does (a straight walkTo can end against one, and the meeting then never forms).
+    const walk = new AbortController();
+    this._walks.add(walk);
+    try {
+      const r = await this.client.navTo(sender().x, sender().y, { stopWithin: 48, getTarget: () => sender() ?? null, timeoutMs: 30000, signal: walk.signal, pace: "walk" });
+      if (!r?.arrived) throw new Error(`${this.name} did not reach ${fromName} after accepting: ${r?.reason ?? "unknown"}`);
+    } finally {
+      this._walks.delete(walk);
+    }
   }
 
   setMic(on) {
