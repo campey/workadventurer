@@ -167,3 +167,21 @@ Fire Pit meeting with two participants is a P2P WEBRTC call (`voice signal: webr
 - **So this container can't measure real-browser audio join time.** It has to be measured from a machine with normal network access (the maintainer's laptop, where earlier real calls in `docs/real-world-test-log.md` connected). This is a limit of the test environment, not evidence about the client. The probe, `observe-humans` with `OBSERVE_VOICE` on, is ready to run there.
 - Raw: `world-port/recordings/observe-humans-2026-10-11T20-40-33.514Z.jsonl` (git-ignored).
 - **LiveKit from the container, same limit (2026-10-12, during a big call in the Fire Pit)**: our avatar walked in, was told `meeting strategy → LIVEKIT` and received the LiveKit invitation 0.2 s after the space join; the LiveKit signalling connection came up, then `LiveKit connect failed: engine: connection error: wait_pc_connection timed out` after about 32 s. So the control plane works from here and the media peer connection doesn't, which matches the no-route-to-STUN/TURN finding. LiveKit audio has to be tested from a normal network too.
+
+## Running observe-humans with audio from a normal network
+
+The cloud container can't reach STUN/TURN (see above), so audio-join timing against real clients has to be measured from a laptop.
+
+```sh
+git fetch origin claude/workadventurer-refactor-plan-ngfp1i
+# a worktree keeps your main checkout untouched (CLAUDE.md: one worktree per session)
+git worktree add .claude/worktrees/observe-audio -B observe-audio origin/claude/workadventurer-refactor-plan-ngfp1i
+cd .claude/worktrees/observe-audio && npm install
+OBSERVE_MINUTES=8 node world-port/probes/run.mjs observe-humans --world "afrolabs open space" | tee observe-voice.log
+```
+
+- No `NODE_USE_ENV_PROXY` needed locally. It joins as `wa-probe-a` and `wa-probe-b` (not `claude`), starts no daemon, so there is no port to pick. Check nobody else is running the same names.
+- `OBSERVE_VOICE=0` turns the audio phase off. Phase 1 (about 40 s) walks A into the Fire Pit three times and prints our own audio stages; phase 2 prints "your turn", then you loop Fire Pit -> `wa-probe-a`/`b` -> another player (or a second client such as the Android app) for the rest of the time. Stop early with `kill -TERM`.
+- Read the result: the per-lap `voice.ours` block (`spaceJoinMs`, `signalMs`, `iceMs`, `connectedMs`, `transport`) and the log lines after phase 2: `peer connection connecting` followed by `connected` (or never) for each real player's join. P2P WEBRTC at two participants, LiveKit once the call is bigger (`meeting strategy`).
+- Compare with the cloud numbers above (our avatar with our avatar: connected in about 0.85 s; with a real client: never, from the container).
+- Recordings land in `world-port/recordings/` (git-ignored: they name real players). Add the findings to this README, not to a PR comment.
