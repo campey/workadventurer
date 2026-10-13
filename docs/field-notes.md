@@ -668,3 +668,24 @@ vendored proto (`proto/wa-1.33/messages.proto`):
     issue, affects any identity including a real logged-in browser
     session). Net effect either way: #39 needs a live Matrix-enabled area
     on the map before it's testable, which it currently doesn't have.
+
+## `wa say` (issue #7)
+
+- Interface: `python3 <huggingsesame>/src/say.py --pcm-out --quiet --backend modal -`
+  with the text on **stdin**; stdout is raw 24 kHz mono s16le PCM. Config:
+  `WA_TTS_PYTHON`, `WA_TTS_SAY`. All TTS work stays in that repo.
+- WEBRTC mesh path: `src/say.mjs` pipes the PCM into one persistent
+  `ffmpeg … -c:a libopus -frame_duration 20 -page_duration 20000 -flush_packets 1 -f ogg`.
+  **`-page_duration 20000` is what keeps latency at one frame**; without it ffmpeg
+  batches ~1 s per Ogg page. `src/ogg-stream.mjs` demuxes it incrementally and
+  `WaAudio._pump` paces the packets as RTP.
+- `_pump` with `prebuffer` > 0 (say only) holds 500 ms before the first packet and
+  treats a packet more than 60 ms late as a new talkspurt (marker bit, RTP timestamp
+  advanced over the gap, clock re-based). File playback keeps prebuffer 0.
+- Teardown trap: a child's `close` event waits for all its stdio, so after an early
+  stop `say.py`'s unread stdout kept it from ever firing. `speak()` destroys the
+  child streams before awaiting exit.
+- `node --test` runs every file under `test/` as a test. A helper there that blocks
+  (e.g. reads stdin) hangs the whole suite, so the say.py stand-in lives in
+  `scripts/fake-say.mjs`.
+- LiveKit transport is not built yet (slice 1 of #7): `POST /say` returns 501 there.

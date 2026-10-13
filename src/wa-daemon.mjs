@@ -16,6 +16,8 @@
 //   POST /thought-bubble {text}          -> thinking cloud over the avatar
 //   POST /clear-bubble                   -> dismiss whatever bubble is showing
 //   POST /sound          {name}          -> play a clip into the proximity voice chat
+//   POST /say            {text, voice?}  -> speak text aloud to the bubble (TTS, issue #7)
+//   POST /say-cancel                     -> stop a say in progress
 //   POST /chat           {text}          -> send a chat message to every Space we're
 //                                            currently in (proximity bubble and/or
 //                                            meeting-room area — #48, not Matrix)
@@ -59,7 +61,10 @@ let deliberateShutdown = false;
 let sttLineOpen = false; // a provisional partial line is currently on the terminal, unterminated
 
 function attachAudio(client) {
-  audio = new WaAudio(client, { listen: cfg.stt });
+  audio = new WaAudio(client, {
+    listen: cfg.stt,
+    tts: { python: cfg.ttsPython, sayPath: cfg.ttsSay },
+  });
   audio.on("log", (m) => log("audio ·", m));
   audio.on("peerConnected", ({ remoteUserId }) => log("audio: peer connected", remoteUserId));
   if (cfg.stt) {
@@ -372,6 +377,35 @@ const server = http.createServer(async (req, res) => {
             )
             .catch((e) => log(`sound "${body.name}" failed: ${e.message}`));
           return send(202, { ok: true, sound: body.name, playing: true });
+        }
+        case "/say": {
+          const text = String(body.text ?? "").trim();
+          if (!text) return send(400, { ok: false, error: "need {text}" });
+          if (!audio) return send(503, { ok: false, error: "audio not ready" });
+          await audio.waitForLiveKit();
+          if (audio._livekit)
+            return send(501, { ok: false, error: "say over LiveKit isn't built yet (issue #7, slice 1)" });
+          if (!audio.connected)
+            return send(409, { ok: false, error: "no one in the bubble to hear it" });
+          // Fire and forget: speech runs for as long as the utterance (and the
+          // cloud's cold start can add minutes before the first sound).
+          audio
+            .say(text, { voice: body.voice ? String(body.voice) : undefined })
+            .then((r) =>
+              log(
+                `say (${text.length} chars): ` +
+                  (r.played ? "done" : `NOT played (${r.reason ?? "?"})`) +
+                  ` — first audio ${r.firstAudioMs ?? "?"} ms, first RTP ${r.firstRtpMs ?? "?"} ms,` +
+                  ` ${r.packetsSent ?? 0} pkts to ${r.peers ?? 0} peer(s)` +
+                  (r.writeErrors ? `, ${r.writeErrors} write errors` : "")
+              )
+            )
+            .catch((e) => log(`say failed: ${e.message}`));
+          return send(202, { ok: true, say: text, speaking: true });
+        }
+        case "/say-cancel": {
+          const cancelled = audio ? audio.stopSay() : false;
+          return send(200, { ok: true, cancelled });
         }
         case "/chat": {
           if (!body.text) return send(400, { ok: false, error: "need {text}" });

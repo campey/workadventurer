@@ -67,6 +67,7 @@ wa leave                          # disconnect and stop the daemon
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text bubble |
 | `wa clear-bubble` | dismiss whatever bubble is showing |
 | `wa sound <name\|file>` | play a clip into the proximity voice chat — bundled: `chime`, `blip`, `claude_intro` (see [Voice](#9-voice)) |
+| `wa say <text…> [--voice id]` | speak text aloud to the bubble via huggingsesame TTS (WEBRTC bubbles; set `WA_TTS_PYTHON` / `WA_TTS_SAY`; `wa say --cancel` stops it) |
 | `wa chat <text>` | send a chat message to whoever's currently nearby (proximity bubble or meeting-room area — not Matrix) |
 | `wa wait-emote [player]` | block until a player emotes (`--emote <match>`, `--timeout <ms>`) |
 | `wa goto <x> <y>` | walk to raw coordinates |
@@ -148,6 +149,7 @@ file per port; a daemon only removes its own).
 | `POST /speech-bubble` `{text}` / `POST /thought-bubble` `{text}` | text bubble |
 | `POST /clear-bubble` | dismiss whatever bubble is showing |
 | `POST /sound` `{name}` | play a clip into the proximity voice chat |
+| `POST /say` `{text, voice?}` / `POST /say-cancel` | speak text aloud / stop speaking (issue #7) |
 | `POST /chat` `{text}` | send a chat message to every Space currently joined (proximity bubble and/or meeting-room area) |
 | `POST /wait-emote` `{player?,emote?,timeoutMs?}` | long-poll: resolves when a matching emote arrives |
 | `POST /leave` | disconnect and exit |
@@ -171,6 +173,8 @@ invite cycles currently leak memory (issue #29) — restart it every few.
 | `src/ogg-opus.mjs` | dependency-free Ogg demuxer — Opus packets out of `.ogg`/`.opus` |
 | `src/ogg-opus-mux.mjs` | the inverse — mux Opus packets into a playable/streamable Ogg file |
 | `src/transcode.mjs` | `wa sound` format bridge — non-Opus files → Ogg/Opus via `ffmpeg`, cached |
+| `src/say.mjs` | `wa say`: runs huggingsesame's `say.py`, encodes its PCM to Opus, tears the processes down |
+| `src/ogg-stream.mjs` | incremental Ogg/Opus demuxer for streamed audio |
 | `src/wa-stt.mjs` + `scripts/stt_worker.py` | live speech-to-text (`WA_STT=1`) — see [§ 11](#11-live-speech-to-text-prototype-issue-23) |
 | `sounds/` | bundled Ogg/Opus clips for `wa sound` (credits in `sounds/ATTRIBUTION.md`) |
 | `src/config.mjs` | config resolution (flags → env → `~/.config` → defaults) |
