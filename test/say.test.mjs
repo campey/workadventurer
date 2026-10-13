@@ -72,6 +72,14 @@ test("abort during a cold start (no PCM yet) kills say.py and resolves quietly",
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("ffmpeg exiting early tears down say.py and reports ffmpeg's failure instead of hanging",
+  { ...opts, skip: !hasFfmpeg || !existsSync("/usr/bin/false") }, async () => {
+  const t0 = Date.now();
+  await withEnv({ FAKE_SAY_SECONDS: "30" }, () =>
+    assert.rejects(collect(speak("x", { ...base, ffmpegPath: "/usr/bin/false" })), /ffmpeg exited 1/));
+  assert.ok(Date.now() - t0 < 8000, "did not wait for the 30 s clip");
+});
+
 test("consumer stopping early (return()) tears everything down", opts, async () => {
   const dir = tmp();
   try {

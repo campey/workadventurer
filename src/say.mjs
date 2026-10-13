@@ -68,6 +68,11 @@ export async function* speak(
   const sayArgs = [sayPath, "--pcm-out", "--quiet", "--backend", backend, ...(voice ? ["--voice", voice] : []), "-"];
   const say = start(python, sayArgs);
   const ff = start(ffmpegPath, ffmpegArgs);
+  // If ffmpeg dies first (no libopus, a crash, a bad flag) nothing reads
+  // say.py's stdout any more: it would block on a full pipe and never exit.
+  ff.c.once("exit", (code) => {
+    if (code !== 0) stopAll();
+  });
   const onAbort = () => stopAll();
   signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -83,8 +88,11 @@ export async function* speak(
     if (signal?.aborted) return;
     if (spawnError) throw new Error(`speak: ${spawnError.message}`);
     const last = (rec) => rec.tail.trim().split("\n").pop();
-    if (s.code !== 0) throw new Error(`say.py exited ${s.code ?? s.sig}${say.tail.trim() ? `: ${last(say)}` : ""}`);
+    // say.py's own failure first; but a say.py we killed (code null) because
+    // ffmpeg died is ffmpeg's story.
+    if (s.code != null && s.code !== 0) throw new Error(`say.py exited ${s.code}${say.tail.trim() ? `: ${last(say)}` : ""}`);
     if (f.code !== 0) throw new Error(`ffmpeg exited ${f.code ?? f.sig}${ff.tail.trim() ? `: ${last(ff)}` : ""}`);
+    if (s.code !== 0) throw new Error(`say.py was killed (${s.sig})`);
     if (!yielded) throw new Error("say.py produced no audio");
   } finally {
     signal?.removeEventListener("abort", onAbort);
