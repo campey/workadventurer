@@ -689,3 +689,11 @@ vendored proto (`proto/wa-1.33/messages.proto`):
   (e.g. reads stdin) hangs the whole suite, so the say.py stand-in lives in
   `scripts/fake-say.mjs`.
 - LiveKit transport is not built yet (slice 1 of #7): `POST /say` returns 501 there.
+
+Offline end-to-end (2026-10-13, stub `scripts/fake-say.mjs`, real browser peer, WEBRTC mesh):
+8 s tone = 401 RTP packets, heard as a steady tone; supersede restarts cleanly (one
+small blip at the cut-over, i.e. the old utterance ends abruptly); `wa say --cancel`
+true while speaking, no-op when idle; `wa status` during speech 91-154 ms (mostly CLI
+start-up); `wa leave` mid-sentence leaves no `say`/`ffmpeg`/`libopus` process; `wa sound
+chime` unaffected. Stub audio arrives instantly, so first-audio times (~100 ms) say
+nothing about the real cloud.
