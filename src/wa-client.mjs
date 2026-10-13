@@ -38,6 +38,8 @@ const DEFAULTS = {
 
 const DIRECTION = { UP: 0, RIGHT: 1, DOWN: 2, LEFT: 3 };
 const AVAILABILITY_ONLINE = 1;
+const HEARTBEAT_INTERVAL_MS = 15_000; // transport-level ws ping, and the watchdog's tick
+const DEAD_AFTER_MS = 45_000; // no inbound frame or pong for this long => the socket is dead (#138)
 const CONNECT_TIMEOUT_MS = 15_000; // login fetch / socket join; a hung attempt must fail, not stall reconnect (#138)
 
 export class WorkAdventureClient extends EventEmitter {
@@ -47,6 +49,12 @@ export class WorkAdventureClient extends EventEmitter {
     this.adapter = opts.adapter ?? null;
     this._target = this.cfg.target ?? "auto";
     this._connectTimeoutMs = this.cfg.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+    this._heartbeatIntervalMs = this.cfg.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
+    this._deadAfterMs = this.cfg.deadAfterMs ?? DEAD_AFTER_MS;
+    this._heartbeat = null;
+    this._openedAt = 0;
+    this._lastRx = 0;
+    this._hbLastTick = 0;
     this.token = null;
     this.ws = null;
     this.myUserId = null;
@@ -269,12 +277,22 @@ export class WorkAdventureClient extends EventEmitter {
 
     this.ws.on("open", () => {
       this.emit("log", "socket open; waiting for roomConnectedMessage");
+      this._startHeartbeat();
     });
 
     this.ws.on("message", (data) => this._onMessage(data));
     this.ws.on("close", (code, reason) => {
       if (this._keepAlive) clearInterval(this._keepAlive);
-      this.emit("close", { code, reason: reason?.toString() });
+      this._stopHeartbeat();
+      // How long the connection lived and how long it had been silent tell a
+      // periodic idle-timeout drop apart from network loss (#138).
+      const now = Date.now();
+      this.emit("close", {
+        code,
+        reason: reason?.toString(),
+        uptimeMs: this._openedAt ? now - this._openedAt : null,
+        idleMs: this._lastRx ? now - this._lastRx : null,
+      });
     });
     this.ws.on("error", (err) => this.emit("error", err));
 
@@ -717,6 +735,46 @@ export class WorkAdventureClient extends EventEmitter {
     }
   }
 
+  // Liveness watchdog + keepalive (#138). Our only outbound traffic is the
+  // position re-broadcast, and nothing checked that anything came back, so a
+  // dead network went unnoticed until the server gave up on us ("did not send a
+  // pong in time", soak 2026-10-08). Ping at the transport level every tick —
+  // that also keeps idle NAT / proxy entries warm — and terminate the socket if
+  // neither a frame nor a pong has arrived for deadAfterMs; "close" then drives
+  // the normal reconnect chain.
+  _startHeartbeat() {
+    this._stopHeartbeat();
+    const ws = this.ws;
+    this._openedAt = this._lastRx = this._hbLastTick = Date.now();
+    const rx = () => { this._lastRx = Date.now(); };
+    ws.on("message", rx);
+    ws.on("pong", rx);
+    this._heartbeat = setInterval(() => {
+      const now = Date.now();
+      // Timers that fire far later than scheduled mean the process was
+      // suspended (laptop sleep) or the loop was blocked. Anything received
+      // before that is no evidence about the socket now: grant one fresh
+      // window to hear back instead of killing a socket that may be fine.
+      if (now - this._hbLastTick > this._heartbeatIntervalMs * 3) {
+        this.emit("log", `system stalled/slept ~${Math.round((now - this._hbLastTick) / 1000)}s — re-checking the socket`);
+        this._lastRx = now;
+      }
+      this._hbLastTick = now;
+      const silent = now - this._lastRx;
+      if (silent > this._deadAfterMs) {
+        this.emit("log", `no traffic for ${Math.round(silent / 1000)}s — treating the connection as dead`);
+        ws.terminate();
+        return;
+      }
+      if (ws.readyState === WebSocket.OPEN) ws.ping();
+    }, this._heartbeatIntervalMs);
+  }
+
+  _stopHeartbeat() {
+    if (this._heartbeat) clearInterval(this._heartbeat);
+    this._heartbeat = null;
+  }
+
   _startKeepAlive() {
     if (this._keepAlive) clearInterval(this._keepAlive);
     // Re-broadcast our position periodically so we don't look stale.
@@ -1053,6 +1111,7 @@ export class WorkAdventureClient extends EventEmitter {
 
   close() {
     if (this._keepAlive) clearInterval(this._keepAlive);
+    this._stopHeartbeat();
     for (const { reject, timer } of this._pendingQueries.values()) {
       clearTimeout(timer);
       reject(new Error("client closed"));
