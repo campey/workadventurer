@@ -38,6 +38,7 @@ const DEFAULTS = {
 
 const DIRECTION = { UP: 0, RIGHT: 1, DOWN: 2, LEFT: 3 };
 const AVAILABILITY_ONLINE = 1;
+const CONNECT_TIMEOUT_MS = 15_000; // login fetch / socket join; a hung attempt must fail, not stall reconnect (#138)
 
 export class WorkAdventureClient extends EventEmitter {
   constructor(opts = {}) {
@@ -45,6 +46,7 @@ export class WorkAdventureClient extends EventEmitter {
     this.cfg = { ...DEFAULTS, ...opts };
     this.adapter = opts.adapter ?? null;
     this._target = this.cfg.target ?? "auto";
+    this._connectTimeoutMs = this.cfg.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
     this.token = null;
     this.ws = null;
     this.myUserId = null;
@@ -130,6 +132,8 @@ export class WorkAdventureClient extends EventEmitter {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
+      // No timeout here once hung a reconnect for over an hour (#138).
+      signal: AbortSignal.timeout(this._connectTimeoutMs),
     });
     if (!res.ok) throw new Error(`anonymLogin failed: ${res.status} ${await res.text()}`);
     const data = await res.json();
@@ -278,7 +282,15 @@ export class WorkAdventureClient extends EventEmitter {
       const onJoin = () => { cleanup(); resolve(this); };
       const onClose = (c) => { cleanup(); reject(new Error(`closed before join: ${c.code} ${c.reason}`)); };
       const onErr = (e) => { cleanup(); reject(e); };
+      // A socket that never opens or never answers must fail the attempt, not
+      // block the reconnect chain forever (#138).
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`join timed out after ${this._connectTimeoutMs / 1000}s`));
+        try { this.ws.terminate(); } catch {}
+      }, this._connectTimeoutMs);
       const cleanup = () => {
+        clearTimeout(timer);
         this.off("joined", onJoin); this.off("close", onClose); this.off("error", onErr);
       };
       this.once("joined", onJoin);

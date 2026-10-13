@@ -35,10 +35,11 @@ function harness(overrides = {}) {
       return c;
     },
     onConnected: overrides.onConnected ?? (() => {}),
-    sleep: noSleep,
     log: (...a) => logs.push(a.join(" ")),
     delays: [1, 2, 3, 4, 5],
+    maxAttempts: overrides.maxAttempts ?? 5,
     isStopped: overrides.isStopped ?? (() => false),
+    sleep: overrides.sleep ?? noSleep,
   });
   return { r, made, logs };
 }
@@ -97,4 +98,49 @@ test("success calls onConnected with the client and ends the chain", async () =>
   assert.ok(connected);
   // a later failure can start a fresh chain
   await r.start();
+});
+
+test("by default it never gives up on retryable failures (a long outage is survivable)", async () => {
+  let made = 0;
+  let stopAt = 40;
+  const r = createReconnector({
+    makeClient: () => { made++; return failingClient(); },
+    onConnected: () => {},
+    sleep: noSleep,
+    log: () => {},
+    delays: [1, 2],
+    isStopped: () => made >= stopAt,
+  });
+  await assert.rejects(r.start(), /shut down/);
+  assert.equal(made, 40); // far past the old cap of 5, ended only by shutdown
+});
+
+test("the delay stays at the last (capped) value once the schedule is exhausted", async () => {
+  const slept = [];
+  const { r } = harness({ maxAttempts: 6, sleep: (ms) => { slept.push(ms); return Promise.resolve(); } });
+  await assert.rejects(r.start(), /exhausted/);
+  assert.deepEqual(slept, [1, 2, 3, 4, 5, 5]);
+});
+
+test("a failed attempt logs the underlying cause code, not just 'fetch failed'", async () => {
+  const err = Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("x"), { code: "ENOTFOUND" }) });
+  const { r, logs } = harness({ err, maxAttempts: 1 });
+  await assert.rejects(r.start());
+  assert.ok(logs.some((l) => /fetch failed.*ENOTFOUND/.test(l)), logs.join("\n"));
+});
+
+test("attempt log lines show how long we have been down", async () => {
+  let t = 0;
+  const logs = [];
+  const r = createReconnector({
+    makeClient: () => failingClient(),
+    onConnected: () => {},
+    sleep: async (ms) => { t += ms; },
+    now: () => t,
+    log: (...a) => logs.push(a.join(" ")),
+    delays: [60_000],
+    maxAttempts: 3,
+  });
+  await assert.rejects(r.start());
+  assert.ok(logs.some((l) => /attempt 3.*down 3m/.test(l)), logs.join("\n"));
 });
