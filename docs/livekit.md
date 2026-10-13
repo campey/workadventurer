@@ -290,3 +290,40 @@ made it look LiveKit-related at first. See `docs/field-notes.md`'s werift
 section and issue #29 for the full writeup; noted here only so a future
 LiveKit-area crash isn't automatically assumed to be this document's
 territory.
+
+## Forcing LiveKit, and the way back (issues #149, #150)
+
+Verified live on prod wa-1.34 with three headless avatars (no human needed).
+
+**A client can request the LiveKit upgrade.** Raise `SpaceUser.cpuLimited`:
+`updateSpaceUserMessage{spaceName, user:{spaceUserId, cpuLimited:true}, updateMask:{paths:["cpuLimited"]}}`.
+The back (`back/src/Model/Policies/TransitionPolicy.ts`) moves a WEBRTC bubble to
+LiveKit when `cpuLimited && userCount > 2` (and LiveKit is available and
+`LIVEKIT_SWITCH_ON_CPU_LIMITATION` is on, which it is on prod). **More than two
+users is required**: with just you and one avatar it does nothing. Timeline of a
+raise: `switchMessage{LIVEKIT}` +0.4 s, `livekitInvitationMessage` +0.5 s,
+connected and publishing +2.3 s. The members only need to be in the space; two
+headless werift peers can't ICE to each other but the server counts users, not
+connected peers. Avatars that spawn on the same spot do not form a bubble until
+someone walks: walk the others to within ~24 px of the first.
+
+**Lowering works, after a ~20 s hold-off.** Send `cpuLimited:false` (same message);
+about 20 s later the server sends `switchMessage{WEBRTC}` + `webRtcStart` for each
+peer and the mesh restarts. (Leaving also works: only that user leaving brings a
+flag-driven bubble back. The "never lowered" in the proto comment describes the
+front end, not the server.)
+
+**Message semantics:**
+- `switchMessage{strategy}` announces the strategy being switched **to**.
+- `finalizeSwitchMessage{strategy}` arrives ~5 s later and names the transport
+  being **shut down** (`WEBRTC` after an escalation, `LIVEKIT` after a
+  de-escalation). It carries no instruction for us. Treating it like
+  `switchMessage` hung up the freshly started mesh peers after a de-escalation
+  and left the avatar with no transport (#150).
+- On a de-escalation the server sends **no `livekitDisconnectMessage`** (observed:
+  none within 45 s of the switch). We drop the LiveKit room
+  ourselves on `switchMessage{WEBRTC}`; otherwise `play()`/`say()` would keep
+  routing into a LiveKit room nobody is listening to.
+
+Handy for testing the LiveKit path headlessly: three avatars, raise `cpuLimited`
+from one, lower it to test the de-escalation (#63).

@@ -257,11 +257,23 @@ export class WaAudio extends EventEmitter {
       case "webRtcDisconnectMessage":
         this._closePeer(this._connIdForUser(senderUserId), "peer disconnect");
         break;
-      case "switchMessage":
       case "finalizeSwitchMessage":
+        // Names the transport being SHUT DOWN (WEBRTC after an escalation,
+        // LIVEKIT after a de-escalation), so it says nothing about what to
+        // switch to. Treating it like switchMessage hung up the freshly
+        // started mesh peers after a de-escalation and left no transport (#150).
+        break;
+      case "switchMessage":
         if (payload.strategy && payload.strategy.toUpperCase() !== this.client.adapter.meeting.webrtcStrategyName) {
           this.emit("log", `meeting strategy → ${payload.strategy}; P2P audio idle`);
           this.hangup(`switched to ${payload.strategy}`);
+        } else if (payload.strategy && this._livekit) {
+          // A de-escalation back to the mesh: the server sends webRtcStart for
+          // the new peers but no livekitDisconnectMessage (observed live, #150),
+          // so drop the LiveKit room ourselves. Left connected it would win
+          // play()'s routing and publish into a room nobody is listening to.
+          this.emit("log", `meeting strategy → ${payload.strategy}; leaving LiveKit`);
+          this._disconnectLiveKit().catch((e) => this.emit("log", `LiveKit disconnect error: ${e.message}`));
         }
         break;
       case "livekitInvitationMessage":
