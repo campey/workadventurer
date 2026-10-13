@@ -142,7 +142,10 @@ function wireClient(client) {
     log(`invite from ${sender.name} → walking over`);
     walkToPlayer(sender, 90_000).then((r) => log("invite walk:", JSON.stringify(r)));
   });
-  client.on("close", (c) => log("socket closed", c.code, c.reason || ""));
+  client.on("close", (c) => {
+    const secs = (ms) => (ms == null ? "?" : `${Math.round(ms / 1000)}s`);
+    log("socket closed", c.code, c.reason || "", `(up ${secs(c.uptimeMs)}, silent ${secs(c.idleMs)})`);
+  });
 }
 
 // Reconnect-on-close belongs to the LIVE client only. Attempt clients made by

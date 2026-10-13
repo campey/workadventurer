@@ -519,7 +519,9 @@ avatar against a real room. Dates are when each was observed.
   file): `NEW_VERSION`, or a server `timeToRetry` ≥ 3600 s (WA sends 999999
   with `NEW_VERSION`), means don't auto-retry. The daemon exits 1 with the
   message — at initial connect, and for an established daemon via the
-  reconnector. Unknown codes keep the bounded 5-attempt retry.
+  reconnector. Unknown codes retry indefinitely (delays 2, 5, 10, 20, 30, then
+  60 s repeating — #138; it used to give up after 5 attempts, which ended an
+  overnight session on a flapping network).
 - **The exponential-chain lesson.** A rejected attempt makes the server close
   the socket. If the attempt client carries the "reconnect on close" handler,
   that close starts a *second* chain, and each of its attempts starts more:
@@ -527,7 +529,18 @@ avatar against a real room. Dates are when each was observed.
   belongs to the live client only (`watchLive` in `wa-daemon.mjs`);
   `createReconnector` (`src/reconnect.mjs`) keeps a single chain in flight and
   checks `deliberateShutdown` every iteration. A log tell: `reconnect attempt
-  1/5…` appearing repeatedly instead of `1/5`, `2/5`.
+  1 (down 0s)…` appearing repeatedly instead of counting up `1`, `2`, `3`.
+- **Liveness watchdog (#138).** The client's only outbound traffic is a position
+  re-broadcast every 5 s, and nothing checked that anything came back: in the
+  2026-10-08 soak the server closed us with `4000 … did not send a pong in time`
+  while we thought we were fine. `_startHeartbeat` (`wa-client.mjs`) sends a
+  transport-level `ws.ping()` every 15 s (also keeps idle NAT/proxy entries warm)
+  and terminates the socket after 45 s with no inbound frame or pong; the normal
+  close → reconnect path takes over. Verified live that the production-style
+  pusher (staging) answers ws pings (~150 ms). A tick that fires > 3 intervals
+  late is logged as `system stalled/slept` and grants one fresh window rather than
+  killing a socket that may be fine after a laptop wake. `socket closed` lines
+  now carry `(up Ns, silent Ns)` to tell periodic idle drops from network loss.
 - **Repro without production traffic:** `node scripts/fake-pusher.mjs 8855
   [code] [timeToRetry]` (serves `anonymLogin`, `/map` and a `/ws/room` that
   sends one `errorScreenMessage` then closes 1000), then
