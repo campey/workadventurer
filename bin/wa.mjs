@@ -38,7 +38,9 @@ const USAGE = `wa — WorkAdventure presence control
   global: --json  --if-running (no-op if the daemon isn't up)  --port <P>
 `;
 
-const { values: flags, positionals } = parseArgs({
+let parsed;
+try {
+  parsed = parseArgs({
   allowPositionals: true,
   options: {
     json: { type: "boolean", default: false },
@@ -55,7 +57,15 @@ const { values: flags, positionals } = parseArgs({
     cancel: { type: "boolean", default: false },
     help: { type: "boolean", default: false },
   },
-});
+  });
+} catch (e) {
+  // Text like "-5 degrees" is read as a flag. Say how to pass it instead of
+  // dumping a stack trace.
+  const hint = process.argv[2] === "say" ? ` (to speak text that starts with a dash: wa say -- "-5 degrees")` : "";
+  process.stderr.write(`wa: ${e.message.split("\n")[0]}${hint}\n`);
+  process.exit(2);
+}
+const { values: flags, positionals } = parsed;
 
 const [cmd, ...args] = positionals;
 if (!cmd || flags.help) {
