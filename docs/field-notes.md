@@ -399,11 +399,14 @@ daemon in the past.
   each move can shift the `apiVersionHash`. `wa-master` warns on sha drift;
   refresh it with `node scripts/vendor-proto.mjs master wa-master` (prints the
   recomputed hash — self-verified: `v1.33.5` → `bfd20fc4`).
-- **The `wa-master` adapter is behind staging (checked 2026-10-08).** Staging was at
-  `master@6ae415d`; the adapter tracks `7d628838` and lists hash `3fb30729`, while
-  `vendor-proto.mjs --check 6ae415d` gives `23c8eb8c` (the same as prod v1.34.0, and the
-  Android app joined staging with it). The CLI has not been re-tested against staging
-  since, so it is unknown whether it still connects.
+- **`wa-master` was refreshed to staging `master@d2e3ecfe` (2026-10-13, #145).** Staging
+  had moved on and answered the old hash (`3fb30729`) with `errorScreen NEW_VERSION`, so
+  the CLI could not join at all. Hash is now `b82fc568` (same as prod v1.34.1); the proto
+  is wire-identical to `wa-1.34` (`proto-diff.mjs` reports nothing). `selfcheck --target
+  wa-master` passes connect, move, bubble and area-meeting join (audio unexercised).
+  `vendor-proto.mjs` vendors the proto and *prints* the hash but does not edit the
+  adapter: set `trackedSha`, `apiVersionHashes` and `verifiedDate` by hand. The
+  `test/adapters.test.mjs` sha tests read `trackedSha`, so a refresh doesn't break them.
 - **Staging has its own everything.** Different pusher
   (`pusher.staging.workadventu.re`) and a **different woka catalogue** — a
   production woka id returns `invalid character texture`. Use a staging id
