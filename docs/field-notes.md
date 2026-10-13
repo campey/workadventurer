@@ -541,6 +541,20 @@ avatar against a real room. Dates are when each was observed.
   late is logged as `system stalled/slept` and grants one fresh window rather than
   killing a socket that may be fine after a laptop wake. `socket closed` lines
   now carry `(up Ns, silent Ns)` to tell periodic idle drops from network loss.
+- **Supervision: `wa join --keep-alive` (#138).** With the indefinite reconnect and
+  the heartbeat, a network outage no longer ends the daemon; what is left is it
+  being *killed* (OOM balloon #29, SIGKILL). `src/wa-supervisor.mjs` runs the
+  daemon and restarts it (backoff 2, 5, 10, 20, 30, 60 s; reset after a 5-minute
+  run) only when it dies from a signal or an unexpected code. Never restarted:
+  exit 0 (`wa leave`, SIGINT/SIGTERM), exit 1 (it never connected, or any
+  generic failure: "it was never alive"), exit 2/3 (usage / port), exit 4 (the
+  server refuses this client, e.g. `NEW_VERSION`: restarting would just hammer
+  it). Exit 4 is new; the daemon used to exit 1 for a refusal. Verified live:
+  `kill -9` on the daemon → back in the room 2 s later under a new pid, and
+  `wa leave` takes down both processes. Caveat: while the daemon is in the
+  restart backoff the control API is down, so a bare `wa status` says "not
+  joined" and a command that auto-starts a daemon (`needDaemon`) would race the
+  supervisor for the port.
 - **Repro without production traffic:** `node scripts/fake-pusher.mjs 8855
   [code] [timeToRetry]` (serves `anonymLogin`, `/map` and a `/ws/room` that
   sends one `errorScreenMessage` then closes 1000), then
