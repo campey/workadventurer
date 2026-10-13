@@ -114,13 +114,17 @@ test("no connected peers: returns the reason and never starts say.py", opts, asy
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("say.py failure resolves played:false with the reason and never lights the indicator", opts, async () => {
-  const { audio } = setup();
+test("say.py failure resolves played:false with the reason, never lights the indicator, and still primes peers", opts, async () => {
+  const { audio, peer } = setup();
   const r = await withEnv({ FAKE_SAY_MODE: "fail" }, () => audio.say("x"));
   assert.equal(r.played, false);
   assert.match(r.reason, /say\.py exited 3/);
-  assert.deepEqual(speaking(audio.client), []);
+  assert.equal(speaking(audio.client).includes(true), false, "indicator never lit");
   assert.equal(audio._play, null);
+  // _primeMic skips peers while a say holds the guard (a cold start lasts a
+  // minute); a say that produced nothing must not leave a peer that connected
+  // meanwhile with the red 'mic on, nothing arriving' icon (#10).
+  assert.ok(peer._rtp.length >= 15, `silence prime sent after the failed say (${peer._rtp.length} pkts)`);
 });
 
 test("on a LiveKit-escalated meeting say reports it is not built yet (slice 1)", opts, async () => {

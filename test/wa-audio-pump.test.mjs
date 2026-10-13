@@ -122,3 +122,37 @@ test("an empty source reports 'empty' without lighting the indicator", async () 
   assert.equal(r.reason, "empty");
   assert.deepEqual(speaking(audio.client), []);
 });
+
+test("a peer that connects mid-stream starts hearing the audio, with its own talkspurt marker", async () => {
+  const audio = new WaAudio(fakeClient());
+  const b = fakePeer();
+  let live;
+  const a = fakePeer((n) => { if (n === 5) live = [a, b]; });
+  live = [a];
+  await audio._pump(Array.from({ length: 12 }, (_, i) => pkt(i)), {
+    getTargets: () => live, isStopped: () => false,
+  });
+  assert.equal(a._rtp.length, 12, "the original peer hears everything");
+  assert.ok(b._rtp.length >= 5 && b._rtp.length <= 7, `late joiner got ${b._rtp.length} packets`);
+  assert.equal(b._rtp[0].header.marker, true, "its first packet is a talkspurt start");
+  assert.equal(b._rtp.filter((p) => p.header.marker).length, 1);
+  assert.equal(a._rtp.filter((p) => p.header.marker).length, 1, "existing peer's markers unchanged");
+});
+
+test("a pump started right after another is stopped continues the RTP timeline (no forward jump)", async () => {
+  const audio = new WaAudio(fakeClient());
+  const peer = fakePeer();
+  let stopA = false;
+  const pumpA = audio._pump(Array.from({ length: 100 }, (_, i) => pkt(i)), {
+    getTargets: () => [peer], isStopped: () => stopA,
+  });
+  await sleep(300);
+  stopA = true;
+  const countA = peer._rtp.length;
+  // B starts before A's pump has had a chance to run its cleanup
+  const pumpB = audio._pump([pkt(0), pkt(1)], { getTargets: () => [peer], isStopped: () => false });
+  await Promise.all([pumpA, pumpB]);
+  const lastA = peer._rtp[countA - 1].header.timestamp;
+  const firstB = peer._rtp.find((p, i) => i >= countA && p.header.marker).header.timestamp;
+  assert.ok(firstB - lastA < 960 + 48000 * 0.1, `timestamp jumped ${firstB - lastA} samples`);
+});

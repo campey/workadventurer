@@ -752,6 +752,7 @@ export class WaAudio extends EventEmitter {
     });
     const t0 = performance.now();
     let firstAudioAt = null;
+    let packetsSent = 0;
     try {
       if (!this._connectedPeers().length) return { played: false, reason: "no connected peers" };
       const source = speak(text, { ...this._tts, voice, signal: ac.signal });
@@ -767,6 +768,7 @@ export class WaAudio extends EventEmitter {
         indicator,
         prebuffer: PUMP_PREBUFFER_PACKETS,
       });
+      packetsSent = r.packetsSent;
       return {
         played: !stopped && r.packetsSent > 0,
         reason: r.reason,
@@ -782,6 +784,13 @@ export class WaAudio extends EventEmitter {
       return { played: false, reason: e.message };
     } finally {
       if (this._play === token) this._play = null;
+      // While a say held `_play` (a cold start can take a minute), _primeMic
+      // skipped any peer that connected, assuming a clip was about to reach
+      // it. A say that produced no audio leaves that peer with the red
+      // "mic on, nothing arriving" icon (#10), so prime now.
+      if (!stopped && packetsSent === 0 && this._connectedPeers().length) {
+        await this._primeMic().catch(() => {});
+      }
     }
   }
 
@@ -895,6 +904,11 @@ export class WaAudio extends EventEmitter {
       let firstSendAt = null;
       let startedAt = performance.now();
       let elapsedMs = 0;
+      // Peers can connect mid-stream (a say outlasts a cold start): every packet
+      // re-reads the live targets, and a newcomer gets its timestamp advanced
+      // over its own silent gap and a talkspurt marker on its first packet.
+      const known = new Set(targets);
+      const fresh = new Set();
       try {
         for (let pkt = queue.shift(); pkt; pkt = queue.shift() ?? (await pull())) {
           if (isStopped()) break;
@@ -902,19 +916,27 @@ export class WaAudio extends EventEmitter {
             const lateMs = performance.now() - (startedAt + elapsedMs);
             if (lateMs > PUMP_UNDERRUN_MS) {
               const gap = Math.round((lateMs / 1000) * 48000);
-              for (const p of targets) p.ts = (p.ts + gap) >>> 0;
+              for (const p of known) p.ts = (p.ts + gap) >>> 0;
               marker = true;
               startedAt = performance.now();
               elapsedMs = 0;
             }
           }
-          for (const p of targets) {
+          const live = getTargets();
+          for (const p of live) {
+            if (known.has(p)) continue;
+            known.add(p);
+            fresh.add(p);
+            const gapSamples = Math.round(((performance.now() - p.lastPlayEnd) / 1000) * 48000);
+            p.ts = (p.ts + Math.max(0, gapSamples)) >>> 0;
+          }
+          for (const p of live) {
             const header = new RtpHeader({
               payloadType: OPUS.payloadType,
               sequenceNumber: p.seq++ & 0xffff,
               timestamp: p.ts >>> 0,
               ssrc: p.ssrc,
-              marker,
+              marker: marker || fresh.has(p),
             });
             try {
               p.track.writeRtp(new RtpPacket(header, pkt.data));
@@ -927,20 +949,26 @@ export class WaAudio extends EventEmitter {
           }
           firstSendAt ??= performance.now();
           marker = false;
+          fresh.clear();
           elapsedMs += (pkt.samples / 48000) * 1000;
+          // Keep the end-of-audio time current on every packet, not only at the
+          // end: a pump that supersedes this one can start before this one's
+          // cleanup runs, and would otherwise measure its silent gap from a
+          // stale time and jump the RTP timestamp forward.
+          for (const p of known) p.lastPlayEnd = startedAt + elapsedMs;
           const drift = startedAt + elapsedMs - performance.now();
           if (drift > 1) await sleep(drift);
         }
       } finally {
         const endAt = performance.now();
-        for (const p of targets) p.lastPlayEnd = endAt;
+        for (const p of known) p.lastPlayEnd = endAt;
         this._setSpeaking(false, indicator);
       }
       return {
         packetsSent: sent,
         writeErrors: errs,
-        peers: targets.length,
-        peerStates: targets.map((p) => p.pc.connectionState),
+        peers: known.size,
+        peerStates: [...known].map((p) => p.pc.connectionState),
         firstSendAt,
       };
     } finally {
