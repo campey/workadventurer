@@ -697,3 +697,11 @@ true while speaking, no-op when idle; `wa status` during speech 91-154 ms (mostl
 start-up); `wa leave` mid-sentence leaves no `say`/`ffmpeg`/`libopus` process; `wa sound
 chime` unaffected. Stub audio arrives instantly, so first-audio times (~100 ms) say
 nothing about the real cloud.
+
+Live cloud (2026-10-13, real `say.py`, WEBRTC mesh, real browser peer, container warmed by `say.py --hello`):
+cold start to the handshake line 58.5 s; warm first audio 6.1-6.7 s from `wa say`, first RTP
+0.1-0.2 s after that (the 500 ms prebuffer fills as fast as the cloud produces); a 238-char
+paragraph = 829 packets (~16.6 s) heard as a steady voice; supersede, `wa say --cancel` and
+`wa leave` mid-sentence all stop within a packet or two and leave no `say.py`/`mimi_sidecar`/
+`libopus` process. `say.py --hello` plays on the local speakers, not in the world.
+Gotcha: `wa say` right after `wa join` returns 409 until the WEBRTC peer connects (~10 s).
