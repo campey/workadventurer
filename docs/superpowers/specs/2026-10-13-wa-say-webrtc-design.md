@@ -33,7 +33,8 @@ Opus packets, the same shape `readOggOpus` yields.
 `oggOpusPackets(asyncIterableOfBuffers)` is an async generator: buffers bytes, parses
 whole pages (capture pattern, segment table, lacing across pages), skips `OpusHead` and
 `OpusTags`, yields audio packets with sample counts from the TOC byte. It sits beside
-`readOggOpus` in `transcode.mjs`'s consumer, which is untouched. Unit-tested with
+`readOggOpus` in `src/ogg-opus.mjs`, which is untouched apart from exporting its
+`opusSamples` helper. Unit-tested with
 split-at-every-offset inputs.
 
 ### `WaAudio` (`src/wa-audio.mjs`)
@@ -62,12 +63,12 @@ split-at-every-offset inputs.
 
 ## Testing
 
-- Unit: Ogg demuxer (page splits, lacing, header skipping); `_pump` timing with a fake
-  clock (prebuffer, underrun -> marker, cancel mid-stream); `speak()` teardown with a
+- Unit: Ogg demuxer (page splits, lacing, header skipping); `_pump` timing with real timers and
+  generous tolerances (prebuffer, underrun -> marker, cancel mid-stream); `speak()` teardown with a
   fake child.
 - Offline end-to-end: a stub `WA_TTS_SAY` that cats the `hello_34f.csmr` fixture through
-  `mimi_sidecar.py`, daemon on a free port, avatar `wa-say`, a second peer joined to
-  hear it. Check first-audio latency, rate, interrupt, hang-up, `pgrep` for orphans.
+  `mimi_sidecar.py`, daemon on a free port, avatar `wa-say`, a real browser peer joined to
+  hear it (two headless werift peers cannot complete ICE on one host). Check first-audio latency, rate, interrupt, hang-up, `pgrep` for orphans.
 - Live cloud demo only after the offline run passes, after the user confirms the
   `--hello` handshake line, and with `modal_ctl.py cool` afterwards.
 - Regression: `wa sound` and the `scripts/selfcheck.mjs` run unchanged.
