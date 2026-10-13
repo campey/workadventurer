@@ -28,7 +28,7 @@ function tocFrameCount(pkt) {
   return pkt.length > 1 ? pkt[1] & 0x3f : 1; // code 3: count in the next byte
 }
 
-function opusSamples(pkt) {
+export function opusSamples(pkt) {
   // 48 kHz clock -> 48 samples per ms.
   return Math.round(48 * tocFrameMs(pkt[0]) * tocFrameCount(pkt));
 }

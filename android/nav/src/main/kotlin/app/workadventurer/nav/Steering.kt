@@ -107,6 +107,56 @@ fun frontOf(target: Target, me: Pt, spacing: Double = 64.0, grid: NavGrid? = nul
 }
 
 private const val RING_POINTS = 16
+private const val OUTSIDE_STEP_PX = 24.0
+private const val OUTSIDE_MAX_PX = 720.0
+
+/**
+ * The nearest point to [me] that is [free] and not [inside]: the way out of a region (a bubble, an area), found by
+ * widening rings around [me]. Null if nothing within reach qualifies.
+ */
+fun nearestOutside(me: Pt, inside: (Pt) -> Boolean, free: (Pt) -> Boolean = { true }): Pt? {
+    var r = OUTSIDE_STEP_PX
+    while (r <= OUTSIDE_MAX_PX) {
+        val hit = (0 until RING_POINTS)
+            .map { k -> Pt(me.x + cos(k * 2 * PI / RING_POINTS) * r, me.y + sin(k * 2 * PI / RING_POINTS) * r) }
+            .firstOrNull { free(it) && !inside(it) }
+        if (hit != null) return hit
+        r += OUTSIDE_STEP_PX
+    }
+    return null
+}
+
+/**
+ * The way out of a region over the walkable tiles of this grid: the first tile centre not [inside] that [me] can walk
+ * to, nearest by walking distance (breadth-first, same movement rules as [findPath]), within [OUTSIDE_MAX_PX]. A free
+ * point on the far side of a wall is not a way out. Null if nothing reachable qualifies.
+ */
+fun NavGrid.nearestFreeOutside(me: Pt, inside: (Pt) -> Boolean): Pt? {
+    val (mx, my) = pxToTile(me.x, me.y)
+    val (sx, sy) = nearestFree(mx, my) ?: return null
+    val maxSteps = (OUTSIDE_MAX_PX / tile).toInt()
+    val dist = IntArray(w * h) { -1 }
+    val queue = ArrayDeque<Int>()
+    dist[sy * w + sx] = 0
+    queue.add(sy * w + sx)
+    while (queue.isNotEmpty()) {
+        val cur = queue.removeFirst()
+        val cx = cur % w
+        val cy = cur / w
+        val c = tileCenterPx(cx, cy)
+        if (!inside(c)) return c
+        if (dist[cur] >= maxSteps) continue
+        for (dy in -1..1) for (dx in -1..1) {
+            if (dx == 0 && dy == 0) continue
+            val nx = cx + dx
+            val ny = cy + dy
+            if (isTileBlocked(nx, ny)) continue
+            if (dx != 0 && dy != 0 && (isTileBlocked(cx + dx, cy) || isTileBlocked(cx, cy + dy))) continue
+            if (dist[ny * w + nx] == -1) { dist[ny * w + nx] = dist[cur] + 1; queue.add(ny * w + nx) }
+        }
+    }
+    return null
+}
 
 private fun NavGrid.nearestFreeOnRing(center: Pt, radius: Double, me: Pt): Pt? =
     (0 until RING_POINTS)

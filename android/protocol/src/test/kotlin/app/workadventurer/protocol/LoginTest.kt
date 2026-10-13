@@ -39,8 +39,8 @@ class LoginTest {
     @Test
     fun wsUrlUsesApiVersionHashOverride() {
         // For probing a server build that has no adapter yet (mirrors the Node client's WA_VERSION).
-        val u = wsUrl(RoomConfig(name = "n", apiVersionHash = "23c8eb8c"), tabId = "t")
-        assertEquals("23c8eb8c", u.queryParameter("version"))
+        val u = wsUrl(RoomConfig(name = "n", apiVersionHash = "b82fc568"), tabId = "t")
+        assertEquals("b82fc568", u.queryParameter("version"))
     }
 
     @Test

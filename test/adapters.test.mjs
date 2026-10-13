@@ -10,6 +10,9 @@ import {
   resolveAdapter,
 } from "../src/adapters/index.mjs";
 
+// Whatever sha wa-master currently tracks — so a staging refresh doesn't break these tests.
+const TRACKED = ADAPTERS["wa-master"].trackedSha;
+
 test("matchVersion picks a release minor from landing-page HTML", () => {
   assert.deepEqual(matchVersion('<meta>build v1.33.5</meta>'), {
     kind: "release",
@@ -79,7 +82,7 @@ test("resolveAdapter: probed unknown minor -> newest released + warn", async () 
 test("resolveAdapter: probed master, sha matches tracked -> no warn", async () => {
   const r = await resolveAdapter({
     roomUrl: "https://play.staging.workadventu.re/@/a/b/c",
-    probeFn: async () => ({ kind: "master", sha: waMaster.trackedSha, raw: `master@${waMaster.trackedSha}` }),
+    probeFn: async () => ({ kind: "master", sha: TRACKED, raw: `master@${TRACKED}` }),
   });
   assert.equal(r.adapter.id, "wa-master");
   assert.ok(!r.warn);
@@ -93,7 +96,7 @@ test("resolveAdapter: probed master, sha drifted -> warn names both shas", async
   assert.equal(r.adapter.id, "wa-master");
   assert.equal(r.warn, true);
   assert.match(r.why, /abc1234/);
-  assert.match(r.why, new RegExp(waMaster.trackedSha));
+  assert.match(r.why, new RegExp(TRACKED));
 });
 
 test("resolveAdapter: probe fails, known host -> allowlist", async () => {
