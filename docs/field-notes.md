@@ -639,6 +639,8 @@ GitHub API can be blocked, a shallow `git clone --depth 1 --branch vX.Y.Z` works
 `sha1sum protos/messages.proto ../libs/messages/src/JsonMessages/* | sha1sum | cut -c1-8`
 (paths must be relative to `messages/`, or the result is wrong).
 
+**Checked 2026-10-13:** upstream's newest tag is still v1.34.1 and prod accepts `b82fc568`. `master` (d2e3ecf, that day) hashes to the same `b82fc568`, so the staging `wa-master` adapter, which was pinned at 7d628838 / `3fb30729` from 2026-09-10, was refreshed (proto re-vendored; `proto-diff` reports no wire-breaking change referenced by `src/`; `selfcheck --target wa-master` passes against prod). The two `resolveAdapter` master tests now read the adapter's `trackedSha` instead of hardcoding it.
+
 **What this process cannot see:** a behaviour change behind an unchanged message
 shape. The adapter's `verified` record states what was exercised live and what
 wasn't; treat `unexercised` as inherited on faith.

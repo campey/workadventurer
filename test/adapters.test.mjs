@@ -1,3 +1,4 @@
+import waMaster from "../src/adapters/wa-master.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -78,7 +79,7 @@ test("resolveAdapter: probed unknown minor -> newest released + warn", async () 
 test("resolveAdapter: probed master, sha matches tracked -> no warn", async () => {
   const r = await resolveAdapter({
     roomUrl: "https://play.staging.workadventu.re/@/a/b/c",
-    probeFn: async () => ({ kind: "master", sha: "7d628838", raw: "master@7d628838" }),
+    probeFn: async () => ({ kind: "master", sha: waMaster.trackedSha, raw: `master@${waMaster.trackedSha}` }),
   });
   assert.equal(r.adapter.id, "wa-master");
   assert.ok(!r.warn);
@@ -92,7 +93,7 @@ test("resolveAdapter: probed master, sha drifted -> warn names both shas", async
   assert.equal(r.adapter.id, "wa-master");
   assert.equal(r.warn, true);
   assert.match(r.why, /abc1234/);
-  assert.match(r.why, /7d628838/);
+  assert.match(r.why, new RegExp(waMaster.trackedSha));
 });
 
 test("resolveAdapter: probe fails, known host -> allowlist", async () => {

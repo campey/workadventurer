@@ -1,7 +1,7 @@
 repo: workadventure/workadventure
 ref: master
-sha: 7d628838d9449e41684dda32a8514016f5709e6a
-shortSha: 7d628838
-vendored: 2026-09-10T11:56:11.498Z
-apiVersionHash: 3fb30729
-jsonMessages: 16 files
+sha: d2e3ecfe831357805e55c8a8c063b4a607804629
+shortSha: d2e3ecfe
+vendored: 2026-10-13T12:00:00.000Z
+apiVersionHash: b82fc568
+jsonMessages: 19 files
