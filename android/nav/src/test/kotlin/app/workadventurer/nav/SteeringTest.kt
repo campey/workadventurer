@@ -80,4 +80,27 @@ class SteeringTest {
         assertTrue(!g.isPxBlocked(s.x, s.y))
         assertNull(NavGrid(2, 2, 32, BooleanArray(4) { true }).snapToFree(10.0, 10.0))
     }
+
+    @Test
+    fun snapToReachableNeverPicksAWalledOffPocket() {
+        // The centre tile (3,3) is free but closed in by a ring of walls; we stand outside at (0,0).
+        val g = gridOf(
+            ".......",
+            ".......",
+            "..###..",
+            "..#.#..",
+            "..###..",
+            ".......",
+            ".......",
+        )
+        val pocket = g.tileCenterPx(3, 3)
+        val p = g.snapToReachable(g.tileCenterPx(0, 0), pocket.x, pocket.y)!!
+        assertTrue(g.findPath(g.tileCenterPx(0, 0), p) != null, "unreachable spot $p")
+        assertTrue(!g.isPxBlocked(p.x, p.y))
+        // A reachable free point stays exactly where it is.
+        assertEquals(Pt(10.0, 10.0), g.snapToReachable(g.tileCenterPx(0, 0), 10.0, 10.0))
+        // From inside the pocket, the pocket itself is the reachable region.
+        val inside = g.snapToReachable(pocket, pocket.x, pocket.y)!!
+        assertEquals(pocket, inside)
+    }
 }

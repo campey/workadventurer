@@ -27,6 +27,45 @@ fun NavGrid.snapToFree(x: Double, y: Double): Pt? {
     return tileCenterPx(free.first, free.second)
 }
 
+/**
+ * Like [snapToFree], but the result is a place [from] can actually walk to: the point itself when it is on a free tile
+ * connected to [from], else the centre of the nearest such tile. A free tile in a walled-off pocket, or on an island
+ * behind a wall, is skipped. Null when nothing is reachable. Same movement rules as [findPath] (8 directions, no corner
+ * cutting). Mirrors `MapNav.reachableFrom` in src/map-nav.mjs.
+ */
+fun NavGrid.snapToReachable(from: Pt, x: Double, y: Double): Pt? {
+    val (fx, fy) = pxToTile(from.x, from.y)
+    val (sx, sy) = nearestFree(fx, fy) ?: return null
+    val seen = BooleanArray(w * h)
+    val stack = ArrayDeque<Int>()
+    seen[sy * w + sx] = true
+    stack.add(sy * w + sx)
+    while (stack.isNotEmpty()) {
+        val cur = stack.removeLast()
+        val cx = cur % w
+        val cy = cur / w
+        for (dy in -1..1) for (dx in -1..1) {
+            if (dx == 0 && dy == 0) continue
+            val nx = cx + dx
+            val ny = cy + dy
+            if (isTileBlocked(nx, ny)) continue
+            if (dx != 0 && dy != 0 && (isTileBlocked(cx + dx, cy) || isTileBlocked(cx, cy + dy))) continue
+            if (!seen[ny * w + nx]) { seen[ny * w + nx] = true; stack.add(ny * w + nx) }
+        }
+    }
+    val (gx, gy) = pxToTile(x, y)
+    if (inBounds(gx, gy) && seen[gy * w + gx]) return Pt(x, y)
+    var best: Pt? = null
+    var bestD = Double.MAX_VALUE
+    for (t in seen.indices) {
+        if (!seen[t]) continue
+        val c = tileCenterPx(t % w, t / w)
+        val d = hypot(c.x - x, c.y - y)
+        if (d < bestD) { bestD = d; best = c }
+    }
+    return best
+}
+
 /** Where to stand `spacing` px short of [target], on the side we approach from (last resort for [frontOf]). */
 fun standOffPoint(me: Pt, target: Pt, spacing: Double = 72.0, grid: NavGrid? = null): Pt {
     var dx = me.x - target.x
