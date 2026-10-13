@@ -13,7 +13,7 @@ import { speak } from "../src/say.mjs";
 const hasFfmpeg = (() => {
   try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); return true; } catch { return false; }
 })();
-const FAKE = fileURLToPath(new URL("./helpers/fake-say.mjs", import.meta.url));
+const FAKE = fileURLToPath(new URL("../scripts/fake-say.mjs", import.meta.url));
 const base = { python: process.execPath, sayPath: FAKE };
 const opts = { skip: !hasFfmpeg, timeout: 20000 };
 

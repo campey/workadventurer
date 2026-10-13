@@ -553,7 +553,7 @@ gh issue comment 7 --repo campey/workadventurer --body "Slice 2 progress: increm
 
 **Files:**
 - Create: `src/say.mjs`
-- Create: `test/helpers/fake-say.mjs`
+- Create: `scripts/fake-say.mjs`
 - Test: `test/say.test.mjs`
 
 **Interfaces:**
@@ -562,7 +562,7 @@ gh issue comment 7 --repo campey/workadventurer --body "Slice 2 progress: increm
 
 - [ ] **Step 1: Write the stand-in for say.py**
 
-Create `test/helpers/fake-say.mjs` (used as `sayPath` with `python: process.execPath`):
+Create `scripts/fake-say.mjs` (used as `sayPath` with `python: process.execPath`):
 
 ```js
 // Stand-in for huggingsesame's `say.py --pcm-out` so tests and offline demos
@@ -624,7 +624,7 @@ import { speak } from "../src/say.mjs";
 const hasFfmpeg = (() => {
   try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); return true; } catch { return false; }
 })();
-const FAKE = fileURLToPath(new URL("./helpers/fake-say.mjs", import.meta.url));
+const FAKE = fileURLToPath(new URL("../scripts/fake-say.mjs", import.meta.url));
 const base = { python: process.execPath, sayPath: FAKE };
 const opts = { skip: !hasFfmpeg, timeout: 20000 };
 
@@ -813,7 +813,7 @@ Expected: 6 tests PASS (or all skipped, with a visible skip, if ffmpeg is missin
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/say.mjs test/helpers/fake-say.mjs test/say.test.mjs
+git add src/say.mjs scripts/fake-say.mjs test/say.test.mjs
 git commit -m "$(cat <<'EOF'
 feat: speak() streams say.py PCM through ffmpeg to Opus packets, with full teardown (#7)
 
@@ -859,7 +859,7 @@ import { WaAudio } from "../src/wa-audio.mjs";
 const hasFfmpeg = (() => {
   try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); return true; } catch { return false; }
 })();
-const FAKE = fileURLToPath(new URL("./helpers/fake-say.mjs", import.meta.url));
+const FAKE = fileURLToPath(new URL("../scripts/fake-say.mjs", import.meta.url));
 const opts = { skip: !hasFfmpeg, timeout: 30000 };
 
 function fakeClient() {
@@ -1246,7 +1246,7 @@ Two headless werift peers cannot complete ICE on one host (see the header of `te
 lsof -iTCP -sTCP:LISTEN -P | grep node        # note which ports are taken (6767 and 8787 are not ours)
 export WA_DAEMON_PORT=8791                    # any free port other than 8787
 export WA_TTS_PYTHON="$(command -v node)"
-export WA_TTS_SAY="$PWD/test/helpers/fake-say.mjs"
+export WA_TTS_SAY="$PWD/scripts/fake-say.mjs"
 export FAKE_SAY_SECONDS=8
 node bin/wa.mjs join --detach --name wa-say --port 8791
 node bin/wa.mjs status --port 8791
