@@ -48,6 +48,7 @@ import {
 } from "@livekit/rtc-node";
 import { readOggOpus } from "./ogg-opus.mjs";
 import { ensureOpus, ensurePcm, silenceOpusFile, invalidateCache } from "./transcode.mjs";
+import { speak } from "./say.mjs";
 import { SttStream } from "./wa-stt.mjs";
 import { writeFileSync } from "node:fs"; // TEMP: SDP_DEBUG diagnostic only
 
@@ -144,7 +145,7 @@ function opusSamples(pkt) {
 
 export class WaAudio extends EventEmitter {
   /** @param {import("./wa-client.mjs").WorkAdventureClient} client */
-  constructor(client, { iceServers, listen = false } = {}) {
+  constructor(client, { iceServers, listen = false, tts = {} } = {}) {
     super();
     this.client = client;
     this.iceServers = iceServers ?? [{ urls: "stun:stun.l.google.com:19302" }];
@@ -164,6 +165,7 @@ export class WaAudio extends EventEmitter {
     // resurrecting a dead connection (#32).
     this._closedConnIds = new Set();
     this._play = null; // { stop(): void } while a clip is playing
+    this._tts = tts; // { python, sayPath, backend? } for say() (issue #7)
     this._silencePath = null; // cached short silence clip for the connect-time prime
     this._livekit = null; // { room, source, track } while a LiveKit-escalated meeting is active (#8)
     this._livekitConnecting = null; // Promise while _connectLiveKit() is in flight (#8 connect race)
@@ -727,6 +729,67 @@ export class WaAudio extends EventEmitter {
    */
   play(file, opts = {}) {
     return this._livekit ? this._playLiveKit(file, opts) : this._playWebrtc(file, opts);
+  }
+
+  /**
+   * Speak `text` to every connected WEBRTC peer: say.py streams PCM, ffmpeg
+   * encodes it to Opus (src/say.mjs), and _pump paces it out as RTP with a
+   * 500 ms prebuffer. Claims the same `_play` token as play(), so a new say (or
+   * a sound) supersedes it and hangup() stops it. Resolves when speech ends or
+   * is stopped; never rejects. LiveKit-escalated meetings are slice 1 of #7.
+   */
+  async say(text, { voice, indicator = true } = {}) {
+    if (this._livekit) return { played: false, reason: "livekit say not implemented yet" };
+    this._play?.stop();
+    const ac = new AbortController();
+    let stopped = false;
+    const token = (this._play = {
+      kind: "say",
+      stop: () => {
+        stopped = true;
+        ac.abort();
+      },
+    });
+    const t0 = performance.now();
+    let firstAudioAt = null;
+    try {
+      if (!this._connectedPeers().length) return { played: false, reason: "no connected peers" };
+      const source = speak(text, { ...this._tts, voice, signal: ac.signal });
+      const packets = (async function* () {
+        for await (const p of source) {
+          firstAudioAt ??= performance.now();
+          yield p;
+        }
+      })();
+      const r = await this._pump(packets, {
+        getTargets: () => this._connectedPeers(),
+        isStopped: () => stopped,
+        indicator,
+        prebuffer: PUMP_PREBUFFER_PACKETS,
+      });
+      return {
+        played: !stopped && r.packetsSent > 0,
+        reason: r.reason,
+        packetsSent: r.packetsSent,
+        writeErrors: r.writeErrors,
+        peers: r.peers,
+        peerStates: r.peerStates,
+        firstAudioMs: firstAudioAt == null ? null : Math.round(firstAudioAt - t0),
+        firstRtpMs: r.firstSendAt == null ? null : Math.round(r.firstSendAt - t0),
+        transport: "webrtc",
+      };
+    } catch (e) {
+      return { played: false, reason: e.message };
+    } finally {
+      if (this._play === token) this._play = null;
+    }
+  }
+
+  /** Stop a say in flight (not a sound/clip). @returns {boolean} whether one was stopped */
+  stopSay() {
+    if (this._play?.kind !== "say") return false;
+    this._play.stop();
+    return true;
   }
 
   _connectedPeers() {
