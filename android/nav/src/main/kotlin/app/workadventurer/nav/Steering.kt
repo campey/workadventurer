@@ -28,12 +28,10 @@ fun NavGrid.snapToFree(x: Double, y: Double): Pt? {
 }
 
 /**
- * Like [snapToFree], but the result is a place [from] can actually walk to: the point itself when it is on a free tile
- * connected to [from], else the centre of the nearest such tile. A free tile in a walled-off pocket, or on an island
- * behind a wall, is skipped. Null when nothing is reachable. Same movement rules as [findPath] (8 directions, no corner
- * cutting). Mirrors `MapNav.reachableFrom` in src/map-nav.mjs.
+ * Which tiles [from] can walk to (true = reachable), under the same rules as [findPath] (8 directions, no corner
+ * cutting). The start snaps to the nearest free tile; null if there is none. Mirrors `MapNav.reachableFrom`.
  */
-fun NavGrid.snapToReachable(from: Pt, x: Double, y: Double): Pt? {
+fun NavGrid.reachableFrom(from: Pt): BooleanArray? {
     val (fx, fy) = pxToTile(from.x, from.y)
     val (sx, sy) = nearestFree(fx, fy) ?: return null
     val seen = BooleanArray(w * h)
@@ -53,6 +51,17 @@ fun NavGrid.snapToReachable(from: Pt, x: Double, y: Double): Pt? {
             if (!seen[ny * w + nx]) { seen[ny * w + nx] = true; stack.add(ny * w + nx) }
         }
     }
+    return seen
+}
+
+/**
+ * Like [snapToFree], but the result is a place [from] can actually walk to: the point itself when it is on a free tile
+ * connected to [from], else the centre of the nearest such tile. A free tile in a walled-off pocket, or on an island
+ * behind a wall, is skipped. Null when nothing is reachable. Same movement rules as [findPath] (8 directions, no corner
+ * cutting). Mirrors `MapNav.reachableFrom` in src/map-nav.mjs.
+ */
+fun NavGrid.snapToReachable(from: Pt, x: Double, y: Double): Pt? {
+    val seen = reachableFrom(from) ?: return null
     val (gx, gy) = pxToTile(x, y)
     if (inBounds(gx, gy) && seen[gy * w + gx]) return Pt(x, y)
     var best: Pt? = null

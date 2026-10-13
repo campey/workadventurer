@@ -39,6 +39,9 @@ const DEFAULTS = {
 const DIRECTION = { UP: 0, RIGHT: 1, DOWN: 2, LEFT: 3 };
 const AVAILABILITY_ONLINE = 1;
 
+// A start region smaller than this counts as a pocket we may be wrongly sealed in; see _navTo's no-route.
+const NO_ROUTE_MIN_OPEN_TILES = 50;
+
 export class WorkAdventureClient extends EventEmitter {
   constructor(opts = {}) {
     super();
@@ -971,6 +974,19 @@ export class WorkAdventureClient extends EventEmitter {
         }
       } else if (path?.length && blocked === false) {
         path[path.length - 1] = [gx, gy];
+      }
+      // null = findPath found no route (an unreachable island, or a goal sealed off). From open floor a straight
+      // walk would cross walls and claim success, so fail. When we are ourselves sealed in a tiny pocket the map
+      // is probably wrong about us, so keep the straight-line escape (movement is client-authoritative).
+      if (path === null && this.nav.reachableFrom) {
+        const reach = this.nav.reachableFrom(this.pos.x, this.pos.y);
+        let open = 0;
+        if (reach) for (let i = 0; i < reach.length; i++) open += reach[i];
+        if (open >= NO_ROUTE_MIN_OPEN_TILES) {
+          this.pos.moving = false;
+          this._emitMove(false);
+          return { arrived: false, reason: "no-route" };
+        }
       }
       if (!path || path.length === 0) {
         // Trust walkTo()'s own result instead of discarding it.

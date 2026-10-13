@@ -73,3 +73,27 @@ test("nearestEmptyArea skips an area whose spot the avatar cannot walk to", () =
   const spot = n.nearestEmptyArea(48, 48, [], {});
   assert.equal(spot.name, "Open");
 });
+
+test("navTo to a free tile on an unreachable island fails with no-route instead of walking through walls", async () => {
+  const c = clientInRedTable();
+  // Free tile (95,23) is in the 942-tile east region, cut off from the main floor by a one-tile diagonal wall.
+  const [gx, gy] = nav.tileCenterPx(95, 23);
+  assert.equal(nav.findPath(c.pos.x, c.pos.y, gx, gy), null, "precondition: no route");
+  const start = { x: c.pos.x, y: c.pos.y };
+  const t = Date.now();
+  const r = await c.navTo(gx, gy, { stopWithin: 16, timeoutMs: 15000 });
+  assert.deepEqual([r.arrived, r.reason], [false, "no-route"]);
+  assert.ok(Date.now() - t < 2000, "fails at once");
+  assert.deepEqual([c.pos.x, c.pos.y], [start.x, start.y], "did not move");
+});
+
+test("navTo still walks straight when the start itself is sealed in a tiny pocket (the map may be wrong there)", async () => {
+  const ring = [];
+  for (let x = 9; x <= 11; x++) for (let y = 9; y <= 11; y++) if (!(x === 10 && y === 10)) ring.push([x, y]);
+  const small = new MapNav({ width: 20, height: 20, tile: 32, blocked: ring.map(([x, y]) => y * 20 + x) });
+  const c = new WorkAdventureClient({ adapter: { envelope: "seq-len-v1" } });
+  c.nav = small; c._emitMove = () => {};
+  [c.pos.x, c.pos.y] = small.tileCenterPx(10, 10); // inside the sealed pocket
+  const r = await c.navTo(...small.tileCenterPx(4, 10), { stopWithin: 16, timeoutMs: 15000 });
+  assert.equal(r.arrived, true, `got ${JSON.stringify(r)}`);
+});

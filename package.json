@@ -21,7 +21,7 @@
   },
   "scripts": {
     "wa": "node bin/wa.mjs",
-    "test": "node --test",
+    "test": "node --test \"test/**/*.test.mjs\" android/tools/call-log-summary.test.mjs",
     "find-player": "node src/find-player.mjs",
     "build:collision": "node scripts/build-collision.mjs",
     "scenarios": "node scripts/scenarios.mjs"
