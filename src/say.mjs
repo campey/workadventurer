@@ -26,11 +26,11 @@ const ffmpegArgs = [
  *          signal?:AbortSignal, ffmpegPath?:string, killGraceMs?:number}} opts
  * @returns {AsyncGenerator<{data: Buffer, samples: number}>}
  */
-export async function* speak(
+export async function* speakWebrtc(
   text,
   { python, sayPath, voice, backend = "modal", signal, ffmpegPath = "ffmpeg", killGraceMs = 2000 } = {}
 ) {
-  if (!python || !sayPath) throw new Error("speak: python and sayPath are required");
+  if (!python || !sayPath) throw new Error("speakWebrtc: python and sayPath are required");
   if (signal?.aborted) return;
 
   const children = [];
@@ -86,7 +86,7 @@ export async function* speak(
     }
     const [s, f] = await Promise.all([say.exited, ff.exited]);
     if (signal?.aborted) return;
-    if (spawnError) throw new Error(`speak: ${spawnError.message}`);
+    if (spawnError) throw new Error(`speakWebrtc: ${spawnError.message}`);
     const last = (rec) => rec.tail.trim().split("\n").pop();
     // say.py's own failure first; but a say.py we killed (code null) because
     // ffmpeg died is ffmpeg's story.

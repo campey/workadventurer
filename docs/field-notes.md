@@ -699,7 +699,7 @@ vendored proto (`proto/wa-1.33/messages.proto`):
   treats a packet more than 60 ms late as a new talkspurt (marker bit, RTP timestamp
   advanced over the gap, clock re-based). File playback keeps prebuffer 0.
 - Teardown trap: a child's `close` event waits for all its stdio, so after an early
-  stop `say.py`'s unread stdout kept it from ever firing. `speak()` destroys the
+  stop `say.py`'s unread stdout kept it from ever firing. `speakWebrtc()` destroys the
   child streams before awaiting exit.
 - `node --test` runs every file under `test/` as a test. A helper there that blocks
   (e.g. reads stdin) hangs the whole suite, so the say.py stand-in lives in

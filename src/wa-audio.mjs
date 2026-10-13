@@ -48,7 +48,7 @@ import {
 } from "@livekit/rtc-node";
 import { readOggOpus } from "./ogg-opus.mjs";
 import { ensureOpus, ensurePcm, silenceOpusFile, invalidateCache } from "./transcode.mjs";
-import { speak } from "./say.mjs";
+import { speakWebrtc } from "./say.mjs";
 import { SttStream } from "./wa-stt.mjs";
 import { writeFileSync } from "node:fs"; // TEMP: SDP_DEBUG diagnostic only
 
@@ -767,7 +767,7 @@ export class WaAudio extends EventEmitter {
     let packetsSent = 0;
     try {
       if (!this._connectedPeers().length) return { played: false, reason: "no connected peers" };
-      const source = speak(text, { ...this._tts, voice, signal: ac.signal });
+      const source = speakWebrtc(text, { ...this._tts, voice, signal: ac.signal });
       const packets = (async function* () {
         for await (const p of source) {
           firstAudioAt ??= performance.now();
