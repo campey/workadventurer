@@ -129,10 +129,11 @@ export class LiveWorld extends EventEmitter {
     const meetings = (this.client.areas ?? []).filter((a) => (a.rawProps ?? []).some((p) => p.type === "livekitRoomProperty"));
     const inMeeting = (px, py) =>
       meetings.some((a) => px >= a.x - PAD && px <= a.x + a.w + PAD && py >= a.y - PAD && py <= a.y + a.h + PAD);
+    const reach = nav.reachableFrom(this.client.pos.x, this.client.pos.y); // only tiles the avatar can walk to
     let best = null;
     for (let ty = 0; ty < nav.h; ty++) {
       for (let tx = 0; tx < nav.w; tx++) {
-        if (nav.isTileBlocked(tx, ty)) continue;
+        if (nav.isTileBlocked(tx, ty) || (reach && !reach[ty * nav.w + tx])) continue;
         const [cx, cy] = nav.tileCenterPx(tx, ty);
         const d = Math.hypot(cx - x, cy - y);
         if ((best && d >= best.d) || inMeeting(cx, cy)) continue;
@@ -148,10 +149,11 @@ export class LiveWorld extends EventEmitter {
     const cx = x + w / 2, cy = y + h / 2;
     const nav = this.client.nav;
     if (!nav) return { x: cx, y: cy };
+    const reach = nav.reachableFrom(this.client.pos.x, this.client.pos.y);
     let best = null;
     for (let ty = Math.floor(y / nav.tile); ty <= Math.floor((y + h) / nav.tile); ty++) {
       for (let tx = Math.floor(x / nav.tile); tx <= Math.floor((x + w) / nav.tile); tx++) {
-        if (nav.isTileBlocked(tx, ty)) continue;
+        if (nav.isTileBlocked(tx, ty) || (reach && !reach[ty * nav.w + tx])) continue;
         const [px, py] = nav.tileCenterPx(tx, ty);
         if (px < x || px > x + w || py < y || py > y + h) continue;
         const d = Math.hypot(px - cx, py - cy);

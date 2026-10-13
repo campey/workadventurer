@@ -104,6 +104,20 @@ test("openSpotNear: ignores non-meeting areas, and a free point outside areas st
   assert.deepEqual(w.openSpotNear(300, 200), { x: 304, y: 208 });
 });
 
+test("openSpotNear: never picks a tile the avatar cannot walk to (a walled-off pocket)", () => {
+  const w = mkLive();
+  // A closed ring of solid tiles around the free pocket tile (10,10).
+  const ring = [];
+  for (let x = 9; x <= 11; x++) for (let y = 9; y <= 11; y++) if (!(x === 10 && y === 10)) ring.push([x, y]);
+  w.client.nav = mkNav(ring);
+  w.client.areas = [];
+  w.client.pos.x = 48; w.client.pos.y = 48; // outside the ring
+  const pocket = w.client.nav.tileCenterPx(10, 10);
+  const p = w.openSpotNear(...pocket);
+  assert.ok(w.client.nav.findPath(w.client.pos.x, w.client.pos.y, p.x, p.y), `unreachable spot ${JSON.stringify(p)}`);
+  assert.ok(Math.hypot(p.x - pocket[0], p.y - pocket[1]) < 130, "still close to the requested point");
+});
+
 test("openSpotNear without a collision map returns the point unchanged", () => {
   const w = mkLive();
   w.client.nav = null;

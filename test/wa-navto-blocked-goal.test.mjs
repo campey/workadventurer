@@ -58,3 +58,18 @@ test("navTo to a free goal whose tile centre is further than stopWithin walks th
   assert.equal(r.arrived, true, `got ${JSON.stringify(r)}`);
   assert.ok(Math.hypot(c.pos.x - gx, c.pos.y - gy) <= 16);
 });
+
+test("nearestEmptyArea skips an area whose spot the avatar cannot walk to", () => {
+  // 20x20 tiles; the nearer area sits inside a closed ring of solid tiles, the farther one in the open.
+  const ring = [];
+  for (let x = 9; x <= 11; x++) for (let y = 9; y <= 11; y++) if (!(x === 10 && y === 10)) ring.push([x, y]);
+  const n = new MapNav({
+    width: 20, height: 20, tile: 32, blocked: ring.map(([x, y]) => y * 20 + x),
+    areas: [
+      { name: "Walled", x: 288, y: 288, w: 64, h: 64 },   // centre tile (10,10), the pocket
+      { name: "Open", x: 480, y: 64, w: 96, h: 96 },
+    ],
+  });
+  const spot = n.nearestEmptyArea(48, 48, [], {});
+  assert.equal(spot.name, "Open");
+});
