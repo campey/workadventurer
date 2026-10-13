@@ -671,3 +671,40 @@ vendored proto (`proto/wa-1.33/messages.proto`):
     issue, affects any identity including a real logged-in browser
     session). Net effect either way: #39 needs a live Matrix-enabled area
     on the map before it's testable, which it currently doesn't have.
+
+## `wa say` (issue #7)
+
+- Interface: `python3 <huggingsesame>/src/say.py --pcm-out --quiet --backend modal -`
+  with the text on **stdin**; stdout is raw 24 kHz mono s16le PCM. Config:
+  `WA_TTS_PYTHON`, `WA_TTS_SAY`. All TTS work stays in that repo.
+- WEBRTC mesh path: `src/say.mjs` pipes the PCM into one persistent
+  `ffmpeg … -c:a libopus -frame_duration 20 -page_duration 20000 -flush_packets 1 -f ogg`.
+  **`-page_duration 20000` is what keeps latency at one frame**; without it ffmpeg
+  batches ~1 s per Ogg page. `src/ogg-stream.mjs` demuxes it incrementally and
+  `WaAudio._pump` paces the packets as RTP.
+- `_pump` with `prebuffer` > 0 (say only) holds 500 ms before the first packet and
+  treats a packet more than 60 ms late as a new talkspurt (marker bit, RTP timestamp
+  advanced over the gap, clock re-based). File playback keeps prebuffer 0.
+- Teardown trap: a child's `close` event waits for all its stdio, so after an early
+  stop `say.py`'s unread stdout kept it from ever firing. `speak()` destroys the
+  child streams before awaiting exit.
+- `node --test` runs every file under `test/` as a test. A helper there that blocks
+  (e.g. reads stdin) hangs the whole suite, so the say.py stand-in lives in
+  `scripts/fake-say.mjs`.
+- LiveKit transport is not built yet (slice 1 of #7): `POST /say` returns 501 there.
+
+Offline end-to-end (2026-10-13, stub `scripts/fake-say.mjs`, real browser peer, WEBRTC mesh):
+8 s tone = 401 RTP packets, heard as a steady tone; supersede restarts cleanly (one
+small blip at the cut-over, i.e. the old utterance ends abruptly); `wa say --cancel`
+true while speaking, no-op when idle; `wa status` during speech 91-154 ms (mostly CLI
+start-up); `wa leave` mid-sentence leaves no `say`/`ffmpeg`/`libopus` process; `wa sound
+chime` unaffected. Stub audio arrives instantly, so first-audio times (~100 ms) say
+nothing about the real cloud.
+
+Live cloud (2026-10-13, real `say.py`, WEBRTC mesh, real browser peer, container warmed by `say.py --hello`):
+cold start to the handshake line 58.5 s; warm first audio 6.1-6.7 s from `wa say`, first RTP
+0.1-0.2 s after that (the 500 ms prebuffer fills as fast as the cloud produces); a 238-char
+paragraph = 829 packets (~16.6 s) heard as a steady voice; supersede, `wa say --cancel` and
+`wa leave` mid-sentence all stop within a packet or two and leave no `say.py`/`mimi_sidecar`/
+`libopus` process. `say.py --hello` plays on the local speakers, not in the world.
+Gotcha: `wa say` right after `wa join` returns 409 until the WEBRTC peer connects (~10 s).

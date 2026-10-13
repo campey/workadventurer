@@ -28,6 +28,8 @@ const USAGE = `wa — WorkAdventure presence control
   wa thought-bubble <text…>
   wa clear-bubble             dismiss whatever bubble is showing
   wa sound <name|file>        play a clip into the proximity voice chat
+  wa say <text…> [--voice <id>]  speak text aloud to the bubble (TTS)
+  wa say --cancel             stop speaking
   wa chat <text…>             send a chat message to whoever's currently nearby
                               (proximity bubble or meeting-room area — not Matrix)
   wa wait-emote [player]      block until a player emotes  [--emote <match>] [--timeout <ms>]
@@ -36,7 +38,9 @@ const USAGE = `wa — WorkAdventure presence control
   global: --json  --if-running (no-op if the daemon isn't up)  --port <P>
 `;
 
-const { values: flags, positionals } = parseArgs({
+let parsed;
+try {
+  parsed = parseArgs({
   allowPositionals: true,
   options: {
     json: { type: "boolean", default: false },
@@ -49,9 +53,19 @@ const { values: flags, positionals } = parseArgs({
     target: { type: "string" },
     emote: { type: "string" },
     timeout: { type: "string" },
+    voice: { type: "string" },
+    cancel: { type: "boolean", default: false },
     help: { type: "boolean", default: false },
   },
-});
+  });
+} catch (e) {
+  // Text like "-5 degrees" is read as a flag. Say how to pass it instead of
+  // dumping a stack trace.
+  const hint = process.argv[2] === "say" ? ` (to speak text that starts with a dash: wa say -- "-5 degrees")` : "";
+  process.stderr.write(`wa: ${e.message.split("\n")[0]}${hint}\n`);
+  process.exit(2);
+}
+const { values: flags, positionals } = parsed;
 
 const [cmd, ...args] = positionals;
 if (!cmd || flags.help) {
@@ -162,7 +176,7 @@ function report(json) {
   if (flags.json) { process.stdout.write(JSON.stringify(json, null, 2) + "\n"); return; }
   if (json.raw) { process.stdout.write(String(json.raw).trim() + "\n"); return; }
   const bits = [];
-  for (const k of ["goingTo", "quietSpot", "greeted", "speechBubble", "thoughtBubble", "sound", "chat", "alreadyQuiet", "leaving"]) {
+  for (const k of ["goingTo", "quietSpot", "greeted", "speechBubble", "thoughtBubble", "sound", "say", "cancelled", "chat", "alreadyQuiet", "leaving"]) {
     if (json[k] !== undefined && json[k] !== null && json[k] !== false) bits.push(`${k}: ${typeof json[k] === "object" ? JSON.stringify(json[k]) : json[k]}`);
   }
   process.stdout.write((bits.length ? bits.join(", ") : "ok") + "\n");
@@ -272,6 +286,22 @@ switch (cmd) {
     await needDaemon();
     const r = await api("POST", "/sound", { name: args.join(" "), cwd: process.cwd() });
     if (!r.ok) die(r.json.error || `sound failed (${r.status})`);
+    report(r.json);
+    break;
+  }
+  case "say": {
+    if (flags.cancel) {
+      await needDaemon();
+      const r = await api("POST", "/say-cancel", {});
+      if (!r.ok) die(r.json.error || `say --cancel failed (${r.status})`);
+      report(r.json);
+      break;
+    }
+    const text = args.join(" ").trim();
+    if (!text) die("usage: wa say <text…> [--voice <id>]   |   wa say --cancel", 2);
+    await needDaemon();
+    const r = await api("POST", "/say", { text, voice: flags.voice });
+    if (!r.ok) die(r.json.error || `say failed (${r.status})`);
     report(r.json);
     break;
   }
