@@ -40,5 +40,12 @@ export default {
     updateMaskPaths: ["microphoneState"],
     speakingMaskPaths: ["showVoiceIndicator", "microphoneState"],
   },
-  meeting: { webrtcStrategyName: "WEBRTC", livekitStrategyName: "LIVEKIT" },
+  meeting: {
+    webrtcStrategyName: "WEBRTC",
+    livekitStrategyName: "LIVEKIT",
+    // Area-meeting debounce (docs/field-notes.md "Map areas: dwell debounce"): join after 1.5 s
+    // continuously inside, linger 2.5 s after leaving. Explicit here, same values the client falls back to.
+    areaDwellMs: 1500,
+    areaLingerMs: 2500,
+  },
 };

@@ -84,9 +84,19 @@ export class MapNav {
     const dist = (a) =>
       Math.hypot(a.x + a.w / 2 - fromX, a.y + a.h / 2 - fromY);
 
+    // Only areas whose spot (the free tile nearest the centre) can be walked to from here: a table pocket or an
+    // island behind a wall is "near" but not somewhere to go.
+    const reach = this.reachableFrom(fromX, fromY);
+    const reachable = (a) => {
+      if (!reach) return true;
+      const free = this.nearestFree(...this.pxToTile(a.x + a.w / 2, a.y + a.h / 2));
+      return !!free && !!reach[this._idx(free[0], free[1])];
+    };
+
     let best = null;
     for (const a of this.areas) {
       if (excludeRe && excludeRe.test(a.name)) continue;
+      if (!reachable(a)) continue;
       const c = count(a);
       const d = dist(a);
       if (!best || c < best.c || (c === best.c && d < best.d)) best = { a, c, d };
@@ -181,6 +191,34 @@ export class MapNav {
       }
     }
     return null;
+  }
+
+  /**
+   * Tiles walkable from (px,py) under the same rules as findPath (8 directions, no corner cutting), as a
+   * Uint8Array of w*h (1 = reachable). The start snaps to the nearest free tile; null if there is none.
+   * Lets a caller pick a destination from the tiles that can actually be walked to, not just free ones.
+   */
+  reachableFrom(px, py) {
+    const [tx, ty] = this.pxToTile(px, py);
+    const s = this.nearestFree(tx, ty);
+    if (!s) return null;
+    const seen = new Uint8Array(this.w * this.h);
+    const stack = [this._idx(s[0], s[1])];
+    seen[stack[0]] = 1;
+    while (stack.length) {
+      const cur = stack.pop();
+      const cx = cur % this.w;
+      const cy = (cur / this.w) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (this.isTileBlocked(nx, ny)) continue;
+        if (dx !== 0 && dy !== 0 && (this.isTileBlocked(cx + dx, cy) || this.isTileBlocked(cx, cy + dy))) continue;
+        const ni = this._idx(nx, ny);
+        if (!seen[ni]) { seen[ni] = 1; stack.push(ni); }
+      }
+    }
+    return seen;
   }
 
   /** True if a straight line between two tile centers stays on free tiles. */

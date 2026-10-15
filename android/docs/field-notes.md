@@ -480,3 +480,7 @@ Emulator: Pixel-class AVD `Medium_Phone_API_35` (Android 15), debug APK, 2026-10
 - The vendored proto has no `package` line; `protoWithPackage` copies it with
   `package app.workadventurer.proto;` injected. Wire codegen and a round-trip of
   `ClientToServerMessage.joinRoomFrontMessage` verified.
+
+## Prod bump to v1.34.1 broke the APK (2026-10-13) [live]
+
+The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when prod moved to v1.34.1 (hash `23c8eb8c` -> `b82fc568`, same `messages.proto`) the app showed "couldn't join... please refresh" (the server's NEW_VERSION error screen). Fixed by putting `b82fc568` first. Verified with `wa-cli` against prod: login, join, nav grid, walk to "Red Table" (ARRIVED). This is exactly what the downloadable adapter (#126) removes: the app should fetch the hash for the server's version instead of shipping one.

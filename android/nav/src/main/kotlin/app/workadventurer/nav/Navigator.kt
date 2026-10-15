@@ -10,7 +10,11 @@ interface MovementSink {
     fun move(x: Double, y: Double, facing: Facing, moving: Boolean)
 }
 
-enum class Outcome { ARRIVED, TIMEOUT, TARGET_GONE }
+/** NO_ROUTE: the goal is cut off from open floor by walls (an island), so no walk could get there. */
+enum class Outcome { ARRIVED, TIMEOUT, TARGET_GONE, NO_ROUTE }
+
+/** A start region smaller than this counts as a pocket we may be wrongly sealed in; see navTo's NO_ROUTE. */
+private const val NO_ROUTE_MIN_OPEN_TILES = 50
 
 private const val MIN_ITER_MS = 50L
 
@@ -120,7 +124,24 @@ class Navigator(
                     return Outcome.ARRIVED
                 }
                 val deadline = iterStart + repathMs
-                val path = grid()?.let { g -> g.findPath(p, t)?.let { withExactGoal(g, it, t) } }
+                val g = grid()
+                val route = g?.findPath(p, t)
+                // A goal inside a solid (a table, a wall) is snapped by findPath to the nearest free tile, and
+                // withExactGoal leaves the route ending at that tile's centre. Standing on it is as close as we can
+                // get: finish there instead of re-planning a zero-length route until the timeout.
+                if (g != null && !route.isNullOrEmpty() && g.isPxBlocked(t.x, t.y) &&
+                    hypot(route.last().x - p.x, route.last().y - p.y) <= 12.0
+                ) {
+                    stop(lookAt = face?.invoke()?.let { faceToward(p.x, p.y, it.x, it.y) })
+                    return Outcome.ARRIVED
+                }
+                // No route from open floor: walking straight would cross walls and claim success, so fail. When we are
+                // ourselves sealed in a tiny pocket the map is probably wrong about us: keep the straight-line escape.
+                if (g != null && route == null) {
+                    val open = g.reachableFrom(p)?.count { it } ?: 0
+                    if (open >= NO_ROUTE_MIN_OPEN_TILES) return Outcome.NO_ROUTE
+                }
+                val path = if (g != null && route != null) withExactGoal(g, route, t) else null
                 if (path.isNullOrEmpty()) {
                     // no grid yet, or no route: walk straight toward the goal for this window, then try again
                     walkLeg(t, stopWithin, 32.0, 120, deadline, arrivedWhen)
