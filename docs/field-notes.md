@@ -712,6 +712,11 @@ vendored proto (`proto/wa-1.33/messages.proto`):
   which also ends a pending `waitForPlayout()`; without it a cancel would keep playing
   the queued tail for seconds. To exercise it headlessly, force LiveKit with three
   avatars and `cpuLimited` (docs/livekit.md, "Forcing LiveKit").
+  Verified live (2026-10-15, prod wa-1.34, stub say.py tone, three headless avatars, one
+  listening on the LiveKit track): LiveKit up 0.5 s after the flag, both avatars
+  connected by 2.2 s; a 3 s utterance = 150 frames, first audio 119 ms, the listener
+  received 3.02 s at ~439 Hz (no buzz, correct pitch); a 20 s utterance cancelled after
+  2.5 s went silent at the listener 0.23 s later.
 
 Offline end-to-end (2026-10-13, stub `scripts/fake-say.mjs`, real browser peer, WEBRTC mesh):
 8 s tone = 401 RTP packets, heard as a steady tone; supersede restarts cleanly (one
