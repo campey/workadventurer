@@ -704,7 +704,14 @@ vendored proto (`proto/wa-1.33/messages.proto`):
 - `node --test` runs every file under `test/` as a test. A helper there that blocks
   (e.g. reads stdin) hangs the whole suite, so the say.py stand-in lives in
   `scripts/fake-say.mjs`.
-- LiveKit transport is not built yet (slice 1 of #7): `POST /say` returns 501 there.
+- LiveKit transport (slice 1 of #7): `speakLiveKit()` resamples to 48 kHz and re-chunks
+  into 20 ms `Int16Array` frames (each a copy in its own zero-offset buffer, see the
+  `.slice()` note in #8); `WaAudio._pumpLiveKit` feeds `captureFrame` with no pacing of
+  its own, since `AudioSource`'s 30 s queue paces playout. Because audio is queued
+  ahead of playout, every stop (cancel, supersede, hang-up) calls `source.clearQueue()`,
+  which also ends a pending `waitForPlayout()`; without it a cancel would keep playing
+  the queued tail for seconds. To exercise it headlessly, force LiveKit with three
+  avatars and `cpuLimited` (docs/livekit.md, "Forcing LiveKit").
 
 Offline end-to-end (2026-10-13, stub `scripts/fake-say.mjs`, real browser peer, WEBRTC mesh):
 8 s tone = 401 RTP packets, heard as a steady tone; supersede restarts cleanly (one

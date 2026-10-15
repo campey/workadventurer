@@ -386,8 +386,6 @@ const server = http.createServer(async (req, res) => {
           if (!text) return send(400, { ok: false, error: "need {text}" });
           if (!audio) return send(503, { ok: false, error: "audio not ready" });
           await audio.waitForLiveKit();
-          if (audio._livekit)
-            return send(501, { ok: false, error: "say over LiveKit isn't built yet (issue #7, slice 1)" });
           if (!audio.connected)
             return send(409, { ok: false, error: "no one in the bubble to hear it" });
           // Fire and forget: speech runs for as long as the utterance (and the
