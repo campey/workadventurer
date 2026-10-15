@@ -1,4 +1,4 @@
-// speak(): say.py (stubbed) -> ffmpeg Opus -> demuxed packets, and above all
+// speakWebrtc(): say.py (stubbed) -> ffmpeg Opus -> demuxed packets, and above all
 // its teardown. Needs ffmpeg on PATH; skips itself if missing.
 
 import { test } from "node:test";
@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { speak } from "../src/say.mjs";
+import { speakWebrtc } from "../src/say.mjs";
 
 const hasFfmpeg = (() => {
   try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); return true; } catch { return false; }
@@ -29,7 +29,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 async function collect(it) { const out = []; for await (const p of it) out.push(p); return out; }
 
 test("1 s of tone becomes ~50 Opus packets of 960 samples", opts, async () => {
-  const pk = await withEnv({ FAKE_SAY_SECONDS: "1" }, () => collect(speak("hello", base)));
+  const pk = await withEnv({ FAKE_SAY_SECONDS: "1" }, () => collect(speakWebrtc("hello", base)));
   assert.ok(pk.length >= 48 && pk.length <= 53, `got ${pk.length} packets`);
   assert.ok(pk.every((p) => p.samples === 960));
 });
@@ -39,20 +39,20 @@ test("text reaches say.py intact (quotes, $(), leading dash, newline, emoji)", o
   try {
     const nasty = `-rf "$(echo hi)" 'x'\nsecond line — émoji 🎙`;
     const file = path.join(dir, "stdin.txt");
-    await withEnv({ FAKE_SAY_SECONDS: "0.2", FAKE_SAY_STDIN_FILE: file }, () => collect(speak(nasty, base)));
+    await withEnv({ FAKE_SAY_SECONDS: "0.2", FAKE_SAY_STDIN_FILE: file }, () => collect(speakWebrtc(nasty, base)));
     assert.equal(readFileSync(file, "utf8"), nasty);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("say.py exiting non-zero surfaces its reason", opts, async () => {
   await withEnv({ FAKE_SAY_MODE: "fail" }, () =>
-    assert.rejects(collect(speak("x", base)), /say\.py exited 3.*simulated failure/));
+    assert.rejects(collect(speakWebrtc("x", base)), /say\.py exited 3.*simulated failure/));
 });
 
 test("missing python or ffmpeg rejects with a spawn error and does not crash", opts, async () => {
-  await assert.rejects(collect(speak("x", { ...base, python: "/nonexistent/python" })), /ENOENT/);
+  await assert.rejects(collect(speakWebrtc("x", { ...base, python: "/nonexistent/python" })), /ENOENT/);
   await withEnv({ FAKE_SAY_SECONDS: "0.2" }, () =>
-    assert.rejects(collect(speak("x", { ...base, ffmpegPath: "/nonexistent/ffmpeg" })), /ENOENT/));
+    assert.rejects(collect(speakWebrtc("x", { ...base, ffmpegPath: "/nonexistent/ffmpeg" })), /ENOENT/));
 });
 
 test("abort during a cold start (no PCM yet) kills say.py and resolves quietly", opts, async () => {
@@ -63,7 +63,7 @@ test("abort during a cold start (no PCM yet) kills say.py and resolves quietly",
     const t0 = Date.now();
     const pk = await withEnv({ FAKE_SAY_MODE: "hang", FAKE_SAY_PID_FILE: pidFile }, async () => {
       setTimeout(() => ac.abort(), 300);
-      return collect(speak("x", { ...base, signal: ac.signal }));
+      return collect(speakWebrtc("x", { ...base, signal: ac.signal }));
     });
     assert.deepEqual(pk, []);
     assert.ok(Date.now() - t0 < 5000, "returned promptly");
@@ -76,7 +76,7 @@ test("ffmpeg exiting early tears down say.py and reports ffmpeg's failure instea
   { ...opts, skip: !hasFfmpeg || !existsSync("/usr/bin/false") }, async () => {
   const t0 = Date.now();
   await withEnv({ FAKE_SAY_SECONDS: "30" }, () =>
-    assert.rejects(collect(speak("x", { ...base, ffmpegPath: "/usr/bin/false" })), /ffmpeg exited 1/));
+    assert.rejects(collect(speakWebrtc("x", { ...base, ffmpegPath: "/usr/bin/false" })), /ffmpeg exited 1/));
   assert.ok(Date.now() - t0 < 8000, "did not wait for the 30 s clip");
 });
 
@@ -87,7 +87,7 @@ test("consumer stopping early (return()) tears everything down", opts, async () 
     const t0 = Date.now();
     await withEnv({ FAKE_SAY_SECONDS: "30", FAKE_SAY_PID_FILE: pidFile }, async () => {
       let n = 0;
-      for await (const _ of speak("x", base)) if (++n === 3) break;
+      for await (const _ of speakWebrtc("x", base)) if (++n === 3) break;
     });
     assert.ok(Date.now() - t0 < 5000, "did not wait for the 30 s clip");
     assert.equal(alive(Number(readFileSync(pidFile, "utf8"))), false, "say.py is gone");

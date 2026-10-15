@@ -67,7 +67,7 @@ wa leave                          # disconnect and stop the daemon
 | `wa speech-bubble <text>` / `wa thought-bubble <text>` | text bubble |
 | `wa clear-bubble` | dismiss whatever bubble is showing |
 | `wa sound <name\|file>` | play a clip into the proximity voice chat — bundled: `chime`, `blip`, `claude_intro` (see [Voice](#9-voice)) |
-| `wa say <text…> [--voice id]` | speak text aloud to the bubble via huggingsesame TTS (WEBRTC bubbles; set `WA_TTS_PYTHON` / `WA_TTS_SAY`; `wa say --cancel` stops it) |
+| `wa say <text…> [--voice id]` | speak text aloud to the bubble via huggingsesame TTS (WEBRTC mesh and LiveKit; set `WA_TTS_PYTHON` / `WA_TTS_SAY`; `wa say --cancel` stops it) |
 | `wa chat <text>` | send a chat message to whoever's currently nearby (proximity bubble or meeting-room area — not Matrix) |
 | `wa wait-emote [player]` | block until a player emotes (`--emote <match>`, `--timeout <ms>`) |
 | `wa goto <x> <y>` | walk to raw coordinates |
