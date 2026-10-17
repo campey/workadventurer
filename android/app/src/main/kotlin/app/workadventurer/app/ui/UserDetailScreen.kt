@@ -1,6 +1,7 @@
 package app.workadventurer.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -40,7 +42,7 @@ import app.workadventurer.app.session.SessionState
  * to them (to join their conversation if they are in one). Already together with them: just where they are.
  */
 @Composable
-fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onCommand: (Command) -> Unit) {
+fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpenConversation: (ConversationKey) -> Unit, onCommand: (Command) -> Unit) {
     val player = state.players.firstOrNull { it.userId == userId }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -68,8 +70,11 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onCom
                 Box(Modifier.size(10.dp).clip(CircleShape).background(Color(statusColor(player.availabilityStatus))))
                 Text(statusLabel(player.availabilityStatus), style = MaterialTheme.typography.bodyLarge)
             }
+            val conversation = where.conversation()
             Row(
-                Modifier.padding(top = 28.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface).padding(16.dp),
+                Modifier.padding(top = 28.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface)
+                    .then(if (conversation != null) Modifier.clickable(role = Role.Button, onClick = { onOpenConversation(conversation) }) else Modifier)
+                    .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
@@ -79,10 +84,11 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onCom
                         Whereabouts.OnTheMap -> Icon(WaIcons.Map, contentDescription = null, modifier = Modifier.size(22.dp))
                     }
                 }
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text("Right now", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(whereText(where), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                 }
+                if (conversation != null) Icon(WaIcons.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             inviteStatusText(state.inviteStatus)?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp).semantics { liveRegion = LiveRegionMode.Polite })
@@ -91,11 +97,11 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onCom
 
         val explainer = walkExplainer(where)
         if (explainer == null) {
-            // Together already: nothing to walk to or invite them to.
-            Text(
-                "You are already in this conversation with $name", style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
+            // Together already: nothing to walk to or invite them to; the one action opens the conversation.
+            val conversation = where.conversation()
+            if (conversation != null) PrimaryAction(
+                label = "Open the conversation", explainer = togetherNote(where) ?: "", onClick = { onOpenConversation(conversation) },
+                description = "Open the conversation you are in with $name", quiet = true,
             )
         } else {
             Column(Modifier.padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
