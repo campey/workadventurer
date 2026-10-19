@@ -7,6 +7,9 @@ object WaStaging {
 
     /** "Leo": a prod woka id is refused on staging with "invalid character texture". */
     const val DEFAULT_WOKA = "62b0c71f-f396-432b-a4c8-4d369d73e766"
+
+    /** Staging runs WorkAdventure's master, so its hash is not prod's release hash. master@118dd84c (live-verified 2026-10-20). */
+    const val API_VERSION_HASH = "d2d82672"
 }
 
 data class RoomConfig(
@@ -30,7 +33,10 @@ data class RoomConfig(
         fun forRoom(name: String, roomUrl: String, micOn: Boolean = false): RoomConfig {
             val host = runCatching { java.net.URI(roomUrl.trim()).host }.getOrNull()
             return if (host == WaStaging.HOST) {
-                RoomConfig(roomUrl = roomUrl, name = name, micOn = micOn, pusherUrl = WaStaging.PUSHER, wokaId = WaStaging.DEFAULT_WOKA)
+                RoomConfig(
+                    roomUrl = roomUrl, name = name, micOn = micOn, pusherUrl = WaStaging.PUSHER, wokaId = WaStaging.DEFAULT_WOKA,
+                    apiVersionHash = WaStaging.API_VERSION_HASH,
+                )
             } else {
                 RoomConfig(roomUrl = roomUrl, name = name, micOn = micOn)
             }
