@@ -25,7 +25,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.hypot
@@ -122,6 +125,8 @@ private const val ARRIVE_WITHIN_PX = 8.0
 private const val BUBBLE_ARRIVE_PX = 44.0
 private const val BUBBLE_LEAVE_PX = 96.0 // clear of a bubble's ~48 px reach, with room to spare
 private const val WALK_TO_PLAYER_TIMEOUT_MS = 30_000L
+private const val INVITE_OUTCOME_SHOWN_MS = 10_000L // "Ada accepted your invitation" is news for a few seconds
+private const val INVITE_SENT_SHOWN_MS = 60_000L // "Inviting Ada…" waits a while for an answer (#117)
 
 /**
  * Owns one room presence: state out, [Command]s in. No Android imports, so it unit-tests on the JVM.
@@ -407,6 +412,16 @@ class WaSession(
                         myTextures = c.state.myTextures.value,
                     )
                 }
+            }
+        }
+        // A status line is news, not state: it fades, and the room's remembered outcome goes with it or the next
+        // players/pose update would bring it straight back (#117).
+        launch {
+            _state.map { it.inviteStatus }.distinctUntilChanged().collectLatest { status ->
+                if (status == null) return@collectLatest
+                delay(if (status is InviteStatus.Sent) INVITE_SENT_SHOWN_MS else INVITE_OUTCOME_SHOWN_MS)
+                c.state.setInviteOutcome(null)
+                setState(gen) { if (it.inviteStatus == status) it.copy(inviteStatus = null) else it }
             }
         }
         // Pose too, so `inAreas` follows the avatar as it walks.

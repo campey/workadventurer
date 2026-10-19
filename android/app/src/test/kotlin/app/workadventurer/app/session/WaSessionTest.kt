@@ -509,6 +509,44 @@ class WaSessionTest {
         assertEquals(InviteStatus.Sent("Ada"), session.state.value.inviteStatus)
     }
 
+    // Issue #117: "Diccon accepted your invitation" stayed on screen for 20+ minutes.
+    @Test
+    fun anOutcomeFadesAfterTenSecondsAndDoesNotComeBackWhenSomeoneMoves() = runTest {
+        val (session, conn) = connected()
+        session.dispatch(Command.InvitePlayer(1)); runCurrent()
+        conn().state.setInviteOutcome(InviteOutcome.Accepted("Ada")); runCurrent()
+        advanceTimeBy(9_000); runCurrent()
+        assertEquals(InviteStatus.Accepted("Ada"), session.state.value.inviteStatus)
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(null, session.state.value.inviteStatus)
+        // the room still holds the old outcome; a player joining re-runs the mirror and must not bring it back
+        conn().state.applySub(join(2, "Bob", x = 5, y = 5)); runCurrent()
+        assertEquals(null, session.state.value.inviteStatus)
+    }
+
+    @Test
+    fun sentWaitsAMinuteForAnAnswerBeforeFading() = runTest {
+        val (session, _) = connected()
+        session.dispatch(Command.InvitePlayer(1)); runCurrent()
+        advanceTimeBy(59_000); runCurrent()
+        assertEquals(InviteStatus.Sent("Ada"), session.state.value.inviteStatus)
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(null, session.state.value.inviteStatus)
+    }
+
+    @Test
+    fun aNewOutcomeRestartsTheClock() = runTest {
+        val (session, conn) = connected()
+        session.dispatch(Command.InvitePlayer(1)); runCurrent()
+        conn().state.setInviteOutcome(InviteOutcome.Accepted("Ada")); runCurrent()
+        advanceTimeBy(8_000); runCurrent()
+        conn().state.setInviteOutcome(InviteOutcome.Declined("Ada")); runCurrent()
+        advanceTimeBy(8_000); runCurrent() // 16 s after the first, 8 s after the second
+        assertEquals(InviteStatus.Declined("Ada"), session.state.value.inviteStatus)
+        advanceTimeBy(3_000); runCurrent()
+        assertEquals(null, session.state.value.inviteStatus)
+    }
+
     @Test
     fun invitingAnUnknownPlayerOrWhileNotConnectedIsIgnored() = runTest {
         val (session, conn) = connected()
