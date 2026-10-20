@@ -47,6 +47,6 @@ export default {
   },
   // A SET: a patch release can shift the hash with no behaviour change — append
   // here (computed by scripts/vendor-proto.mjs), never fork a new adapter file.
-  apiVersionHashes: ["b82fc568", "23c8eb8c"], // v1.34.1, v1.34.0
+  apiVersionHashes: ["62e25483", "b82fc568", "23c8eb8c"], // v1.34.2, v1.34.1, v1.34.0
   protoPath: "proto/wa-1.34/messages.proto",
 };

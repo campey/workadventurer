@@ -393,7 +393,7 @@ daemon in the past.
 `## Version targets` for selection logic. Field notes:
 
 - **Prod is one server.** `play.workadventu.re` hosts afrolabs, lean-iterator,
-  tcm, … all on the tagged release (`v1.34.1` → `wa-1.34`, hash `b82fc568`, proto unchanged from `v1.34.0`; was `v1.33.x` → `wa-1.33` until 2026-10-05).
+  tcm, … all on the tagged release (`v1.34.2` → `wa-1.34`, hash `62e25483`; `v1.34.1` was `b82fc568`, `v1.34.0` `23c8eb8c`; was `v1.33.x` → `wa-1.33` until 2026-10-05). Seen 2026-10-20: prod moved to v1.34.2 and answered `b82fc568` with `NEW_VERSION`. The re-vendored proto has 22 additive changes since v1.34.0 and nothing wire-breaking that `src/` uses (`proto-diff.mjs`); `selfcheck --target production` passes.
 - **Staging is rolling `master`**, untagged — `play.staging.workadventu.re`.
   Its commit sha *moves between sessions* (`7c5ff99b` → `7d628838` → …), and
   each move can shift the `apiVersionHash`. `wa-master` warns on sha drift;
@@ -407,6 +407,12 @@ daemon in the past.
   `vendor-proto.mjs` vendors the proto and *prints* the hash but does not edit the
   adapter: set `trackedSha`, `apiVersionHashes` and `verifiedDate` by hand. The
   `test/adapters.test.mjs` sha tests read `trackedSha`, so a refresh doesn't break them.
+- **Staging moved again (2026-10-20): `master@118dd84c`, hash `d2d82672`.** It rejected both `b82fc568` and prod's new
+  `62e25483` with `NEW_VERSION` and accepted only master's own hash, so prod and staging no longer share one. A probe
+  with the wrong pusher (prod's) answers `WORLD_NOT_FOUND`, which is *after* the hash check and so proves nothing:
+  probe staging with `WA_PUSHER_URL=https://pusher.staging.workadventu.re` and a staging woka. `wa-master` is
+  re-vendored and `selfcheck --target wa-master` passes; the Android app sends staging's hash for staging rooms
+  (`WaStaging.API_VERSION_HASH`).
 - **Staging has its own everything.** Different pusher
   (`pusher.staging.workadventu.re`) and a **different woka catalogue** — a
   production woka id returns `invalid character texture`. Use a staging id
