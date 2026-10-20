@@ -713,12 +713,24 @@ vendored proto (`proto/wa-1.33/messages.proto`):
   treats a packet more than 60 ms late as a new talkspurt (marker bit, RTP timestamp
   advanced over the gap, clock re-based). File playback keeps prebuffer 0.
 - Teardown trap: a child's `close` event waits for all its stdio, so after an early
-  stop `say.py`'s unread stdout kept it from ever firing. `speak()` destroys the
+  stop `say.py`'s unread stdout kept it from ever firing. `speakWebrtc()` destroys the
   child streams before awaiting exit.
 - `node --test` runs every file under `test/` as a test. A helper there that blocks
   (e.g. reads stdin) hangs the whole suite, so the say.py stand-in lives in
   `scripts/fake-say.mjs`.
-- LiveKit transport is not built yet (slice 1 of #7): `POST /say` returns 501 there.
+- LiveKit transport (slice 1 of #7): `speakLiveKit()` resamples to 48 kHz and re-chunks
+  into 20 ms `Int16Array` frames (each a copy in its own zero-offset buffer, see the
+  `.slice()` note in #8); `WaAudio._pumpLiveKit` feeds `captureFrame` with no pacing of
+  its own, since `AudioSource`'s 30 s queue paces playout. Because audio is queued
+  ahead of playout, every stop (cancel, supersede, hang-up) calls `source.clearQueue()`,
+  which also ends a pending `waitForPlayout()`; without it a cancel would keep playing
+  the queued tail for seconds. To exercise it headlessly, force LiveKit with three
+  avatars and `cpuLimited` (docs/livekit.md, "Forcing LiveKit").
+  Verified live (2026-10-15, prod wa-1.34, stub say.py tone, three headless avatars, one
+  listening on the LiveKit track): LiveKit up 0.5 s after the flag, both avatars
+  connected by 2.2 s; a 3 s utterance = 150 frames, first audio 119 ms, the listener
+  received 3.02 s at ~439 Hz (no buzz, correct pitch); a 20 s utterance cancelled after
+  2.5 s went silent at the listener 0.23 s later.
 
 Offline end-to-end (2026-10-13, stub `scripts/fake-say.mjs`, real browser peer, WEBRTC mesh):
 8 s tone = 401 RTP packets, heard as a steady tone; supersede restarts cleanly (one

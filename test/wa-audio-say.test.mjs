@@ -126,11 +126,3 @@ test("say.py failure resolves played:false with the reason, never lights the ind
   // meanwhile with the red 'mic on, nothing arriving' icon (#10).
   assert.ok(peer._rtp.length >= 15, `silence prime sent after the failed say (${peer._rtp.length} pkts)`);
 });
-
-test("on a LiveKit-escalated meeting say reports it is not built yet (slice 1)", opts, async () => {
-  const { audio } = setup();
-  audio._livekit = {};
-  const r = await audio.say("x");
-  assert.equal(r.played, false);
-  assert.match(r.reason, /livekit/i);
-});
