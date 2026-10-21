@@ -7,6 +7,7 @@ import app.workadventurer.nav.frontOf
 import app.workadventurer.nav.nearestFreeOutside
 import app.workadventurer.nav.nearestOutside
 import app.workadventurer.nav.snapToFree
+import app.workadventurer.nav.snapToReachable
 import app.workadventurer.protocol.Area
 import app.workadventurer.protocol.Group
 import app.workadventurer.protocol.Invite
@@ -195,7 +196,8 @@ class WaSession(
                     val a = c.state.areas.firstOrNull { (it.id ?: it.name) == cmd.areaKey } ?: return@startMovement null
                     Plan(Activity.WalkingTo(a.name)) { nav ->
                         val centre = Pt(a.x + a.w / 2.0, a.y + a.h / 2.0)
-                        nav.navTo(c.grid.value?.snapToFree(centre.x, centre.y) ?: centre, stopWithin = 24.0)
+                        // a spot we can walk to: the area's centre may be solid, or in a walled-off pocket
+                        nav.navTo(c.grid.value?.snapToReachable(c.position(), centre.x, centre.y) ?: centre, stopWithin = 24.0)
                     }
                 }
                 Command.LeaveConversation -> startMovement { c ->
