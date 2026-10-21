@@ -40,6 +40,7 @@ import { createRegistry } from "./daemon-registry.mjs";
 import { goQuiet } from "./quiet.mjs";
 import { createReconnector } from "./reconnect.mjs";
 import { ServerRejectedError } from "./server-rejected.mjs";
+import { REFUSED_EXIT } from "./supervise.mjs";
 
 const cfg = resolveConfig();
 const PORT = cfg.port;
@@ -163,7 +164,7 @@ function watchLive(client) {
     if (client !== wa) return; // a stale client's close isn't a drop of the live one
     attemptReconnect().catch((e) => {
       log("reconnect gave up:", e.message);
-      shutdown(1);
+      shutdown(e instanceof ServerRejectedError && !e.retryable ? REFUSED_EXIT : 1);
     });
   });
 }
@@ -386,8 +387,6 @@ const server = http.createServer(async (req, res) => {
           if (!text) return send(400, { ok: false, error: "need {text}" });
           if (!audio) return send(503, { ok: false, error: "audio not ready" });
           await audio.waitForLiveKit();
-          if (audio._livekit)
-            return send(501, { ok: false, error: "say over LiveKit isn't built yet (issue #7, slice 1)" });
           if (!audio.connected)
             return send(409, { ok: false, error: "no one in the bubble to hear it" });
           // Fire and forget: speech runs for as long as the utterance (and the
@@ -478,7 +477,7 @@ try {
   log(e instanceof ServerRejectedError && !e.retryable
     ? `${e.message} — the server refuses this client; not retrying`
     : `initial connect failed: ${e.message}`);
-  shutdown(1);
+  shutdown(e instanceof ServerRejectedError && !e.retryable ? REFUSED_EXIT : 1);
   await new Promise(() => {}); // shutdown() exits the process after cleanup
 }
 watchLive(wa);

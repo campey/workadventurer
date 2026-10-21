@@ -442,7 +442,7 @@ passes with the status sent and fails with it removed (the bubble persists).
 `## Version targets` for selection logic. Field notes:
 
 - **Prod is one server.** `play.workadventu.re` hosts afrolabs, lean-iterator,
-  tcm, … all on the tagged release (`v1.34.1` → `wa-1.34`, hash `b82fc568`, proto unchanged from `v1.34.0`; was `v1.33.x` → `wa-1.33` until 2026-10-05).
+  tcm, … all on the tagged release (`v1.34.2` → `wa-1.34`, hash `62e25483`; `v1.34.1` was `b82fc568`, `v1.34.0` `23c8eb8c`; was `v1.33.x` → `wa-1.33` until 2026-10-05). Seen 2026-10-20: prod moved to v1.34.2 and answered `b82fc568` with `NEW_VERSION`. The re-vendored proto has 22 additive changes since v1.34.0 and nothing wire-breaking that `src/` uses (`proto-diff.mjs`); `selfcheck --target production` passes.
 - **Staging is rolling `master`**, untagged — `play.staging.workadventu.re`.
   Its commit sha *moves between sessions* (`7c5ff99b` → `7d628838` → …), and
   each move can shift the `apiVersionHash`. `wa-master` warns on sha drift;
@@ -456,6 +456,12 @@ passes with the status sent and fails with it removed (the bubble persists).
   `vendor-proto.mjs` vendors the proto and *prints* the hash but does not edit the
   adapter: set `trackedSha`, `apiVersionHashes` and `verifiedDate` by hand. The
   `test/adapters.test.mjs` sha tests read `trackedSha`, so a refresh doesn't break them.
+- **Staging moved again (2026-10-20): `master@118dd84c`, hash `d2d82672`.** It rejected both `b82fc568` and prod's new
+  `62e25483` with `NEW_VERSION` and accepted only master's own hash, so prod and staging no longer share one. A probe
+  with the wrong pusher (prod's) answers `WORLD_NOT_FOUND`, which is *after* the hash check and so proves nothing:
+  probe staging with `WA_PUSHER_URL=https://pusher.staging.workadventu.re` and a staging woka. `wa-master` is
+  re-vendored and `selfcheck --target wa-master` passes; the Android app sends staging's hash for staging rooms
+  (`WaStaging.API_VERSION_HASH`).
 - **Staging has its own everything.** Different pusher
   (`pusher.staging.workadventu.re`) and a **different woka catalogue** — a
   production woka id returns `invalid character texture`. Use a staging id
@@ -597,6 +603,20 @@ avatar against a real room. Dates are when each was observed.
   late is logged as `system stalled/slept` and grants one fresh window rather than
   killing a socket that may be fine after a laptop wake. `socket closed` lines
   now carry `(up Ns, silent Ns)` to tell periodic idle drops from network loss.
+- **Supervision: `wa join --keep-alive` (#138).** With the indefinite reconnect and
+  the heartbeat, a network outage no longer ends the daemon; what is left is it
+  being *killed* (OOM balloon #29, SIGKILL). `src/wa-supervisor.mjs` runs the
+  daemon and restarts it (backoff 2, 5, 10, 20, 30, 60 s; reset after a 5-minute
+  run) only when it dies from a signal or an unexpected code. Never restarted:
+  exit 0 (`wa leave`, SIGINT/SIGTERM), exit 1 (it never connected, or any
+  generic failure: "it was never alive"), exit 2/3 (usage / port), exit 4 (the
+  server refuses this client, e.g. `NEW_VERSION`: restarting would just hammer
+  it). Exit 4 is new; the daemon used to exit 1 for a refusal. Verified live:
+  `kill -9` on the daemon → back in the room 2 s later under a new pid, and
+  `wa leave` takes down both processes. Caveat: while the daemon is in the
+  restart backoff the control API is down, so a bare `wa status` says "not
+  joined" and a command that auto-starts a daemon (`needDaemon`) would race the
+  supervisor for the port.
 - **Repro without production traffic:** `node scripts/fake-pusher.mjs 8855
   [code] [timeToRetry]` (serves `anonymLogin`, `/map` and a `/ws/room` that
   sends one `errorScreenMessage` then closes 1000), then
@@ -777,12 +797,24 @@ vendored proto (`proto/wa-1.33/messages.proto`):
   treats a packet more than 60 ms late as a new talkspurt (marker bit, RTP timestamp
   advanced over the gap, clock re-based). File playback keeps prebuffer 0.
 - Teardown trap: a child's `close` event waits for all its stdio, so after an early
-  stop `say.py`'s unread stdout kept it from ever firing. `speak()` destroys the
+  stop `say.py`'s unread stdout kept it from ever firing. `speakWebrtc()` destroys the
   child streams before awaiting exit.
 - `node --test` runs every file under `test/` as a test. A helper there that blocks
   (e.g. reads stdin) hangs the whole suite, so the say.py stand-in lives in
   `scripts/fake-say.mjs`.
-- LiveKit transport is not built yet (slice 1 of #7): `POST /say` returns 501 there.
+- LiveKit transport (slice 1 of #7): `speakLiveKit()` resamples to 48 kHz and re-chunks
+  into 20 ms `Int16Array` frames (each a copy in its own zero-offset buffer, see the
+  `.slice()` note in #8); `WaAudio._pumpLiveKit` feeds `captureFrame` with no pacing of
+  its own, since `AudioSource`'s 30 s queue paces playout. Because audio is queued
+  ahead of playout, every stop (cancel, supersede, hang-up) calls `source.clearQueue()`,
+  which also ends a pending `waitForPlayout()`; without it a cancel would keep playing
+  the queued tail for seconds. To exercise it headlessly, force LiveKit with three
+  avatars and `cpuLimited` (docs/livekit.md, "Forcing LiveKit").
+  Verified live (2026-10-15, prod wa-1.34, stub say.py tone, three headless avatars, one
+  listening on the LiveKit track): LiveKit up 0.5 s after the flag, both avatars
+  connected by 2.2 s; a 3 s utterance = 150 frames, first audio 119 ms, the listener
+  received 3.02 s at ~439 Hz (no buzz, correct pitch); a 20 s utterance cancelled after
+  2.5 s went silent at the listener 0.23 s later.
 
 Offline end-to-end (2026-10-13, stub `scripts/fake-say.mjs`, real browser peer, WEBRTC mesh):
 8 s tone = 401 RTP packets, heard as a steady tone; supersede restarts cleanly (one

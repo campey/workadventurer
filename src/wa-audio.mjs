@@ -48,7 +48,7 @@ import {
 } from "@livekit/rtc-node";
 import { readOggOpus } from "./ogg-opus.mjs";
 import { ensureOpus, ensurePcm, silenceOpusFile, invalidateCache } from "./transcode.mjs";
-import { speak } from "./say.mjs";
+import { speakWebrtc, speakLiveKit } from "./say.mjs";
 import { SttStream } from "./wa-stt.mjs";
 import { writeFileSync } from "node:fs"; // TEMP: SDP_DEBUG diagnostic only
 
@@ -257,11 +257,23 @@ export class WaAudio extends EventEmitter {
       case "webRtcDisconnectMessage":
         this._closePeer(this._connIdForUser(senderUserId), "peer disconnect");
         break;
-      case "switchMessage":
       case "finalizeSwitchMessage":
+        // Names the transport being SHUT DOWN (WEBRTC after an escalation,
+        // LIVEKIT after a de-escalation), so it says nothing about what to
+        // switch to. Treating it like switchMessage hung up the freshly
+        // started mesh peers after a de-escalation and left no transport (#150).
+        break;
+      case "switchMessage":
         if (payload.strategy && payload.strategy.toUpperCase() !== this.client.adapter.meeting.webrtcStrategyName) {
           this.emit("log", `meeting strategy → ${payload.strategy}; P2P audio idle`);
           this.hangup(`switched to ${payload.strategy}`);
+        } else if (payload.strategy && this._livekit) {
+          // A de-escalation back to the mesh: the server sends webRtcStart for
+          // the new peers but no livekitDisconnectMessage (observed live, #150),
+          // so drop the LiveKit room ourselves. Left connected it would win
+          // play()'s routing and publish into a room nobody is listening to.
+          this.emit("log", `meeting strategy → ${payload.strategy}; leaving LiveKit`);
+          this._disconnectLiveKit().catch((e) => this.emit("log", `LiveKit disconnect error: ${e.message}`));
         }
         break;
       case "livekitInvitationMessage":
@@ -731,37 +743,107 @@ export class WaAudio extends EventEmitter {
     return this._livekit ? this._playLiveKit(file, opts) : this._playWebrtc(file, opts);
   }
 
+  // Feed 20 ms PCM frames to a LiveKit AudioSource (#7, slice 1). Unlike the
+  // RTP path there is no pacing of our own: AudioSource keeps its own jitter
+  // buffer (queueSize, 30 s) and paces playout, and captureFrame()'s await is
+  // throttle enough. So frames arrive as fast as the TTS produces them, which
+  // is why a stop must `clearQueue()` (see say()): audio already queued would
+  // otherwise keep playing for seconds after a cancel.
+  async _pumpLiveKit(frames, { source, isStopped, indicator = true }) {
+    let sent = 0;
+    let errs = 0;
+    let firstSendAt = null;
+    let speaking = false;
+    try {
+      for await (const chunk of frames) {
+        if (isStopped()) break;
+        if (!speaking) {
+          this._setSpeaking(true, indicator);
+          speaking = true;
+        }
+        try {
+          await source.captureFrame(new AudioFrame(chunk, LIVEKIT_SAMPLE_RATE, 1, chunk.length));
+          sent++;
+          firstSendAt ??= performance.now();
+        } catch (e) {
+          errs++;
+          if (errs === 1) this.emit("log", `LiveKit captureFrame error: ${e.message}`);
+        }
+      }
+      // The queued tail is still playing: keep the indicator lit until it ends.
+      if (!isStopped() && sent) {
+        try {
+          await source.waitForPlayout();
+        } catch {}
+      }
+    } finally {
+      if (speaking) this._setSpeaking(false, indicator);
+    }
+    return { packetsSent: sent, writeErrors: errs, firstSendAt };
+  }
+
   /**
-   * Speak `text` to every connected WEBRTC peer: say.py streams PCM, ffmpeg
-   * encodes it to Opus (src/say.mjs), and _pump paces it out as RTP with a
-   * 500 ms prebuffer. Claims the same `_play` token as play(), so a new say (or
-   * a sound) supersedes it and hangup() stops it. Resolves when speech ends or
-   * is stopped; never rejects. LiveKit-escalated meetings are slice 1 of #7.
+   * Speak `text` into the active transport: say.py streams PCM and src/say.mjs
+   * converts it for whichever transport the bubble is on. WEBRTC mesh: ffmpeg
+   * encodes Opus and _pump paces it out as RTP with a 500 ms prebuffer.
+   * LiveKit: 20 ms PCM frames go to AudioSource.captureFrame (_pumpLiveKit).
+   * Claims the same `_play` token as play(), so a new say (or a sound)
+   * supersedes it and hangup() stops it. Resolves when speech ends or is
+   * stopped; never rejects.
    */
   async say(text, { voice, indicator = true } = {}) {
-    if (this._livekit) return { played: false, reason: "livekit say not implemented yet" };
     this._play?.stop();
     const ac = new AbortController();
     let stopped = false;
+    let onStop = null; // transport-specific cancel hook (LiveKit: flush the queue)
     const token = (this._play = {
       kind: "say",
       stop: () => {
         stopped = true;
         ac.abort();
+        onStop?.();
       },
     });
     const t0 = performance.now();
     let firstAudioAt = null;
     let packetsSent = 0;
+    const tap = async function* (src) {
+      for await (const p of src) {
+        firstAudioAt ??= performance.now();
+        yield p;
+      }
+    };
     try {
+      const lk = this._livekit;
+      if (lk) {
+        const { source } = lk; // captured now: hangup() clears this._livekit
+        onStop = () => {
+          try {
+            source.clearQueue();
+          } catch {}
+        };
+        const r = await this._pumpLiveKit(tap(speakLiveKit(text, { ...this._tts, voice, signal: ac.signal })), {
+          source,
+          isStopped: () => stopped,
+          indicator,
+        });
+        // A stop that lands after the last frame is queued must still cut the
+        // tail: the token's stop() already flushed, this covers the race where
+        // it fired between captureFrame and waitForPlayout.
+        if (stopped) onStop();
+        packetsSent = r.packetsSent;
+        return {
+          played: !stopped && r.packetsSent > 0,
+          packetsSent: r.packetsSent,
+          writeErrors: r.writeErrors,
+          peers: lk.room.remoteParticipants.size,
+          firstAudioMs: firstAudioAt == null ? null : Math.round(firstAudioAt - t0),
+          firstRtpMs: r.firstSendAt == null ? null : Math.round(r.firstSendAt - t0),
+          transport: "livekit",
+        };
+      }
       if (!this._connectedPeers().length) return { played: false, reason: "no connected peers" };
-      const source = speak(text, { ...this._tts, voice, signal: ac.signal });
-      const packets = (async function* () {
-        for await (const p of source) {
-          firstAudioAt ??= performance.now();
-          yield p;
-        }
-      })();
+      const packets = tap(speakWebrtc(text, { ...this._tts, voice, signal: ac.signal }));
       const r = await this._pump(packets, {
         getTargets: () => this._connectedPeers(),
         isStopped: () => stopped,

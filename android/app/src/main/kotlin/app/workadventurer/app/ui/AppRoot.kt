@@ -158,7 +158,10 @@ fun AppRoot(
                         popEnterTransition = { fadeIn() },
                         popExitTransition = { slideOutHorizontally { it } },
                     ) { entry ->
-                        UserDetailScreen(entry.arguments?.getInt("userId") ?: -1, state, onBack = { nav.popBackStack() }, onCommand = onCommand)
+                        UserDetailScreen(
+                            entry.arguments?.getInt("userId") ?: -1, state, onBack = { nav.popBackStack() },
+                            onOpenConversation = { nav.navigate(Route.Conversation(it).path) }, onCommand = onCommand,
+                        )
                     }
                 }
             }

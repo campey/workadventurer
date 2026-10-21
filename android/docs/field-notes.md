@@ -135,8 +135,8 @@ per-gate sections below have the measurements; this section is the summary to st
   baker still has the old behaviour: #92]
 
 ### Server versions
-- Prod `play.workadventu.re` was v1.34.0 from 2026-10-05, then v1.34.1 (hash `b82fc568`, proto unchanged; #132); the v1.34.0 hash was `23c8eb8c` (older hashes get a "new version" error
-  screen). Staging is rolling `master` (seen at `master@6ae415d` on 2026-10-07) and its hash is **also `23c8eb8c`**. [live]
+- Prod `play.workadventu.re` was v1.34.0 from 2026-10-05, then v1.34.1 (hash `b82fc568`; #132), then v1.34.2 on 2026-10-20 (hash `62e25483`, additive proto changes only); the v1.34.0 hash was `23c8eb8c` (older hashes get a "new version" error
+  screen). Staging is rolling `master` (seen at `master@6ae415d` on 2026-10-07, when its hash was **also `23c8eb8c`**; since 2026-10-20 it is `master@118dd84c` with its own hash `d2d82672`, so `RoomConfig.forRoom` sends a different hash for staging rooms). [live]
 - **Staging has its own pusher and its own character catalogue** (`pusher.staging.workadventu.re`; a prod woka id is refused
   with "invalid character texture"); the app chooses both from the room's host (`RoomConfig.forRoom`). Joining the staging village worked
   first time, including audio. [live]

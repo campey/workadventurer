@@ -13,11 +13,14 @@ import { resolveConfig, configToEnv, explicitPort } from "../src/config.mjs";
 import { createRegistry, AmbiguousDaemonError } from "../src/daemon-registry.mjs";
 
 const DAEMON = fileURLToPath(new URL("../src/wa-daemon.mjs", import.meta.url));
+const SUPERVISOR = fileURLToPath(new URL("../src/wa-supervisor.mjs", import.meta.url));
 const registry = createRegistry();
 
 const USAGE = `wa — WorkAdventure presence control
 
-  wa join [<room-url>] [--detach] [--name N] [--port P] [--stt]
+  wa join [<room-url>] [--detach] [--keep-alive] [--name N] [--port P] [--stt]
+                              --keep-alive restarts the daemon if it is killed (OOM, SIGKILL);
+                              a failed first connect or a server refusal still exits
   wa leave
   wa status [--json]
   wa goto <x> <y> [--walk|--run]   human speed (wa-1.34 adapter); default unchanged
@@ -46,6 +49,7 @@ try {
     json: { type: "boolean", default: false },
     "if-running": { type: "boolean", default: false },
     detach: { type: "boolean", default: false },
+    "keep-alive": { type: "boolean", default: false },
     stt: { type: "boolean" }, // undefined unless passed, so it never overrides WA_STT/config.json
     port: { type: "string" },
     room: { type: "string" },
@@ -132,19 +136,21 @@ async function daemonReachable() {
   }
 }
 
-function spawnDaemon({ detached, roomUrl }) {
+function spawnDaemon({ detached, roomUrl, keepAlive }) {
   const env = { ...process.env, ...configToEnv(cfg) };
+  // --keep-alive runs the daemon under a restart-on-kill supervisor (#138).
+  const entry = keepAlive ? SUPERVISOR : DAEMON;
   if (roomUrl) env.WA_ROOM = roomUrl;
   if (detached) {
     const logFile = registry.logPath(cfg.port);
     fs.mkdirSync(path.dirname(logFile), { recursive: true });
     const out = fs.openSync(logFile, "a");
     note(`daemon log: ${logFile}`);
-    const child = spawn(process.execPath, [DAEMON], { detached: true, stdio: ["ignore", out, out], env });
+    const child = spawn(process.execPath, [entry], { detached: true, stdio: ["ignore", out, out], env });
     child.unref();
     return null;
   }
-  return spawn(process.execPath, [DAEMON], { stdio: "inherit", env });
+  return spawn(process.execPath, [entry], { stdio: "inherit", env });
 }
 
 async function waitForDaemon(ms = 15000) {
@@ -203,12 +209,12 @@ switch (cmd) {
       process.exit(0);
     }
     if (flags.detach) {
-      spawnDaemon({ detached: true, roomUrl });
+      spawnDaemon({ detached: true, roomUrl, keepAlive: flags["keep-alive"] });
       if (!(await waitForDaemon())) die("daemon did not come up in time");
       const s = (await api("GET", "/state")).json;
       process.stdout.write(flags.json ? JSON.stringify(s, null, 2) + "\n" : `joined as ${s.name}\n`);
     } else {
-      const child = spawnDaemon({ detached: false, roomUrl });
+      const child = spawnDaemon({ detached: false, roomUrl, keepAlive: flags["keep-alive"] });
       child.on("exit", (code) => process.exit(code ?? 0));
     }
     break;
