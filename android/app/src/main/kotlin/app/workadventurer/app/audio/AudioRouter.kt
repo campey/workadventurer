@@ -23,6 +23,7 @@ class AudioRouter(context: Context, private val log: CallLog) {
     private val _route = MutableStateFlow(AudioRoute())
     val route: StateFlow<AudioRoute> = _route.asStateFlow()
     private var inCall = false
+    private var applied: Int? = null // the device id we last asked Android for; its own idea of the current device can disagree
     private var started = false
 
     private val callback = object : AudioDeviceCallback() {
@@ -44,6 +45,7 @@ class AudioRouter(context: Context, private val log: CallLog) {
     /** The call is over: give the phone's audio back. */
     @Synchronized fun callEnded() {
         inCall = false
+        applied = null
         runCatching {
             if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice() else audio.isSpeakerphoneOn = false
         }.onFailure { log.e(TAG, "clearing the audio device: ${it.message}") }
@@ -72,9 +74,10 @@ class AudioRouter(context: Context, private val log: CallLog) {
         runCatching {
             if (Build.VERSION.SDK_INT >= 31) {
                 val info = audio.availableCommunicationDevices.firstOrNull { it.id == active.id } ?: return
-                if (audio.communicationDevice?.id != info.id) {
+                if (applied != info.id) {
                     val ok = audio.setCommunicationDevice(info)
                     log.i(TAG, "audio device set to ${active.kind.name.lowercase()}: ${if (ok) "ok" else "refused"}")
+                    applied = if (ok) info.id else null
                 }
             } else {
                 // Before Android 12 there is only the speakerphone switch; a wired headset takes over by itself.
