@@ -30,6 +30,8 @@ import androidx.navigation.navArgument
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import app.workadventurer.app.session.Command
+import app.workadventurer.app.audio.AudioDevice
+import app.workadventurer.app.audio.AudioRoute
 import app.workadventurer.app.session.SessionState
 import app.workadventurer.protocol.Texture
 import kotlinx.coroutines.launch
@@ -59,6 +61,10 @@ fun AppRoot(
     onShareLink: (url: String) -> Unit,
     onMicChoice: (muted: Boolean) -> Unit,
     onCommand: (Command) -> Unit,
+    /** Which devices there are and which one a call uses (#164); the speaker button steps through them. */
+    audio: AudioRoute = AudioRoute(),
+    onAudioNext: () -> Unit = {},
+    onAudioPick: (AudioDevice) -> Unit = {},
 ) {
     val nav = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
@@ -126,6 +132,8 @@ fun AppRoot(
                         onToggleMic = { onMicChoice(!muted) },
                         onCamera = { scope.launch { snackbar.showSnackbar(bar.cameraMessage) } },
                         onMore = { showAvSheet = true },
+                        audioDevice = audio.active,
+                        onAudio = { onAudioNext(); showAvSheet = true },
                     )
                 },
             ) { padding ->
@@ -174,7 +182,10 @@ fun AppRoot(
             }
         }
 
-        if (showAvSheet) AvSheet(muted = muted, onDismiss = { showAvSheet = false }, sheetState = avSheetState)
+        if (showAvSheet) AvSheet(
+            muted = muted, onDismiss = { showAvSheet = false }, sheetState = avSheetState,
+            devices = audio.devices, active = audio.active, onPick = onAudioPick,
+        )
         if (showMeSheet && inRoom) MeSheet(state.myName, state.myTextures, onDismiss = { showMeSheet = false }, sheetState = meSheetState)
     }
 }

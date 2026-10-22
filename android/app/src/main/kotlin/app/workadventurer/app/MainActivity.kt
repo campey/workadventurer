@@ -42,6 +42,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             WorkAdventurerTheme {
                 val state by session.state.collectAsStateWithLifecycle()
+                val audioRouter = (application as WaApp).audioRouter
+                val audio by audioRouter.route.collectAsStateWithLifecycle()
                 AppRoot(
                     state = state,
                     micWanted = micWanted.value,
@@ -58,6 +60,9 @@ class MainActivity : ComponentActivity() {
                     texturesFor = { room -> (application as WaApp).lastTextures.get(room) },
                     visitsFor = { room -> (application as WaApp).areaVisits.counts(room) },
                     onMicChoice = ::chooseMic,
+                    audio = audio,
+                    onAudioNext = audioRouter::next,
+                    onAudioPick = audioRouter::pick,
                     // Movement goes straight to the session; only Join/Leave go through the foreground service.
                     onCommand = { session.dispatch(it) },
                 )

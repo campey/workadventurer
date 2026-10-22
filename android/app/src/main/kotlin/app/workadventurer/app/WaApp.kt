@@ -27,6 +27,9 @@ class WaApp : Application() {
     /** Your own woka layers as last seen per server, so the Join screen can preview you before connecting. */
     val lastTextures by lazy { LastTextures(PrefsStore(this)) }
 
+    /** The audio devices and which one a call uses (#164); tracks devices from the start so the bar can show them. */
+    val audioRouter: app.workadventurer.app.audio.AudioRouter by lazy { app.workadventurer.app.audio.AudioRouter(this, callLog).also { it.start() } }
+
     /** How often you have been in each area, per room (#159). */
     val areaVisits by lazy { AreaVisits(PrefsStore(this)) }
 
@@ -77,7 +80,7 @@ class WaApp : Application() {
                     c.closed.invokeOnCompletion { logJob.cancel() }
                 }
             },
-            voiceHost = MeshVoiceHost(this, callLog),
+            voiceHost = MeshVoiceHost(this, callLog, audioRouter),
             log = { callLog.i("WaSession", it) },
         )
         // Our own picture arrives in the room-joined message; keep it for the Join screen's preview.
