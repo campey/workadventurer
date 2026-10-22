@@ -56,6 +56,7 @@ class MainActivity : ComponentActivity() {
                     onShareLink = ::shareLink,
                     wokaLoader = (application as WaApp).wokaLoader,
                     texturesFor = { room -> (application as WaApp).lastTextures.get(room) },
+                    visitsFor = { room -> (application as WaApp).areaVisits.counts(room) },
                     onMicChoice = ::chooseMic,
                     // Movement goes straight to the session; only Join/Leave go through the foreground service.
                     onCommand = { session.dispatch(it) },

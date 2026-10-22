@@ -43,14 +43,17 @@ import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.SessionState
 
 /**
- * Who is where: the conversation you are in at the top, then other bubbles, meeting areas with people in them, "Is on this
- * map" (you first), then every other area. Every section stays open with its people. A section header with an arrow opens
- * that conversation; a person opens their screen. Until the conversation screen exists (next slice), a bubble or area header
- * walks you there, so nothing the old list could do is lost.
+ * Who is where: the conversation you are in at the top, then other bubbles, meeting areas with people in them, "Elsewhere on
+ * the map" (you first; only people in no bubble or area), then every other area. Every section stays open with its people. A
+ * section header with an arrow opens that conversation; a person opens their screen.
  */
 @Composable
-fun UsersScreen(state: SessionState, onOpenPerson: (userId: Int) -> Unit, onOpenConversation: (ConversationKey) -> Unit, onCommand: (Command) -> Unit) {
-    val model = usersModel(state)
+fun UsersScreen(
+    state: SessionState, onOpenPerson: (userId: Int) -> Unit, onOpenConversation: (ConversationKey) -> Unit, onCommand: (Command) -> Unit,
+    /** How often you have been in each area of this room (by area key); where you go often is listed first. */
+    visits: Map<String, Int> = emptyMap(),
+) {
+    val model = usersModel(state, visits)
     val canMove = state.connection is Connection.Connected
     fun open(c: Conversation) = onOpenConversation(c.key)
 
@@ -74,7 +77,7 @@ fun UsersScreen(state: SessionState, onOpenPerson: (userId: Int) -> Unit, onOpen
                     ConversationSection(c, you = false, onHeader = { open(c) }, onPerson = onOpenPerson)
                 }
             }
-            item(key = "map") {
+            if (model.onMap.isNotEmpty()) item(key = "map") {
                 Spacer(Modifier.height(8.dp))
                 SectionHeader("Elsewhere on the map", onClick = null, description = "Elsewhere on the map")
                 model.onMap.forEach { PersonRow(it, onClick = if (it.isMe) null else ({ it.userId?.let(onOpenPerson) })) }

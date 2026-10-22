@@ -22,9 +22,9 @@ class UsersModelTest {
 
     private fun state(
         players: List<Player> = emptyList(), areas: List<Area> = emptyList(), inAreas: List<Area> = emptyList(),
-        groups: List<Group> = emptyList(), myGroupId: Int? = null,
+        groups: List<Group> = emptyList(), myGroupId: Int? = null, myX: Int? = null, myY: Int? = null,
     ) = SessionState(
-        players = players, areas = areas, inAreas = inAreas, groups = groups, myGroupId = myGroupId,
+        players = players, areas = areas, inAreas = inAreas, groups = groups, myGroupId = myGroupId, myX = myX, myY = myY,
         myUserId = 1, myName = "Me", myTextures = listOf(Texture("t", "https://x/t.png")),
     )
 
@@ -132,8 +132,16 @@ class UsersModelTest {
         assertNull(m.active)
         assertEquals(emptyList(), m.meetingAreas)
         assertEquals(listOf("Spawn Point"), m.otherAreas.map { it.area.name })
-        assertEquals(listOf("Me", "Ada"), names(m.otherAreas.single().occupants)) // people (you too) are shown, but still on the map
-        assertEquals(listOf("Me", "Ada"), names(m.onMap))
+        assertEquals(listOf("Me", "Ada"), names(m.otherAreas.single().occupants)) // people (you too) are shown under their area...
+        assertEquals(emptyList(), names(m.onMap)) // ...and not again under "Elsewhere on the map" (#158)
+    }
+
+    @Test
+    fun onlyPeopleInNoAreaAreElsewhereOnTheMap() {
+        val spawn = area("s", "Spawn Point", 0, 0)
+        val m = usersModel(state(players = listOf(player(2, "Barry", x = 50, y = 50), player(3, "Cara", x = 5000, y = 5000)), areas = listOf(spawn)))
+        assertEquals(listOf("Barry"), names(m.otherAreas.single().occupants))
+        assertEquals(listOf("Me", "Cara"), names(m.onMap)) // Barry is in Spawn Point, so not here too
     }
 
     @Test
@@ -150,5 +158,42 @@ class UsersModelTest {
         assertEquals(listOf(Texture("b", "https://x/b.png")), x.textures)
         assertEquals(2, x.userId)
         assertEquals(false, x.isMe)
+    }
+
+    // #159: populated first, then how often you have been there, then how near, then by name.
+    private fun orderOf(vararg areas: Area, players: List<Player> = emptyList(), visits: Map<String, Int> = emptyMap(), myX: Int? = 0, myY: Int? = 0) =
+        usersModel(state(players = players, areas = areas.toList(), myX = myX, myY = myY), visits).otherAreas.map { it.area.name }
+
+    @Test
+    fun populatedAreasComeFirstThenMostVisitedThenNearestThenByName() {
+        val near = area("near", "Near", 100, 0)
+        val far = area("far", "Far", 3000, 0)
+        val busy = area("busy", "Busy", 6000, 0) // far away but someone is in it
+        val people = listOf(player(2, "Ada", x = 6050, y = 50))
+        assertEquals(listOf("Busy", "Near", "Far"), orderOf(near, far, busy, players = people)) // populated, then nearest
+        assertEquals(listOf("Busy", "Far", "Near"), orderOf(near, far, busy, players = people, visits = mapOf("far" to 3, "near" to 1))) // then visits
+    }
+
+    @Test
+    fun withEqualVisitsTheNearerAreaComesFirst() {
+        val near = area("near", "Zed", 100, 0)
+        val far = area("far", "Alpha", 3000, 0)
+        assertEquals(listOf("Zed", "Alpha"), orderOf(near, far, visits = mapOf("near" to 2, "far" to 2)))
+        assertEquals(listOf("Alpha", "Zed"), orderOf(near, far, myX = 3000, myY = 0)) // standing by Alpha now
+    }
+
+    @Test
+    fun withNoPositionAndNoVisitsTheOrderIsByName() {
+        assertEquals(listOf("Alpha", "Zed"), orderOf(area("z", "Zed", 0, 0), area("a", "Alpha", 3000, 0), myX = null, myY = null))
+    }
+
+    @Test
+    fun theMeetingAreasWithPeopleAreOrderedTheSameWay() {
+        val a = area("a", "Alpha", 3000, 0, meeting = true)
+        val b = area("b", "Beta", 100, 0, meeting = true)
+        val people = listOf(player(2, "Ada", x = 3050, y = 50), player(3, "Bob", x = 150, y = 50))
+        fun order(visits: Map<String, Int>) = usersModel(state(players = people, areas = listOf(a, b), myX = 0, myY = 0), visits).meetingAreas.map { it.title }
+        assertEquals(listOf("Beta", "Alpha"), order(emptyMap())) // nearest first
+        assertEquals(listOf("Alpha", "Beta"), order(mapOf("a" to 4))) // but where you go often comes first
     }
 }

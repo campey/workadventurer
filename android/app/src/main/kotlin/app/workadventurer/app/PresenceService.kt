@@ -145,10 +145,7 @@ class PresenceService : Service() {
             Intent(this, PresenceService::class.java).setAction(name).putExtra(EXTRA_NOTIFICATION_ID, n.id),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val open = PendingIntent.getActivity(
-            this, n.id, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        val open = openApp(n.id)
         val caller = Person.Builder().setName(n.title).setImportant(true).build()
         return NotificationCompat.Builder(this, INVITE_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -166,6 +163,13 @@ class PresenceService : Service() {
             .build()
     }
 
+    /** Brings the app to the front (the running one, not a second copy) when a notification's body is tapped. */
+    private fun openApp(requestCode: Int) = PendingIntent.getActivity(
+        this, requestCode,
+        Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
     private fun notification(text: String, muted: Boolean = true): Notification {
         val leave = PendingIntent.getService(
             this, 0,
@@ -181,6 +185,7 @@ class PresenceService : Service() {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("WorkAdventure")
             .setContentText(text)
+            .setContentIntent(openApp(OPEN_APP_REQUEST_CODE))
             .setOngoing(true)
             .addAction(android.R.drawable.ic_btn_speak_now, if (muted) "Unmute" else "Mute", toggleMute)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Leave", leave)
@@ -210,6 +215,7 @@ class PresenceService : Service() {
         const val ACTION_TOGGLE_MUTE = "app.workadventurer.action.TOGGLE_MUTE"
         const val ACTION_ACCEPT_INVITE = "app.workadventurer.action.ACCEPT_INVITE"
         const val ACTION_DECLINE_INVITE = "app.workadventurer.action.DECLINE_INVITE"
+        private const val OPEN_APP_REQUEST_CODE = -1 // invite notifications use their own ids as request codes
         const val EXTRA_NAME = "name"
         const val EXTRA_ROOM = "room"
         const val EXTRA_MIC_ON = "micOn"

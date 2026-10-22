@@ -51,6 +51,8 @@ fun AppRoot(
     wokaLoader: WokaLoader,
     /** Your woka layers as last seen for a world's server, for the Join preview (empty if never joined there). */
     texturesFor: (roomUrl: String) -> List<Texture>,
+    /** How often you have been in each area of a room (by area key), for ordering the Users list. */
+    visitsFor: (roomUrl: String) -> Map<String, Int> = { emptyMap() },
     onJoin: (name: String, room: String) -> Unit,
     onLeave: () -> Unit,
     onShareLogs: () -> Unit,
@@ -78,6 +80,8 @@ fun AppRoot(
     LaunchedEffect(notice) { if (notice != null) snackbar.showSnackbar(notice) }
 
     // Walking into a Jitsi area: we don't support those yet (#119), so say so once, rather than leave someone in a call they can't hear.
+    // Read again when the areas we are in change, so the list doesn't reshuffle while you look at it.
+    val visits = remember(state.roomName, state.inAreas) { visitsFor(state.roomName) }
     var areasBefore by remember { mutableStateOf(emptyList<app.workadventurer.protocol.Area>()) }
     LaunchedEffect(state.inAreas) {
         if (jitsiEntered(areasBefore, state.inAreas) != null) snackbar.showSnackbar(JITSI_NOT_SUPPORTED_MESSAGE)
@@ -137,7 +141,10 @@ fun AppRoot(
                         // The list steps left a little when a screen slides in over it, and back when it leaves.
                         exitTransition = { if (targetState.destination.route.isDeeper()) slideOutHorizontally { -it / 4 } + fadeOut() else fadeOut() },
                         popEnterTransition = { if (initialState.destination.route.isDeeper()) slideInHorizontally { -it / 4 } + fadeIn() else fadeIn() },
-                    ) { UsersScreen(state, onOpenPerson = { nav.navigate(Route.User(it).path) }, onOpenConversation = { nav.navigate(Route.Conversation(it).path) }, onCommand = onCommand) }
+                    ) { UsersScreen(
+                        state, onOpenPerson = { nav.navigate(Route.User(it).path) }, onOpenConversation = { nav.navigate(Route.Conversation(it).path) },
+                        onCommand = onCommand, visits = visits,
+                    ) }
                     composable(
                         Route.Conversation.PATTERN,
                         enterTransition = { slideInHorizontally { it } },

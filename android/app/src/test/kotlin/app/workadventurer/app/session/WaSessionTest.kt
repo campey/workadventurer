@@ -365,6 +365,17 @@ class WaSessionTest {
         assertTrue(kotlin.math.hypot(p.x - 300.0, p.y) <= 48.0, "should end inside bubble range of Ada, at $p")
     }
 
+    // #159: the Users screen orders areas by distance from us. Rounded to 64 px so walking doesn't redraw the list every step.
+    @Test
+    fun ourPositionIsMirroredToTheNearest64Px() = runTest {
+        val (session, conn) = connected(startX = 100, startY = 200)
+        assertEquals(128, session.state.value.myX); assertEquals(192, session.state.value.myY)
+        conn().state.setMyPosition(110, 210); runCurrent() // still the same 64 px cell
+        assertEquals(128, session.state.value.myX); assertEquals(192, session.state.value.myY)
+        conn().state.setMyPosition(1000, 40); runCurrent()
+        assertEquals(1024, session.state.value.myX); assertEquals(64, session.state.value.myY)
+    }
+
     @Test
     fun walkToAreaGoesToItsCentreAndAnUnknownAreaIsIgnored() = runTest {
         val (session, conn) = connected()
