@@ -56,12 +56,15 @@ fun AvBar(
     /** The device in use (its icon and name), and the button that switches device and opens the sheet. */
     audioDevice: AudioDevice? = null, onAudio: () -> Unit = {},
 ) {
+    // Every button is a filled circle, so they all read as buttons; the mic's circle goes red when muted.
+    val circle = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
     BottomAppBar(containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
         Spacer(Modifier.width(4.dp))
         IconToggleButton(
             checked = state.micMuted,
             onCheckedChange = { onToggleMic() },
             colors = IconButtonDefaults.iconToggleButtonColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 checkedContainerColor = MaterialTheme.colorScheme.error,
                 checkedContentColor = MaterialTheme.colorScheme.onError,
             ),
@@ -74,17 +77,18 @@ fun AvBar(
         // Present but off: dim, announced as unavailable, and a tap says why.
         IconButton(
             onClick = onCamera,
+            colors = circle,
             modifier = Modifier.size(48.dp).semantics {
                 contentDescription = state.cameraDescription
                 disabled()
             },
         ) { Icon(WaIcons.CameraOff, contentDescription = null, tint = WaColors.DisabledIcon) }
         Spacer(Modifier.width(8.dp))
-        IconButton(onClick = onAudio, modifier = Modifier.size(48.dp).semantics { contentDescription = audioButtonDescription(audioDevice) }) {
+        IconButton(onClick = onAudio, colors = circle, modifier = Modifier.size(48.dp).semantics { contentDescription = audioButtonDescription(audioDevice) }) {
             Icon(deviceIcon(audioDevice?.kind), contentDescription = null)
         }
         Spacer(Modifier.weight(1f))
-        IconButton(onClick = onMore, modifier = Modifier.size(48.dp).semantics { contentDescription = state.moreDescription }) {
+        IconButton(onClick = onMore, colors = circle, modifier = Modifier.size(48.dp).semantics { contentDescription = state.moreDescription }) {
             Icon(WaIcons.MoreVert, contentDescription = null)
         }
         Spacer(Modifier.width(4.dp))
