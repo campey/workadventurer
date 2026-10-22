@@ -70,7 +70,7 @@ fun AppRoot(
     val scope = rememberCoroutineScope()
     var showAvSheet by remember { mutableStateOf(false) }
     var showMeSheet by remember { mutableStateOf(false) }
-    val avSheetState = rememberModalBottomSheetState()
+    val avSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val meSheetState = rememberModalBottomSheetState()
     val drawer = rememberDrawerState(DrawerValue.Closed)
 
