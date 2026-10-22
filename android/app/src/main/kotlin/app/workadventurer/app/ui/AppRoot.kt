@@ -182,7 +182,7 @@ fun AppRoot(
         }
 
         if (showAvSheet) AvSheet(
-            muted = muted, onDismiss = { showAvSheet = false }, sheetState = avSheetState,
+            muted = muted, onDismiss = { showAvSheet = false }, sheetState = avSheetState, onToggleMic = { onMicChoice(!muted) },
             devices = audio.devices, active = audio.active, onPick = onAudioPick,
         )
         if (showMeSheet && inRoom) MeSheet(state.myName, state.myTextures, onDismiss = { showMeSheet = false }, sheetState = meSheetState)

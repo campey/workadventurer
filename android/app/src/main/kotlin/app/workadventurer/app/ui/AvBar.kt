@@ -33,7 +33,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.SheetState
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -92,7 +95,7 @@ fun AvBar(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AvSheet(
-    muted: Boolean, onDismiss: () -> Unit, sheetState: SheetState,
+    muted: Boolean, onDismiss: () -> Unit, sheetState: SheetState, onToggleMic: () -> Unit = {},
     devices: List<AudioDevice> = emptyList(), active: AudioDevice? = null, onPick: (AudioDevice) -> Unit = {},
 ) {
     ModalBottomSheet(
@@ -102,20 +105,25 @@ fun AvSheet(
     ) {
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState())
-                .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+                .padding(start = 20.dp, end = 20.dp, bottom = 24.dp)
+                .semantics { paneTitle = AUDIO_VIDEO_SHEET_TITLE },
         ) {
-            Text(AUDIO_VIDEO_SHEET_TITLE, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 4.dp, bottom = 16.dp))
+            // The microphone row is the mute switch: tap to mute or unmute, red while muted (as the bar's mic is).
+            val micBackground = if (muted) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.surfaceContainerHigh
+            val micContent = if (muted) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onSurface
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 72.dp)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(16.dp))
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .clip(RoundedCornerShape(16.dp)).background(micBackground)
+                    .clickable(role = Role.Button, onClick = onToggleMic)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .semantics { contentDescription = avBarState(muted).micDescription; liveRegion = LiveRegionMode.Polite },
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(if (muted) WaIcons.MicOff else WaIcons.MicOn, contentDescription = null)
+                Icon(if (muted) WaIcons.MicOff else WaIcons.MicOn, contentDescription = null, tint = micContent)
                 Column {
-                    Text("Microphone", style = MaterialTheme.typography.titleMedium)
-                    Text(micSheetText(muted, micDeviceName(active)), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Microphone", style = MaterialTheme.typography.titleMedium, color = micContent)
+                    Text(micSheetText(muted, micDeviceName(active)), style = MaterialTheme.typography.bodyMedium, color = micContent.copy(alpha = 0.85f))
                 }
             }
             if (devices.isNotEmpty()) {
@@ -126,24 +134,29 @@ fun AvSheet(
                 )
                 Column(
                     Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(16.dp))
-                        .selectableGroup(),
+                        .padding(4.dp).selectableGroup(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     devices.forEach { d ->
                         val inUse = d.id == active?.id
+                        // The device in use is the whole row in green, dark text on it: unmistakable at a glance.
+                        val content = if (inUse) DEVICE_IN_USE_CONTENT else MaterialTheme.colorScheme.onSurface
                         Row(
                             Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (inUse) DEVICE_IN_USE else androidx.compose.ui.graphics.Color.Transparent)
                                 .selectable(selected = inUse, role = Role.RadioButton, onClick = { onPick(d) })
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
                                 .semantics { contentDescription = if (inUse) "${d.name}, in use" else d.name },
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(deviceIcon(d.kind), contentDescription = null)
+                            Icon(deviceIcon(d.kind), contentDescription = null, tint = content)
                             Column(Modifier.weight(1f)) {
-                                Text(d.name, style = MaterialTheme.typography.titleMedium)
-                                Text(deviceSubtitle(d), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(d.name, style = MaterialTheme.typography.titleMedium, color = content)
+                                Text(deviceSubtitle(d), style = MaterialTheme.typography.bodyMedium, color = if (inUse) content else MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            if (inUse) Icon(WaIcons.Check, contentDescription = null, tint = androidx.compose.ui.graphics.Color(0xFF68E97A))
+                            if (inUse) Icon(WaIcons.Check, contentDescription = null, tint = content)
                         }
                     }
                 }
@@ -151,6 +164,9 @@ fun AvSheet(
         }
     }
 }
+
+private val DEVICE_IN_USE = androidx.compose.ui.graphics.Color(0xFF68E97A)
+private val DEVICE_IN_USE_CONTENT = androidx.compose.ui.graphics.Color(0xFF0B1B32)
 
 private fun deviceIcon(kind: DeviceKind?) = when (kind) {
     DeviceKind.Earpiece -> WaIcons.Earpiece
