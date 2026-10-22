@@ -35,7 +35,7 @@ class AvBarStateTest {
 
     @Test
     fun theSheetDescribesTheMicrophone() {
-        assertEquals("Muted · Built-in microphone", micSheetText(muted = true))
-        assertEquals("On · Built-in microphone", micSheetText(muted = false))
+        assertEquals("Muted · Phone microphone", micSheetText(muted = true, micName = "Phone microphone"))
+        assertEquals("On · Andy's earbuds microphone", micSheetText(muted = false, micName = "Andy's earbuds microphone")) // the one on the device in use
     }
 }

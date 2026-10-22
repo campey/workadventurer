@@ -30,6 +30,8 @@ import androidx.navigation.navArgument
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import app.workadventurer.app.session.Command
+import app.workadventurer.app.audio.AudioDevice
+import app.workadventurer.app.audio.AudioRoute
 import app.workadventurer.app.session.SessionState
 import app.workadventurer.protocol.Texture
 import kotlinx.coroutines.launch
@@ -59,13 +61,16 @@ fun AppRoot(
     onShareLink: (url: String) -> Unit,
     onMicChoice: (muted: Boolean) -> Unit,
     onCommand: (Command) -> Unit,
+    /** Which devices there are and which one a call uses (#164); the speaker button opens the sheet where you pick one. */
+    audio: AudioRoute = AudioRoute(),
+    onAudioPick: (AudioDevice) -> Unit = {},
 ) {
     val nav = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showAvSheet by remember { mutableStateOf(false) }
     var showMeSheet by remember { mutableStateOf(false) }
-    val avSheetState = rememberModalBottomSheetState()
+    val avSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val meSheetState = rememberModalBottomSheetState()
     val drawer = rememberDrawerState(DrawerValue.Closed)
 
@@ -126,6 +131,8 @@ fun AppRoot(
                         onToggleMic = { onMicChoice(!muted) },
                         onCamera = { scope.launch { snackbar.showSnackbar(bar.cameraMessage) } },
                         onMore = { showAvSheet = true },
+                        audioDevice = audio.active,
+                        onAudio = { showAvSheet = true },
                     )
                 },
             ) { padding ->
@@ -174,7 +181,10 @@ fun AppRoot(
             }
         }
 
-        if (showAvSheet) AvSheet(muted = muted, onDismiss = { showAvSheet = false }, sheetState = avSheetState)
+        if (showAvSheet) AvSheet(
+            muted = muted, onDismiss = { showAvSheet = false }, sheetState = avSheetState, onToggleMic = { onMicChoice(!muted) },
+            devices = audio.devices, active = audio.active, onPick = onAudioPick,
+        )
         if (showMeSheet && inRoom) MeSheet(state.myName, state.myTextures, onDismiss = { showMeSheet = false }, sheetState = meSheetState)
     }
 }

@@ -50,6 +50,20 @@ object WaIcons {
 
     val Check: ImageVector by lazy { stroked("check", "M5 12l5 5l10 -10", 2.5f) }
 
+    val Speaker: ImageVector by lazy {
+        stroked("speaker", "M15 8a5 5 0 0 1 0 8 M17.7 5a9 9 0 0 1 0 14 M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5", 1.5f)
+    }
+
+    val Earpiece: ImageVector by lazy {
+        stroked("earpiece", "M5 4h4l2 5l-2.5 1.5a11 11 0 0 0 5 5l1.5 -2.5l5 2v4a2 2 0 0 1 -2 2a16 16 0 0 1 -15 -15a2 2 0 0 1 2 -2", 1.5f)
+    }
+
+    val Bluetooth: ImageVector by lazy { stroked("bluetooth", "M7 8l10 8l-5 4v-16l5 4l-10 8", 1.5f) }
+
+    val Headset: ImageVector by lazy {
+        stroked("headset", "M4 15v-3a8 8 0 0 1 16 0v3 M4 15a2 2 0 0 1 2 -2h1v6h-1a2 2 0 0 1 -2 -2z M20 15a2 2 0 0 0 -2 -2h-1v6h1a2 2 0 0 0 2 -2z", 1.5f)
+    }
+
     val ArrowBack: ImageVector by lazy { stroked("arrow-back", "M15 6l-6 6l6 6", 2f) }
 
     val Walk: ImageVector by lazy {
