@@ -47,14 +47,16 @@ class AudioRouter(context: Context, private val log: CallLog) {
         inCall = false
         applied = null
         runCatching {
-            if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice() else audio.isSpeakerphoneOn = false
+            if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
+            else { audio.isSpeakerphoneOn = false; audio.stopBluetoothSco() }
         }.onFailure { log.e(TAG, "clearing the audio device: ${it.message}") }
     }
 
     /** A device chosen from the sheet. */
     @Synchronized fun pick(device: AudioDevice) { _route.update { it.pick(device) }; apply() }
 
-    @Synchronized private fun refresh() {
+    /** Look at the devices again: a permission that lets us see Bluetooth ones may just have been granted. */
+    @Synchronized fun refresh() {
         val before = _route.value.active
         _route.update { it.devicesChanged(currentDevices().mapNotNull(::toDevice)) }
         if (_route.value.active != before) log.i(TAG, "audio device now ${_route.value.active?.kind?.name?.lowercase() ?: "none"}")
@@ -77,8 +79,10 @@ class AudioRouter(context: Context, private val log: CallLog) {
                     applied = if (ok) info.id else null
                 }
             } else {
-                // Before Android 12 there is only the speakerphone switch; a wired headset takes over by itself.
+                // Before Android 12 there is only the speakerphone switch and Bluetooth SCO (not run on a phone: needs Android 11 or older);
+                // a wired headset takes over by itself.
                 audio.isSpeakerphoneOn = active.kind == DeviceKind.Speaker
+                if (active.kind == DeviceKind.Bluetooth) audio.startBluetoothSco() else audio.stopBluetoothSco()
             }
         }.onFailure { log.e(TAG, "setting the audio device: ${it.message}") }
     }
