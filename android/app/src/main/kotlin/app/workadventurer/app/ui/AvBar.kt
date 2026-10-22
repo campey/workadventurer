@@ -1,5 +1,7 @@
 package app.workadventurer.app.ui
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -47,7 +49,7 @@ import app.workadventurer.app.audio.audioButtonDescription
 import app.workadventurer.app.audio.micDeviceName
 
 /**
- * The persistent bottom bar on every screen: mic and camera on the left, the audio and video sheet's three-dots on the right.
+ * The persistent bottom bar on every screen: mic and the audio device, a divider, then the camera on the left; the audio and video sheet's three-dots on the right.
  * The mic is filled red when muted (as on the web); the camera is always off and drawn dim, because video isn't supported yet.
  */
 @Composable
@@ -74,6 +76,13 @@ fun AvBar(
             },
         ) { Icon(if (state.micMuted) WaIcons.MicOff else WaIcons.MicOn, contentDescription = null) }
         Spacer(Modifier.width(8.dp))
+        // Audio first (the mic, then the device it uses), a divider, then video.
+        IconButton(onClick = onAudio, colors = circle, modifier = Modifier.size(48.dp).semantics { contentDescription = audioButtonDescription(audioDevice) }) {
+            Icon(deviceIcon(audioDevice?.kind), contentDescription = null)
+        }
+        Spacer(Modifier.width(12.dp))
+        Box(Modifier.width(1.dp).height(28.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)))
+        Spacer(Modifier.width(12.dp))
         // Present but off: dim, announced as unavailable, and a tap says why.
         IconButton(
             onClick = onCamera,
@@ -83,10 +92,6 @@ fun AvBar(
                 disabled()
             },
         ) { Icon(WaIcons.CameraOff, contentDescription = null, tint = WaColors.DisabledIcon) }
-        Spacer(Modifier.width(8.dp))
-        IconButton(onClick = onAudio, colors = circle, modifier = Modifier.size(48.dp).semantics { contentDescription = audioButtonDescription(audioDevice) }) {
-            Icon(deviceIcon(audioDevice?.kind), contentDescription = null)
-        }
         Spacer(Modifier.weight(1f))
         IconButton(onClick = onMore, colors = circle, modifier = Modifier.size(48.dp).semantics { contentDescription = state.moreDescription }) {
             Icon(WaIcons.MoreVert, contentDescription = null)
