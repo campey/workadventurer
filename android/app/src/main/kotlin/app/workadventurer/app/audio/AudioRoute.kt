@@ -49,14 +49,6 @@ data class AudioRoute(
         val phone = if (device.kind == DeviceKind.Speaker || device.kind == DeviceKind.Earpiece) device.kind else phoneChoice
         return copy(pinned = device.id, phoneChoice = phone)
     }
-
-    /** The speaker button: the next device in [devices], wrapping round. */
-    fun next(): AudioRoute {
-        val all = devices
-        if (all.isEmpty()) return this
-        val i = all.indexOfFirst { it.id == active?.id }
-        return pick(all[(i + 1) % all.size])
-    }
 }
 
 /** The microphone line on the audio sheet: the microphone is the one on the device in use. */

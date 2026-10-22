@@ -61,9 +61,8 @@ fun AppRoot(
     onShareLink: (url: String) -> Unit,
     onMicChoice: (muted: Boolean) -> Unit,
     onCommand: (Command) -> Unit,
-    /** Which devices there are and which one a call uses (#164); the speaker button steps through them. */
+    /** Which devices there are and which one a call uses (#164); the speaker button opens the sheet where you pick one. */
     audio: AudioRoute = AudioRoute(),
-    onAudioNext: () -> Unit = {},
     onAudioPick: (AudioDevice) -> Unit = {},
 ) {
     val nav = rememberNavController()
@@ -133,7 +132,7 @@ fun AppRoot(
                         onCamera = { scope.launch { snackbar.showSnackbar(bar.cameraMessage) } },
                         onMore = { showAvSheet = true },
                         audioDevice = audio.active,
-                        onAudio = { onAudioNext(); showAvSheet = true },
+                        onAudio = { showAvSheet = true },
                     )
                 },
             ) { padding ->

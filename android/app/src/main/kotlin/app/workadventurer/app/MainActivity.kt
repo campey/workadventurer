@@ -61,7 +61,6 @@ class MainActivity : ComponentActivity() {
                     visitsFor = { room -> (application as WaApp).areaVisits.counts(room) },
                     onMicChoice = ::chooseMic,
                     audio = audio,
-                    onAudioNext = audioRouter::next,
                     onAudioPick = audioRouter::pick,
                     // Movement goes straight to the session; only Join/Leave go through the foreground service.
                     onCommand = { session.dispatch(it) },

@@ -51,9 +51,6 @@ class AudioRouter(context: Context, private val log: CallLog) {
         }.onFailure { log.e(TAG, "clearing the audio device: ${it.message}") }
     }
 
-    /** The speaker button. */
-    @Synchronized fun next() { _route.update { it.next() }; apply() }
-
     /** A device chosen from the sheet. */
     @Synchronized fun pick(device: AudioDevice) { _route.update { it.pick(device) }; apply() }
 

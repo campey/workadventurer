@@ -72,15 +72,9 @@ class AudioRouteTest {
     }
 
     @Test
-    fun theButtonStepsThroughTheDevicesAndWrapsRound() {
-        val r = route(speaker, earpiece)
-        assertEquals(earpiece, r.next().active) // speaker -> earpiece
-        assertEquals(speaker, r.next().next().active) // and back
-        val withBuds = route(speaker, earpiece, buds)
-        assertEquals(listOf(buds, speaker, earpiece), withBuds.devices) // headsets first, then the phone's own
-        assertEquals(speaker, withBuds.next().active) // buds -> speaker
-        assertEquals(earpiece, withBuds.next().next().active)
-        assertEquals(buds, withBuds.next().next().next().active)
+    fun theDevicesAreListedHeadsetsFirstThenTheSpeakerThenTheEarpiece() {
+        assertEquals(listOf(buds, speaker, earpiece), route(earpiece, speaker, buds).devices)
+        assertEquals(listOf(wired, buds, speaker), route(speaker, wired, buds).devices) // headsets oldest first; a phone with no earpiece lists two
     }
 
     @Test
