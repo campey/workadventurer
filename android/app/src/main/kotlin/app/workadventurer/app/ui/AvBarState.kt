@@ -14,10 +14,7 @@ fun avBarState(muted: Boolean) = AvBarState(
     micDescription = if (muted) "Unmute the microphone" else "Mute the microphone",
     cameraDescription = "Camera not supported yet",
     cameraMessage = "Camera not (yet) supported",
-    moreDescription = "More audio and video options",
+    moreDescription = "More audio options",
 )
 
-const val AUDIO_VIDEO_SHEET_TITLE = "Audio and video"
-
-/** The microphone line in the audio and video sheet: its state, and which microphone: the one on the device in use. */
-fun micSheetText(muted: Boolean, micName: String) = "${if (muted) "Muted" else "On"} · $micName"
+const val AUDIO_SHEET_TITLE = "Audio"
