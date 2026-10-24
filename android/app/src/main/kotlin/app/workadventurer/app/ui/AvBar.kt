@@ -46,7 +46,6 @@ import androidx.compose.ui.semantics.Role
 import app.workadventurer.app.audio.AudioDevice
 import app.workadventurer.app.audio.DeviceKind
 import app.workadventurer.app.audio.audioButtonDescription
-import app.workadventurer.app.audio.micDeviceName
 
 /**
  * The persistent bottom bar on every screen: mic and the audio device, a divider, then the camera on the left; the audio and video sheet's three-dots on the right.
@@ -54,7 +53,7 @@ import app.workadventurer.app.audio.micDeviceName
  */
 @Composable
 fun AvBar(
-    state: AvBarState, onToggleMic: () -> Unit, onCamera: () -> Unit, onMore: () -> Unit,
+    state: AvBarState, onToggleMic: () -> Unit, onCamera: () -> Unit,
     /** The device in use (its icon and name), and the button that switches device and opens the sheet. */
     audioDevice: AudioDevice? = null, onAudio: () -> Unit = {},
 ) {
@@ -93,18 +92,17 @@ fun AvBar(
             },
         ) { Icon(WaIcons.CameraOff, contentDescription = null, tint = WaColors.DisabledIcon) }
         Spacer(Modifier.weight(1f))
-        IconButton(onClick = onMore, colors = circle, modifier = Modifier.size(48.dp).semantics { contentDescription = state.moreDescription }) {
-            Icon(WaIcons.MoreVert, contentDescription = null)
-        }
-        Spacer(Modifier.width(4.dp))
     }
 }
 
-/** The audio and video sheet: the microphone (the one on the device in use), and the Device section listing every device with a tick on the one in use. */
+/**
+ * The audio sheet: the Device section listing every device with the one in use filled green. Audio only (video gets its own sheet from
+ * the camera button), and no mute row: the bar's mic does that. The microphone is the one on the device in use, as each row says.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AvSheet(
-    muted: Boolean, onDismiss: () -> Unit, sheetState: SheetState, onToggleMic: () -> Unit = {},
+    onDismiss: () -> Unit, sheetState: SheetState,
     devices: List<AudioDevice> = emptyList(), active: AudioDevice? = null, onPick: (AudioDevice) -> Unit = {},
 ) {
     ModalBottomSheet(
@@ -115,31 +113,13 @@ fun AvSheet(
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState())
                 .padding(start = 20.dp, end = 20.dp, bottom = 24.dp)
-                .semantics { paneTitle = AUDIO_VIDEO_SHEET_TITLE },
+                .semantics { paneTitle = AUDIO_SHEET_TITLE },
         ) {
-            // The microphone row is the mute switch: tap to mute or unmute, red while muted (as the bar's mic is).
-            val micBackground = if (muted) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.surfaceContainerHigh
-            val micContent = if (muted) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onSurface
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 72.dp)
-                    .clip(RoundedCornerShape(16.dp)).background(micBackground)
-                    .clickable(role = Role.Button, onClick = onToggleMic)
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .semantics { contentDescription = avBarState(muted).micDescription; liveRegion = LiveRegionMode.Polite },
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(if (muted) WaIcons.MicOff else WaIcons.MicOn, contentDescription = null, tint = micContent)
-                Column {
-                    Text("Microphone", style = MaterialTheme.typography.titleMedium, color = micContent)
-                    Text(micSheetText(muted, micDeviceName(active)), style = MaterialTheme.typography.bodyMedium, color = micContent.copy(alpha = 0.85f))
-                }
-            }
             if (devices.isNotEmpty()) {
                 Text(
                     "DEVICE", style = MaterialTheme.typography.labelLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                     letterSpacing = androidx.compose.ui.unit.TextUnit(1.4f, androidx.compose.ui.unit.TextUnitType.Sp),
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.padding(start = 4.dp, top = 20.dp, bottom = 8.dp),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
                 )
                 Column(
                     Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(16.dp))

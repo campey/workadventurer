@@ -130,7 +130,6 @@ fun AppRoot(
                         state = bar,
                         onToggleMic = { onMicChoice(!muted) },
                         onCamera = { scope.launch { snackbar.showSnackbar(bar.cameraMessage) } },
-                        onMore = { showAvSheet = true },
                         audioDevice = audio.active,
                         onAudio = { showAvSheet = true },
                     )
@@ -182,7 +181,7 @@ fun AppRoot(
         }
 
         if (showAvSheet) AvSheet(
-            muted = muted, onDismiss = { showAvSheet = false }, sheetState = avSheetState, onToggleMic = { onMicChoice(!muted) },
+            onDismiss = { showAvSheet = false }, sheetState = avSheetState,
             devices = audio.devices, active = audio.active, onPick = onAudioPick,
         )
         if (showMeSheet && inRoom) MeSheet(state.myName, state.myTextures, onDismiss = { showMeSheet = false }, sheetState = meSheetState)
