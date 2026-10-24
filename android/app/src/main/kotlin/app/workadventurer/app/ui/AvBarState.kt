@@ -6,7 +6,6 @@ data class AvBarState(
     val micDescription: String,
     val cameraDescription: String,
     val cameraMessage: String,
-    val moreDescription: String,
 )
 
 fun avBarState(muted: Boolean) = AvBarState(
@@ -14,7 +13,6 @@ fun avBarState(muted: Boolean) = AvBarState(
     micDescription = if (muted) "Unmute the microphone" else "Mute the microphone",
     cameraDescription = "Camera not supported yet",
     cameraMessage = "Camera not (yet) supported",
-    moreDescription = "More audio options",
 )
 
 const val AUDIO_SHEET_TITLE = "Audio"

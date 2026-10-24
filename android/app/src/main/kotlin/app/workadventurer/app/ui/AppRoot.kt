@@ -130,7 +130,6 @@ fun AppRoot(
                         state = bar,
                         onToggleMic = { onMicChoice(!muted) },
                         onCamera = { scope.launch { snackbar.showSnackbar(bar.cameraMessage) } },
-                        onMore = { showAvSheet = true },
                         audioDevice = audio.active,
                         onAudio = { showAvSheet = true },
                     )

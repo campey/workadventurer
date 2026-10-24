@@ -53,7 +53,7 @@ import app.workadventurer.app.audio.audioButtonDescription
  */
 @Composable
 fun AvBar(
-    state: AvBarState, onToggleMic: () -> Unit, onCamera: () -> Unit, onMore: () -> Unit,
+    state: AvBarState, onToggleMic: () -> Unit, onCamera: () -> Unit,
     /** The device in use (its icon and name), and the button that switches device and opens the sheet. */
     audioDevice: AudioDevice? = null, onAudio: () -> Unit = {},
 ) {
@@ -92,10 +92,6 @@ fun AvBar(
             },
         ) { Icon(WaIcons.CameraOff, contentDescription = null, tint = WaColors.DisabledIcon) }
         Spacer(Modifier.weight(1f))
-        IconButton(onClick = onMore, colors = circle, modifier = Modifier.size(48.dp).semantics { contentDescription = state.moreDescription }) {
-            Icon(WaIcons.MoreVert, contentDescription = null)
-        }
-        Spacer(Modifier.width(4.dp))
     }
 }
 
