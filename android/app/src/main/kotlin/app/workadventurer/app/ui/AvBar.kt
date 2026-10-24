@@ -131,7 +131,7 @@ fun AvSheet(
                         // The device in use is the whole row in green, dark text on it: unmistakable at a glance.
                         val content = if (inUse) DEVICE_IN_USE_CONTENT else MaterialTheme.colorScheme.onSurface
                         Row(
-                            Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                            Modifier.fillMaxWidth().heightIn(min = 56.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(if (inUse) DEVICE_IN_USE else androidx.compose.ui.graphics.Color.Transparent)
                                 .selectable(selected = inUse, role = Role.RadioButton, onClick = { onPick(d) })
@@ -141,10 +141,7 @@ fun AvSheet(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(deviceIcon(d.kind), contentDescription = null, tint = content)
-                            Column(Modifier.weight(1f)) {
-                                Text(d.name, style = MaterialTheme.typography.titleMedium, color = content)
-                                Text(deviceSubtitle(d), style = MaterialTheme.typography.bodyMedium, color = if (inUse) content else MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                            Text(d.name, style = MaterialTheme.typography.titleMedium, color = content, modifier = Modifier.weight(1f))
                             if (inUse) Icon(WaIcons.Check, contentDescription = null, tint = content)
                         }
                     }
@@ -162,12 +159,4 @@ private fun deviceIcon(kind: DeviceKind?) = when (kind) {
     DeviceKind.Bluetooth -> WaIcons.Bluetooth
     DeviceKind.Wired, DeviceKind.Usb -> WaIcons.Headset
     DeviceKind.Speaker, null -> WaIcons.Speaker
-}
-
-private fun deviceSubtitle(d: AudioDevice) = when (d.kind) {
-    DeviceKind.Speaker -> "Speaker and the phone's microphone"
-    DeviceKind.Earpiece -> "Earpiece and the phone's microphone"
-    DeviceKind.Bluetooth -> "Bluetooth · speaker and microphone"
-    DeviceKind.Wired -> "Plugged in · speaker and microphone"
-    DeviceKind.Usb -> "USB · speaker and microphone"
 }
