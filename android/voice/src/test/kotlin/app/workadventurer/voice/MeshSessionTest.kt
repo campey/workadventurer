@@ -25,6 +25,11 @@ class MeshSessionTest {
         override fun addRemoteCandidate(candidate: PeerSignal.Candidate) { candidates += candidate }
         override fun close() { closed = true }
         override suspend fun statsSummary(): String = "stats-of-$id"
+        var statsReads = 0
+        override suspend fun linkStats(): LinkStats? {
+            statsReads++
+            return LinkStats("connected", bytesSent = 100L * statsReads, bytesReceived = 200L * statsReads, packetsReceived = 50, packetsLost = 1, jitterSeconds = 0.01, rttSeconds = 0.04)
+        }
         var reOffer: String? = "RE-OFFER-SDP"
         var renegotiations = 0
         override suspend fun renegotiate(): String? { renegotiations++; return reOffer }
@@ -277,6 +282,42 @@ class MeshSessionTest {
         assertEquals(false, statsDuringNegotiation); assertTrue(lines.isEmpty(), "no stats while a negotiation is in flight")
         gate.complete(Unit); runCurrent(); advanceTimeBy(1_100); runCurrent()
         assertTrue(lines.isNotEmpty() && lines.all { it.endsWith("stats") }, lines.toString()); job.cancel()
+    }
+
+    // The Network sheet: per-peer link numbers, read once a second, and only while somebody is looking (it costs a getStats per link).
+    @Test
+    fun linkStatsAreReportedPerPeerOnlyWhileWanted() = runTest {
+        val r = Rig(); var wanted = false; val got = mutableListOf<List<PeerStats>>()
+        val job = backgroundScope.launch { r.mesh.run(r.events, linkStatsEveryMs = 1_000, wantLinkStats = { wanted }, onLinkStats = { got += it }) }; runCurrent()
+        r.events.emit(offer(conn = "c1", peer = "sp_9")); runCurrent()
+        advanceTimeBy(2_500); runCurrent()
+        assertEquals(0, r.made.getValue("c1").statsReads, "nobody is looking: no getStats")
+        assertTrue(got.isEmpty())
+        wanted = true
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(1, got.size)
+        val s = got.single().single()
+        assertEquals("sp", s.spaceName); assertEquals("sp_9", s.peer); assertEquals("connected", s.stats.state); assertEquals(0.04, s.stats.rttSeconds)
+        job.cancel()
+    }
+
+    @Test
+    fun aLinkThatCannotSayItsStatsIsLeftOutNotFatal() = runTest {
+        val got = mutableListOf<List<PeerStats>>()
+        val link = object : PeerLink {
+            override suspend fun acceptOffer(offerSdp: String): String? = "A"
+            override suspend fun createOffer(): String? = null
+            override suspend fun renegotiate(): String? = null
+            override fun acceptAnswer(answerSdp: String) {}
+            override fun addRemoteCandidate(candidate: PeerSignal.Candidate) {}
+            override fun close() {}
+            override suspend fun linkStats(): LinkStats? = throw IllegalStateException("disposed")
+        }
+        val mesh = MeshSession({ link }, { _, _, _, _ -> }, {})
+        val events = MutableSharedFlow<VoiceEvent>(extraBufferCapacity = 16)
+        val job = backgroundScope.launch { mesh.run(events, linkStatsEveryMs = 1_000, wantLinkStats = { true }, onLinkStats = { got += it }) }; runCurrent()
+        events.emit(offer()); runCurrent(); advanceTimeBy(1_100); runCurrent()
+        assertEquals(listOf(emptyList()), got); job.cancel()
     }
 
     // Issue #97: a red mic may come from an offer with no audio line (browser joined muted); the log must say which it was.

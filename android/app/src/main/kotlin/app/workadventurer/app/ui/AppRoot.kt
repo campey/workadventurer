@@ -13,6 +13,8 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import app.workadventurer.app.net.NetSnapshot
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,11 +66,21 @@ fun AppRoot(
     /** Which devices there are and which one a call uses (#164); the speaker button opens the sheet where you pick one. */
     audio: AudioRoute = AudioRoute(),
     onAudioPick: (AudioDevice) -> Unit = {},
+    /** The Network sheet's numbers (#171); [onNetworkWatching] tells when the sheet is open, so the call links are only read then. */
+    net: NetSnapshot = NetSnapshot(),
+    onNetworkWatching: (Boolean) -> Unit = {},
+    onNetworkReset: () -> Unit = {},
 ) {
     val nav = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showAvSheet by remember { mutableStateOf(false) }
+    var showNetwork by remember { mutableStateOf(false) }
+    val networkSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    DisposableEffect(showNetwork) {
+        onNetworkWatching(showNetwork)
+        onDispose { onNetworkWatching(false) }
+    }
     var showMeSheet by remember { mutableStateOf(false) }
     val avSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val meSheetState = rememberModalBottomSheetState()
@@ -132,6 +144,7 @@ fun AppRoot(
                         onCamera = { scope.launch { snackbar.showSnackbar(bar.cameraMessage) } },
                         audioDevice = audio.active,
                         onAudio = { showAvSheet = true },
+                        onNetwork = { showNetwork = true },
                     )
                 },
             ) { padding ->
@@ -180,6 +193,7 @@ fun AppRoot(
             }
         }
 
+        if (showNetwork) NetworkSheet(net, onDismiss = { showNetwork = false }, sheetState = networkSheetState, onReset = onNetworkReset)
         if (showAvSheet) AvSheet(
             onDismiss = { showAvSheet = false }, sheetState = avSheetState,
             devices = audio.devices, active = audio.active, onPick = onAudioPick,
