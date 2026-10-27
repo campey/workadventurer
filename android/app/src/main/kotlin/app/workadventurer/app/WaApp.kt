@@ -1,6 +1,7 @@
 package app.workadventurer.app
 
 import android.app.Application
+import android.net.TrafficStats
 import android.os.Build
 import android.util.Log
 import app.workadventurer.app.session.Connection
@@ -32,6 +33,26 @@ class WaApp : Application() {
 
     /** How often you have been in each area, per room (#159). */
     val areaVisits by lazy { AreaVisits(PrefsStore(this)) }
+
+    /** What the Network sheet shows: the open connections, and how much the app has sent and received (#171). */
+    val netHub: app.workadventurer.app.net.NetHub by lazy {
+        val uid = android.os.Process.myUid()
+        app.workadventurer.app.net.NetHub(
+            usage = app.workadventurer.app.net.UsageTotals(PrefsStore(this)),
+            traffic = { TrafficStats.getUidTxBytes(uid) to TrafficStats.getUidRxBytes(uid) },
+        )
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        // The totals count the app's traffic from here on: read the device's counters now and then, faster while the sheet is open.
+        appScope.launch {
+            while (true) {
+                netHub.tick()
+                delay(if (netHub.wanted) 1_000L else 10_000L)
+            }
+        }
+    }
 
     /** Builds and remembers the woka pictures shown across the app. */
     val wokaLoader by lazy { app.workadventurer.app.ui.WokaLoader(http) }
@@ -80,7 +101,7 @@ class WaApp : Application() {
                     c.closed.invokeOnCompletion { logJob.cancel() }
                 }
             },
-            voiceHost = MeshVoiceHost(this, callLog, audioRouter),
+            voiceHost = MeshVoiceHost(this, callLog, audioRouter, netHub),
             log = { callLog.i("WaSession", it) },
         )
         // Our own picture arrives in the room-joined message; keep it for the Join screen's preview.
@@ -110,7 +131,7 @@ class WaApp : Application() {
                 callLog.onConnection(connection, room)
                 // Device events only while a call's file is open (the file exists by now: onConnection opened it first).
                 when (connection) {
-                    Connection.Connecting -> deviceEvents.start()
+                    Connection.Connecting -> { deviceEvents.start(); netHub.startSession() }
                     Connection.Disconnected, is Connection.Failed -> deviceEvents.stop()
                     else -> {}
                 }

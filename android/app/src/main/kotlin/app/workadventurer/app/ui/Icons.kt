@@ -80,11 +80,11 @@ object WaIcons {
 
     val Map: ImageVector by lazy { stroked("map", "M3 7l6 -3l6 3l6 -3v13l-6 3l-6 -3l-6 3v-13 M9 4v13 M15 7v13", 2f) }
 
-    /** Material's three-dots overflow glyph: filled circles. */
-    val MoreVert: ImageVector by lazy {
-        ImageVector.Builder("more-vert", 24.dp, 24.dp, 24f, 24f).addPath(
+    /** Material's swap-vertical glyph: an arrow up beside an arrow down, for what is sent and received. */
+    val Network: ImageVector by lazy {
+        ImageVector.Builder("network", 24.dp, 24.dp, 24f, 24f).addPath(
             pathData = PathParser().parsePathString(
-                "M12 8a2 2 0 1 0 0 -4a2 2 0 0 0 0 4z M12 14a2 2 0 1 0 0 -4a2 2 0 0 0 0 4z M12 20a2 2 0 1 0 0 -4a2 2 0 0 0 0 4z",
+                "M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3z M9 3L5 6.99h3V14h2V6.99h3L9 3z",
             ).toNodes(),
             fill = SolidColor(Color.Black),
         ).build()

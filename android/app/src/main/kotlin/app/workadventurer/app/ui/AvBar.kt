@@ -46,6 +46,7 @@ import androidx.compose.ui.semantics.Role
 import app.workadventurer.app.audio.AudioDevice
 import app.workadventurer.app.audio.DeviceKind
 import app.workadventurer.app.audio.audioButtonDescription
+import app.workadventurer.app.net.NETWORK_BUTTON_DESCRIPTION
 
 /**
  * The persistent bottom bar on every screen: mic and the audio device, a divider, then the camera on the left; the audio and video sheet's three-dots on the right.
@@ -56,6 +57,7 @@ fun AvBar(
     state: AvBarState, onToggleMic: () -> Unit, onCamera: () -> Unit,
     /** The device in use (its icon and name), and the button that switches device and opens the sheet. */
     audioDevice: AudioDevice? = null, onAudio: () -> Unit = {},
+    onNetwork: () -> Unit = {},
 ) {
     // Every button is a filled circle, so they all read as buttons; the mic's circle goes red when muted.
     val circle = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
@@ -92,6 +94,11 @@ fun AvBar(
             },
         ) { Icon(WaIcons.CameraOff, contentDescription = null, tint = WaColors.DisabledIcon) }
         Spacer(Modifier.weight(1f))
+        // At the far right: connections and data used, the Network sheet.
+        IconButton(onClick = onNetwork, colors = circle, modifier = Modifier.size(48.dp).semantics { contentDescription = NETWORK_BUTTON_DESCRIPTION }) {
+            Icon(WaIcons.Network, contentDescription = null)
+        }
+        Spacer(Modifier.width(4.dp))
     }
 }
 
@@ -116,11 +123,7 @@ fun AvSheet(
                 .semantics { paneTitle = AUDIO_SHEET_TITLE },
         ) {
             if (devices.isNotEmpty()) {
-                Text(
-                    "DEVICE", style = MaterialTheme.typography.labelLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    letterSpacing = androidx.compose.ui.unit.TextUnit(1.4f, androidx.compose.ui.unit.TextUnitType.Sp),
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
-                )
+                SectionLabel("DEVICE", first = true)
                 Column(
                     Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(16.dp))
                         .padding(4.dp).selectableGroup(),
