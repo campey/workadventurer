@@ -34,6 +34,7 @@ import androidx.navigation.compose.rememberNavController
 import app.workadventurer.app.session.Command
 import app.workadventurer.app.audio.AudioDevice
 import app.workadventurer.app.audio.AudioRoute
+import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.SessionState
 import app.workadventurer.protocol.Texture
 import kotlinx.coroutines.launch
@@ -81,9 +82,7 @@ fun AppRoot(
         onNetworkWatching(showNetwork)
         onDispose { onNetworkWatching(false) }
     }
-    var showMeSheet by remember { mutableStateOf(false) }
     val avSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val meSheetState = rememberModalBottomSheetState()
     val drawer = rememberDrawerState(DrawerValue.Closed)
 
     // This Material version's drawer doesn't take Back itself: without this, Back with the panel open leaves the app.
@@ -121,6 +120,9 @@ fun AppRoot(
                     onShareLink = { onShareLink(shareableRoomUrl(state.roomName)); scope.launch { drawer.close() } },
                     onShareLogs = onShareLogs,
                     onLeave = onLeave,
+                    myName = state.myName, myTextures = state.myTextures, connected = state.connection is Connection.Connected,
+                    onWoka = { scope.launch { snackbar.showSnackbar(WOKA_CUSTOMISATION_MESSAGE) } },
+                    onRejoin = { name -> scope.launch { drawer.close() }; onJoin(name, state.roomName) },
                 )
             },
         ) {
@@ -132,8 +134,7 @@ fun AppRoot(
                     if (inRoom) {
                         RoomTopBar(
                             worldName = details.name, myName = state.myName, myTextures = state.myTextures,
-                            onWorld = { scope.launch { drawer.open() } },
-                            onMe = { showMeSheet = true },
+                            onOpen = { scope.launch { drawer.open() } },
                         )
                     }
                 },
@@ -198,7 +199,6 @@ fun AppRoot(
             onDismiss = { showAvSheet = false }, sheetState = avSheetState,
             devices = audio.devices, active = audio.active, onPick = onAudioPick,
         )
-        if (showMeSheet && inRoom) MeSheet(state.myName, state.myTextures, onDismiss = { showMeSheet = false }, sheetState = meSheetState)
     }
 }
 

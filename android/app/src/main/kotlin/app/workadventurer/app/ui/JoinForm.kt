@@ -18,3 +18,11 @@ fun joinExplainer(name: String, room: String) = when {
     room.isBlank() -> "Enter the world's address to join"
     else -> "Enter this world as ${name.trim()}"
 }
+
+/** In a room the name and woka are fixed for the connection, so changing either means rejoining; this says when the button is live. */
+fun canRejoin(current: String, typed: String, wokaChanged: Boolean, connected: Boolean) =
+    connected && typed.isNotBlank() && (typed.trim() != current.trim() || wokaChanged)
+
+fun rejoinLabel(typed: String) = "Rejoin as ${typed.trim().ifBlank { "you" }}"
+
+const val REJOIN_EXPLAINER = "Leaves and joins again with your new name or woka"
