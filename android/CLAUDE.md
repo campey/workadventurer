@@ -47,3 +47,12 @@ Set up once per container (not in the session-start hook: about 600 MB):
 
 Maven Central answers 429 now and then from the container: rerun, Gradle keeps what it already fetched. Without the Android SDK or
 `dl.google.com`, `tools/nav-test-cloud.sh` runs just the pure-JVM `:nav` tests.
+
+### Releases
+
+`.github/workflows/android-release.yml` builds the app and publishes it as a GitHub release: push a tag `android-vX.Y.Z`
+(`git tag android-v0.2.0 && git push origin android-v0.2.0`) and the APK (all CPU types, 16 KB aligned, version from the tag)
+is attached to a new pre-release, with a `.sha256` next to it. "Run workflow" in the Actions tab builds the same APK as a run
+artifact without publishing. Releases are signed with the shared debug key in `android/debug.keystore` for now, so a release
+installs over any debug build; the first APK built with this key needs one uninstall if the phone has an APK signed with a
+different key (the cloud container's old `~/.android/debug.keystore`). Don't hand-build APKs for people: use a release.
