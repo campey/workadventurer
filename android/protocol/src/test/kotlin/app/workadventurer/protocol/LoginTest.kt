@@ -50,7 +50,7 @@ class LoginTest {
         assertEquals("/ws/room", u.encodedPath)
         assertEquals(Wa133.DEFAULT_ROOM, u.queryParameter("roomId"))
         assertEquals(listOf(Wa133.DEFAULT_WOKA), u.queryParameterValues("characterTextureIds"))
-        assertEquals("62e25483", u.queryParameter("version")) // prod v1.34.2 (see field-notes)
+        assertEquals("f4cfe455", u.queryParameter("version")) // prod v1.34.4 (see field-notes)
         assertEquals("false", u.queryParameter("microphoneState"))
         assertEquals("false", u.queryParameter("cameraState"))
         assertEquals("abc123abc123", u.queryParameter("tabId"))
