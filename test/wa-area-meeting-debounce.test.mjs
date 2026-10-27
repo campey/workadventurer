@@ -1,28 +1,34 @@
-// Walking *through* a livekitRoomProperty area must not spin a meeting space
-// up and back down — that churn OOMs the daemon and floods peers. Only a real
-// dwell joins; a brief exit lingers before tearing down.
+// wa-1.33 values (1500 / 2500): walking *through* a livekitRoomProperty area must not spin a meeting
+// space up and back down — that churn OOMs the daemon and floods peers. Only a real dwell joins; a
+// brief exit lingers before tearing down. wa-1.34 (0 / 0) joins at once but has a rejoin cooldown.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { setTimeout as sleep } from "node:timers/promises";
 import { WorkAdventureClient } from "../src/wa-client.mjs";
 
-function harness() {
+function harness({ meeting } = {}) {
   const c = new WorkAdventureClient({
     adapter: {
       envelope: "seq-len-v1",
       areaMeetingSpaceName: (_u, p) => `space-${p.id}`,
+      ...(meeting ? { meeting } : {}),
     },
   });
+  const sent = [];
+  c._send = (m) => { if (m.setPlayerDetailsMessage) sent.push(m); }; // only availability matters here
   const joins = [];
   const leaves = [];
   c._joinSpace = async (s) => {
     joins.push(s);
     c.spaces.set(s, { spaceUserId: "x" });
   };
+  // The real _leaveSpace (it owns the availability bookkeeping) with the wire stubbed out.
+  const realLeave = WorkAdventureClient.prototype._leaveSpace;
+  c.query = async () => ({});
   c._leaveSpace = (s) => {
     leaves.push(s);
-    c.spaces.delete(s);
+    return realLeave.call(c, s);
   };
   const area = {
     id: "A1",
@@ -41,7 +47,7 @@ function harness() {
     c.currentAreas = new Set();
     c._handleAreaMeeting(area, false);
   };
-  return { c, joins, leaves, enter, leave };
+  return { c, joins, leaves, sent, enter, leave };
 }
 
 test("walking through a meeting area does not join or leave anything", async () => {
@@ -92,4 +98,194 @@ test("rapid enter/leave flapping causes at most one join", async () => {
   await sleep(2000);
   assert.equal(joins.length, 0, "never dwelled long enough to join");
   assert.equal(leaves.length, 0);
+});
+
+// A browser sends availabilityStatus LIVEKIT (11) when it walks into a meeting area and ONLINE (1)
+// when it leaves (probe meeting-availability, 2026-10-10). We do the same, only when the adapter
+// defines the value (wa-1.34), and only for a meeting we actually joined/left.
+const LIVEKIT = 11, ONLINE = 1;
+const status = (s) => ({ setPlayerDetailsMessage: { availabilityStatus: s } });
+
+test("availability: LIVEKIT after the dwell join, ONLINE after the linger leave", async () => {
+  const { sent, enter, leave } = harness({ meeting: { areaAvailabilityStatus: LIVEKIT } });
+  enter();
+  await sleep(600);
+  assert.deepEqual(sent, [], "nothing before the dwell");
+  await sleep(1200);
+  assert.deepEqual(sent, [status(LIVEKIT)]);
+  leave();
+  await sleep(800);
+  assert.deepEqual(sent, [status(LIVEKIT)], "nothing during the linger");
+  await sleep(2200);
+  assert.deepEqual(sent, [status(LIVEKIT), status(ONLINE)]);
+});
+
+test("availability: walking through a meeting area sends nothing", async () => {
+  const { sent, enter, leave } = harness({ meeting: { areaAvailabilityStatus: LIVEKIT } });
+  enter();
+  await sleep(400);
+  leave();
+  await sleep(2000);
+  assert.deepEqual(sent, []);
+});
+
+test("availability: nothing is sent when the adapter has no value", async () => {
+  const { joins, leaves, sent, enter, leave } = harness({ meeting: {} });
+  enter();
+  await sleep(1800);
+  leave();
+  await sleep(3000);
+  assert.deepEqual(joins, ["space-m1"]);
+  assert.deepEqual(leaves, ["space-m1"]);
+  assert.deepEqual(sent, []);
+});
+
+test("availability: with overlapping area meetings, ONLINE only when none remain", async () => {
+  const { c, sent } = harness({ meeting: { areaAvailabilityStatus: LIVEKIT } });
+  const mk = (id) => ({ id, name: id, rawProps: [{ type: "livekitRoomProperty", id: `m-${id}` }] });
+  const [a1, a2] = [mk("A1"), mk("A2")];
+  c.currentAreas = new Set(["A1", "A2"]);
+  c._handleAreaMeeting(a1, true);
+  c._handleAreaMeeting(a2, true);
+  await sleep(1800);
+  c.currentAreas = new Set(["A2"]);
+  c._handleAreaMeeting(a1, false);
+  await sleep(2800);
+  assert.ok(!sent.some((m) => m.setPlayerDetailsMessage.availabilityStatus === ONLINE), "still in A2");
+  c.currentAreas = new Set();
+  c._handleAreaMeeting(a2, false);
+  await sleep(2800);
+  assert.equal(sent.at(-1).setPlayerDetailsMessage.availabilityStatus, ONLINE);
+  assert.equal(sent.filter((m) => m.setPlayerDetailsMessage.availabilityStatus === ONLINE).length, 1);
+});
+
+test("availability: leaving the area while the join is in flight sends no LIVEKIT and leaves the space", async () => {
+  const { c, leaves, sent, enter, leave } = harness({ meeting: { areaAvailabilityStatus: LIVEKIT } });
+  let finish;
+  c._joinSpace = () => new Promise((res) => { finish = () => { c.spaces.set("space-m1", { spaceUserId: "x" }); res(); }; });
+  enter();
+  await sleep(1700); // dwell fired, joinSpaceQuery in flight
+  leave(); // t.join is already null and the space is not ours yet: no linger is armed
+  finish();
+  await sleep(50);
+  assert.deepEqual(sent.filter((m) => m.setPlayerDetailsMessage), [], "no LIVEKIT while outside");
+  assert.deepEqual(leaves, ["space-m1"], "the stray space is left");
+  assert.ok(!c.spaces.has("space-m1"));
+});
+
+test("availability: a server-initiated leave sends ONLINE", async () => {
+  const { c, sent, enter } = harness({ meeting: { areaAvailabilityStatus: LIVEKIT } });
+  enter();
+  await sleep(1800);
+  assert.deepEqual(sent, [status(LIVEKIT)]);
+  await c._leaveSpace("space-m1"); // leaveSpaceRequestMessage
+  assert.deepEqual(sent.filter((m) => m.setPlayerDetailsMessage), [status(LIVEKIT), status(ONLINE)]);
+});
+
+// wa-1.34: a browser flips LIVEKIT and joins the meeting space the instant it enters a meeting area,
+// and ONLINE as it leaves; no dwell, no linger (probe observe-humans, 2026-10-11). The timing is adapter
+// data: meeting.areaDwellMs / areaLingerMs. Without them the client keeps 1500 / 2500.
+const NO_DEBOUNCE = { areaAvailabilityStatus: LIVEKIT, areaDwellMs: 0, areaLingerMs: 0 };
+
+test("0/0: entering joins at once and sends LIVEKIT when the join completes", async () => {
+  const { joins, sent, enter } = harness({ meeting: NO_DEBOUNCE });
+  enter();
+  assert.deepEqual(joins, ["space-m1"], "joined synchronously, no timer");
+  await sleep(10);
+  assert.deepEqual(sent, [status(LIVEKIT)]);
+});
+
+test("0/0: leaving leaves at once and sends ONLINE", async () => {
+  const { leaves, sent, enter, leave } = harness({ meeting: NO_DEBOUNCE });
+  enter();
+  await sleep(10);
+  leave();
+  assert.deepEqual(leaves, ["space-m1"], "left synchronously, no timer");
+  await sleep(10);
+  assert.deepEqual(sent, [status(LIVEKIT), status(ONLINE)]);
+});
+
+test("0/0: enter and leave inside one tick joins, leaves cleanly and ends ONLINE", async () => {
+  const { c, joins, leaves, sent, enter, leave } = harness({ meeting: NO_DEBOUNCE });
+  enter();
+  leave(); // join still in flight
+  await sleep(50);
+  assert.deepEqual(joins, ["space-m1"]);
+  assert.deepEqual(leaves, ["space-m1"], "the stray space is left");
+  assert.ok(!c.spaces.has("space-m1"));
+  const last = sent.at(-1)?.setPlayerDetailsMessage.availabilityStatus;
+  assert.ok(last === undefined || last === ONLINE, `must not end LIVEKIT, got ${last}`);
+});
+
+test("0/0: leaving while the join query is in flight sends no LIVEKIT and leaves the space", async () => {
+  const { c, leaves, sent, enter, leave } = harness({ meeting: NO_DEBOUNCE });
+  let finish;
+  c._joinSpace = () => new Promise((res) => { finish = () => { c.spaces.set("space-m1", { spaceUserId: "x" }); res(); }; });
+  enter();
+  leave();
+  finish();
+  await sleep(50);
+  assert.deepEqual(sent, []);
+  assert.deepEqual(leaves, ["space-m1"]);
+});
+
+test("0/0: a repeat enter while joined does not join twice", async () => {
+  const { joins, enter } = harness({ meeting: NO_DEBOUNCE });
+  enter();
+  await sleep(10);
+  enter();
+  assert.deepEqual(joins, ["space-m1"]);
+});
+
+test("explicit 1500/2500 debounces exactly like no values", async () => {
+  const { joins, enter, leave } = harness({ meeting: { areaDwellMs: 1500, areaLingerMs: 2500 } });
+  enter();
+  await sleep(400);
+  assert.deepEqual(joins, []);
+  leave();
+  await sleep(1500);
+  assert.deepEqual(joins, []);
+});
+
+test("wa-1.33 carries the explicit debounce values; wa-1.34 turns them off", async () => {
+  const { default: a133 } = await import("../src/adapters/wa-1.33.mjs");
+  const { default: a134 } = await import("../src/adapters/wa-1.34.mjs");
+  assert.deepEqual(a133.meeting, { webrtcStrategyName: "WEBRTC", livekitStrategyName: "LIVEKIT", areaDwellMs: 1500, areaLingerMs: 2500 });
+  assert.equal(a134.meeting.areaDwellMs, 0);
+  assert.equal(a134.meeting.areaLingerMs, 0);
+  assert.equal(a134.meeting.areaAvailabilityStatus, 11);
+});
+
+test("0/0: joins when called from _updateAreas, which assigns currentAreas only afterwards", async () => {
+  const { c, joins, leaves, sent } = harness({ meeting: NO_DEBOUNCE });
+  const area = { id: "A1", name: "Meeting", x: 0, y: 0, w: 100, h: 100, rawProps: [{ type: "livekitRoomProperty", id: "m1" }] };
+  c.areas = [area];
+  let inside = true;
+  c.areasAt = () => (inside ? [area] : []);
+  c._updateAreas(); // enter
+  await sleep(10);
+  assert.deepEqual(joins, ["space-m1"]);
+  assert.deepEqual(sent, [status(LIVEKIT)]);
+  inside = false;
+  c._updateAreas(); // leave
+  await sleep(10);
+  assert.deepEqual(leaves, ["space-m1"]);
+  assert.deepEqual(sent, [status(LIVEKIT), status(ONLINE)]);
+  // enter and leave in consecutive updates, join still in flight: ends left, ONLINE
+  inside = true; c._updateAreas();
+  inside = false; c._updateAreas();
+  await sleep(50);
+  assert.ok(!c.spaces.has("space-m1"));
+  assert.equal(sent.at(-1).setPlayerDetailsMessage.availabilityStatus, ONLINE);
+});
+
+test("0/0: re-entering within the rejoin cooldown waits instead of joining at once", async () => {
+  const { joins, leaves, enter, leave } = harness({ meeting: { areaDwellMs: 0, areaLingerMs: 0 } });
+  enter(); await sleep(20);
+  leave(); await sleep(5);
+  enter();
+  assert.equal(joins.length, 1, "no immediate second join");
+  await sleep(350);
+  assert.equal(joins.length, 2, "joined once the cooldown passed");
+  assert.equal(leaves.length, 1);
 });

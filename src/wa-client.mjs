@@ -42,11 +42,17 @@ const HEARTBEAT_INTERVAL_MS = 15_000; // transport-level ws ping, and the watchd
 const DEAD_AFTER_MS = 45_000; // no inbound frame or pong for this long => the socket is dead (#138)
 const CONNECT_TIMEOUT_MS = 15_000; // login fetch / socket join; a hung attempt must fail, not stall reconnect (#138)
 
+// A start region smaller than this counts as a pocket we may be wrongly sealed in; see _navTo's no-route.
+const NO_ROUTE_MIN_OPEN_TILES = 50;
+
 export class WorkAdventureClient extends EventEmitter {
   constructor(opts = {}) {
     super();
     this.cfg = { ...DEFAULTS, ...opts };
     this.adapter = opts.adapter ?? null;
+    // Driven-port seam: swap the network (recorders, fakes). Defaults are the real ones.
+    this._fetch = opts.fetch ?? ((...a) => globalThis.fetch(...a));
+    this._WebSocket = opts.WebSocketImpl ?? WebSocket;
     this._target = this.cfg.target ?? "auto";
     this._connectTimeoutMs = this.cfg.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
     this._heartbeatIntervalMs = this.cfg.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
@@ -136,7 +142,7 @@ export class WorkAdventureClient extends EventEmitter {
   }
 
   async _anonymLogin() {
-    const res = await fetch(`${this.cfg.pusherUrl}${this.adapter.endpoints.anonymLogin}`, {
+    const res = await this._fetch(`${this.cfg.pusherUrl}${this.adapter.endpoints.anonymLogin}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
@@ -184,7 +190,7 @@ export class WorkAdventureClient extends EventEmitter {
   // the avatar walks into a meeting / silent / megaphone zone. Best-effort:
   // a failure just leaves `this.areas` empty.
   async _loadAreas() {
-    const get = (u) => fetch(u, { signal: AbortSignal.timeout(8000) }).then((r) => r.json());
+    const get = (u) => this._fetch(u, { signal: AbortSignal.timeout(8000) }).then((r) => r.json());
     try {
       const mapInfo = await get(
         `${this.cfg.pusherUrl}${this.adapter.endpoints.map}?playUri=${encodeURIComponent(this.cfg.roomUrl)}`
@@ -219,8 +225,9 @@ export class WorkAdventureClient extends EventEmitter {
     if (!this.areas.length) return;
     try {
       const now = new Set();
+      for (const a of this.areasAt()) now.add(a.id ?? a.name);
+      this._areasNow = now; // read by _handleAreaMeeting for overlapping rectangles
       for (const a of this.areasAt()) {
-        now.add(a.id ?? a.name);
         if (!this.currentAreas.has(a.id ?? a.name)) {
           this.emit("areaEnter", a);
           this._handleAreaMeeting(a, true);
@@ -234,6 +241,7 @@ export class WorkAdventureClient extends EventEmitter {
         }
       }
       this.currentAreas = now;
+      this._areasNow = null;
     } catch (e) {
       this.emit("log", `area update error: ${e.message}`);
     }
@@ -271,7 +279,7 @@ export class WorkAdventureClient extends EventEmitter {
     const url = this._wsUrl();
     this.emit("log", `connecting ${url}`);
     // The JWT is smuggled as the WebSocket subprotocol (see IoSocketController).
-    this.ws = new WebSocket(url, [this.token], {
+    this.ws = new this._WebSocket(url, [this.token], {
       headers: { Origin: "https://play.workadventu.re" },
     });
 
@@ -431,6 +439,13 @@ export class WorkAdventureClient extends EventEmitter {
     this.query("leaveSpaceQuery", { spaceName }).catch(() => {});
     this.emit("log", `left space ${spaceName}`);
     this.emit("spaceLeft", { spaceName });
+    if (this._areaMeetingsJoined?.delete(spaceName) && this._areaMeetingsJoined.size === 0) {
+      try {
+        this._send({ setPlayerDetailsMessage: { availabilityStatus: AVAILABILITY_ONLINE } });
+      } catch (e) {
+        this.emit("log", `could not report ONLINE: ${e.message}`);
+      }
+    }
   }
 
   // The space name of a map-area meeting, derived the same way the WA front does
@@ -443,41 +458,88 @@ export class WorkAdventureClient extends EventEmitter {
   // space — the server never invites a headless client to an area meeting the
   // way it does for proximity bubbles.
   //
-  // Debounced: only join after DWELL_MS continuously inside (so *walking through*
-  // a meeting area — common on area-dense maps — doesn't spin a WebRTC peer up
-  // and straight back down), and linger LINGER_MS after leaving before tearing
-  // it down. Rapid join/leave churn here OOMs the daemon and floods the browser.
+  // Dwell and linger are adapter data (`meeting.areaDwellMs` / `areaLingerMs`). wa-1.33 debounces
+  // (join after 1500 ms inside, leave 2500 ms after exiting) because rapid join/leave churn OOMs the
+  // daemon and floods the browser. wa-1.34 sets 0 / 0, as a real browser does, and instead enforces
+  // REJOIN_COOLDOWN_MS between a leave and the next join of the same space, which caps the churn from
+  // an avatar crossing an area edge back and forth.
   _handleAreaMeeting(area, entering) {
     const prop = (area.rawProps ?? []).find((p) => p.type === "livekitRoomProperty");
     if (!prop) return;
     const key = area.id ?? area.name;
     const spaceName = this._areaSpaceName(prop);
-    const DWELL_MS = 1500;
-    const LINGER_MS = 2500;
+    // Adapter data. wa-1.33 keeps the debounce (1500 / 2500); wa-1.34 sets 0 / 0 because a real browser
+    // joins and leaves at once (probe observe-humans, 2026-10-11). 0 means no timer at all.
+    const DWELL_MS = this.adapter.meeting?.areaDwellMs ?? 1500;
+    const LINGER_MS = this.adapter.meeting?.areaLingerMs ?? 2500;
+    const REJOIN_COOLDOWN_MS = 250;
     this._meetingTimers ??= new Map(); // spaceName -> { join?, leave? }
     const t = this._meetingTimers.get(spaceName) ?? {};
     this._meetingTimers.set(spaceName, t);
 
+    // `entering`: called straight from _updateAreas, which only assigns currentAreas after this returns,
+    // so the "still inside" check applies to the timer path only (the join's .then re-checks later).
+    const doJoin = (direct = false) => {
+      t.join = null;
+      if ((!direct && !this.currentAreas.has(key)) || this.spaces.has(spaceName) || t.joining) return;
+      this.emit("log", `meeting area "${area.name}" → joining space ${spaceName}`);
+      t.joining = true;
+      this._joinSpace(spaceName).then(
+        () => {
+          t.joining = false;
+          // Left the area while joinSpaceQuery was in flight: no linger is armed (t.join was
+          // already null, the space not ours yet), so leave now instead of announcing LIVEKIT.
+          if (!this.currentAreas.has(key)) return this.spaces.has(spaceName) ? this._leaveSpace(spaceName) : undefined;
+          this._areaMeetingJoined(spaceName);
+        },
+        (e) => { t.joining = false; this.emit("log", `area meeting join failed: ${e.message}`); }
+      );
+    };
+
     if (entering) {
       if (t.leave) { clearTimeout(t.leave); t.leave = null; } // was leaving, stay
-      if (this.spaces.has(spaceName) || t.join) return;
-      t.join = setTimeout(() => {
-        t.join = null;
-        if (!this.currentAreas.has(key) || this.spaces.has(spaceName)) return;
-        this.emit("log", `meeting area "${area.name}" → joining space ${spaceName}`);
-        this._joinSpace(spaceName).catch((e) =>
-          this.emit("log", `area meeting join failed: ${e.message}`)
-        );
-      }, DWELL_MS);
+      if (this.spaces.has(spaceName) || t.join || t.joining) return;
+      if (DWELL_MS <= 0) {
+        const wait = REJOIN_COOLDOWN_MS - (Date.now() - (t.leftAt ?? -Infinity));
+        if (wait <= 0) return doJoin(true);
+        t.join = setTimeout(() => doJoin(), wait);
+        return;
+      }
+      t.join = setTimeout(() => doJoin(), DWELL_MS);
     } else {
       if (t.join) { clearTimeout(t.join); t.join = null; return; } // left before we joined
       if (!this.spaces.has(spaceName) || t.leave) return;
+      if (LINGER_MS <= 0) {
+        // Another area we are still in may share this meeting room (adjacent rectangles).
+        const stay = [...(this._areasNow ?? [])].some((k) => {
+          const z = this.areas.find((q) => (q.id ?? q.name) === k);
+          const pr = (z?.rawProps ?? []).find((p) => p.type === "livekitRoomProperty");
+          return pr && this._areaSpaceName(pr) === spaceName;
+        });
+        if (stay) return;
+        t.leftAt = Date.now();
+        return void this._leaveSpace(spaceName);
+      }
       t.leave = setTimeout(() => {
         t.leave = null;
         if (this.currentAreas.has(key)) return; // walked back in
         this._leaveSpace(spaceName);
       }, LINGER_MS);
     }
+  }
+
+  /**
+   * A browser client reports availabilityStatus LIVEKIT while it is in a meeting area and ONLINE
+   * when it leaves (probe meeting-availability, 2026-10-10); the server uses it to let the area
+   * meeting take over from a proximity bubble. Only for adapters that define the value
+   * (`meeting.areaAvailabilityStatus`). The matching ONLINE is sent from `_leaveSpace`, whatever
+   * caused the leave, once no area meeting remains.
+   */
+  _areaMeetingJoined(spaceName) {
+    const status = this.adapter?.meeting?.areaAvailabilityStatus;
+    if (status == null) return;
+    (this._areaMeetingsJoined ??= new Set()).add(spaceName);
+    this._send({ setPlayerDetailsMessage: { availabilityStatus: status } });
   }
 
   /** Tell the other Space members whether our mic is live. */
@@ -602,14 +664,30 @@ export class WorkAdventureClient extends EventEmitter {
       });
       return;
     }
-    if (obj.meetingInvitationResponseReceivedMessage || obj.meetingInvitationRequestClosedMessage) {
-      return; // outcomes of invites we sent — nothing to do
+    if (obj.meetingInvitationResponseReceivedMessage) {
+      // The player we invited answered.
+      const m = obj.meetingInvitationResponseReceivedMessage;
+      this.emit("inviteAnswered", { accepted: !!m.accepted, name: m.responderName ?? "" });
+      return;
+    }
+    if (obj.meetingInvitationRequestClosedMessage) {
+      return; // an invite we sent was closed — nothing to do
     }
     // roomConnectedMessage, worldConnectionMessage, refreshRoomMessage, etc. — ignored.
     if (process.env.WA_DEBUG) {
       const k = Object.keys(obj)[0];
       if (k && k !== "batchMessage") this.emit("log", `S2C ${k}: ${JSON.stringify(obj[k]).slice(0, 400)}`);
     }
+  }
+
+  _emitPeerMic(spaceName, u) {
+    if (!u?.spaceUserId || u.spaceUserId === this.spaces.get(spaceName)?.spaceUserId) return;
+    this.emit("peerMic", {
+      spaceName,
+      spaceUserId: u.spaceUserId,
+      name: u.name || this.spaceUserNames.get(u.spaceUserId) || "",
+      on: !!u.microphoneState,
+    });
   }
 
   _handleSub(sub) {
@@ -679,6 +757,7 @@ export class WorkAdventureClient extends EventEmitter {
       // the room's numeric userId at all.
       for (const u of users) if (u.spaceUserId && u.name) this.spaceUserNames.set(u.spaceUserId, u.name);
       this.emit("spaceUsers", { spaceName: sn, users });
+      for (const u of users) this._emitPeerMic(sn, u);
       return;
     }
     // The init snapshot only covers who was already in the space. Anyone who
@@ -689,6 +768,10 @@ export class WorkAdventureClient extends EventEmitter {
     if (sub.addSpaceUserMessage || sub.updateSpaceUserMessage) {
       const u = (sub.addSpaceUserMessage ?? sub.updateSpaceUserMessage).user;
       if (u?.spaceUserId && u.name) this.spaceUserNames.set(u.spaceUserId, u.name);
+      // A peer's mic state: always on add; on update only when the mask names it.
+      const upd = sub.updateSpaceUserMessage;
+      if (sub.addSpaceUserMessage) this._emitPeerMic(sub.addSpaceUserMessage.spaceName, u);
+      else if ((upd.updateMask?.paths ?? []).includes("microphoneState")) this._emitPeerMic(upd.spaceName, u);
     }
     if (sub.privateEvent) {
       const pe = sub.privateEvent;
@@ -817,6 +900,13 @@ export class WorkAdventureClient extends EventEmitter {
     return this.spaceUserNames.get(spaceUserId) ?? null;
   }
 
+  /** Invite the player with this uuid / room userId over ("invite to discussion"). */
+  sendMeetingInvitation(receiverUuid, receiverUserId = null) {
+    this._send({
+      meetingInvitationRequestMessage: { receiverUserUuid: receiverUuid, receiverUserId },
+    });
+  }
+
   /** Accept a meeting invitation ("come over") from the player with this uuid. */
   acceptMeetingInvitation(senderUuid) {
     this._send({
@@ -829,7 +919,11 @@ export class WorkAdventureClient extends EventEmitter {
    * within `stopWithin` px or `getTarget()` returns null. If `getTarget` is
    * given it is re-read each tick so we track a moving player.
    */
-  async walkTo(targetX, targetY, { stopWithin = 48, stepPx = 32, tickMs = 120, getTarget = null, timeoutMs = 60000, signal = null } = {}) {
+  async walkTo(targetX, targetY, { stopWithin = 48, stepPx = 32, tickMs = 120, getTarget = null, timeoutMs = 60000, signal = null, pace = null } = {}) {
+    // pace "walk" | "run": when the adapter defines the speed, step = speed * tickMs / 1000 (tickMs 100
+    // unless given). Speed is client-side; the server doesn't enforce it. No pace: unchanged.
+    const paced = this._paceStep(pace);
+    if (paced) { stepPx = paced.stepPx; tickMs = paced.tickMs; }
     const started = Date.now();
     for (;;) {
       if (signal?.aborted) return { arrived: false, reason: "aborted" };
@@ -860,6 +954,15 @@ export class WorkAdventureClient extends EventEmitter {
     }
   }
 
+  // { stepPx, tickMs } for a pace the adapter defines, else null.
+  _paceStep(pace) {
+    const speed = pace === "walk" ? this.adapter?.movement?.walkPxPerS
+      : pace === "run" ? this.adapter?.movement?.runPxPerS : undefined;
+    if (!(speed > 0)) return null;
+    const tickMs = 100;
+    return { stepPx: (speed * tickMs) / 1000, tickMs };
+  }
+
   /**
    * Walk to (targetX,targetY) following an A* route around walls/furniture
    * (falls back to straight-line if the map nav is unavailable or no route is
@@ -872,11 +975,11 @@ export class WorkAdventureClient extends EventEmitter {
   // (e.g. runFollowTask's initial approach) leaves `_navBusy` held until that
   // navTo finishes on its own — so a subsequent navTo()/follow() call issued
   // right after the abort spuriously gets `{reason:"busy"}`.
-  async navTo(targetX, targetY, { stopWithin = 48, getTarget = null, timeoutMs = 120000, repathMs = 2000, face = null, signal = null } = {}) {
+  async navTo(targetX, targetY, { stopWithin = 48, getTarget = null, timeoutMs = 120000, repathMs = 2000, face = null, signal = null, pace = null } = {}) {
     if (this._navBusy) return { arrived: false, reason: "busy" };
     this._navBusy = true;
     try {
-      return await this._navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs, face, signal });
+      return await this._navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs, face, signal, pace });
     } finally {
       this._navBusy = false;
     }
@@ -884,13 +987,14 @@ export class WorkAdventureClient extends EventEmitter {
 
   // `face` may be a {x,y} point or a () => {x,y} getter; on arrival the avatar
   // turns to look at it instead of keeping its last travel direction.
-  async _navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs, face, signal }) {
+  async _navTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, repathMs, face, signal, pace = null }) {
+    const paced = this._paceStep(pace); // null without a pace or adapter speed: unchanged
     const lookAt = () => {
       const p = typeof face === "function" ? face() : face;
       if (p) this._faceToward(p.x, p.y);
     };
     if (!this.nav) {
-      const r = await this.walkTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, signal });
+      const r = await this.walkTo(targetX, targetY, { stopWithin, getTarget, timeoutMs, signal, ...(paced ?? {}) });
       if (r.arrived) lookAt();
       return r;
     }
@@ -923,9 +1027,40 @@ export class WorkAdventureClient extends EventEmitter {
         return { arrived: true };
       }
       const path = this.nav.findPath(this.pos.x, this.pos.y, gx, gy);
+      // A route's waypoints are tile CENTRES, so it ends up to ~22 px from the real goal, further than a tight
+      // stopWithin (moveTo uses 16): the walk would stop on the centre, never count as arrived, and re-plan a
+      // zero-length route until the timeout. Walk the last step to the exact goal when it is on a free tile.
+      // A goal inside a solid (a table, a wall) is snapped by findPath to the nearest free tile; standing on
+      // that centre is as close as we can get, so finish there ({arrived, snapped}) instead of looping.
+      const nav = this.nav;
+      const blocked = nav.isPxBlocked?.(gx, gy);
+      if (path?.length && blocked) {
+        const [ex, ey] = path[path.length - 1];
+        if (Math.hypot(ex - this.pos.x, ey - this.pos.y) <= 12) {
+          this.pos.moving = false;
+          this._emitMove(false);
+          lookAt();
+          return { arrived: true, snapped: true };
+        }
+      } else if (path?.length && blocked === false) {
+        path[path.length - 1] = [gx, gy];
+      }
+      // null = findPath found no route (an unreachable island, or a goal sealed off). From open floor a straight
+      // walk would cross walls and claim success, so fail. When we are ourselves sealed in a tiny pocket the map
+      // is probably wrong about us, so keep the straight-line escape (movement is client-authoritative).
+      if (path === null && this.nav.reachableFrom) {
+        const reach = this.nav.reachableFrom(this.pos.x, this.pos.y);
+        let open = 0;
+        if (reach) for (let i = 0; i < reach.length; i++) open += reach[i];
+        if (open >= NO_ROUTE_MIN_OPEN_TILES) {
+          this.pos.moving = false;
+          this._emitMove(false);
+          return { arrived: false, reason: "no-route" };
+        }
+      }
       if (!path || path.length === 0) {
         // Trust walkTo()'s own result instead of discarding it.
-        const r = await this.walkTo(gx, gy, { stopWithin, timeoutMs: repathMs, getTarget, signal });
+        const r = await this.walkTo(gx, gy, { stopWithin, timeoutMs: repathMs, getTarget, signal, ...(paced ?? {}) });
         if (r.arrived) { lookAt(); return r; }
         if (r.reason === "target-gone" || r.reason === "aborted") return r;
         // else: genuine repathMs timeout — worth another findPath attempt
@@ -933,7 +1068,7 @@ export class WorkAdventureClient extends EventEmitter {
         const deadline = Date.now() + repathMs;
         for (const [wx, wy] of path) {
           if (Date.now() > deadline || signal?.aborted) break;
-          const r = await this.walkTo(wx, wy, { stopWithin: 12, stepPx: 40, tickMs: 100, timeoutMs: repathMs, signal });
+          const r = await this.walkTo(wx, wy, { stopWithin: 12, stepPx: paced?.stepPx ?? 40, tickMs: 100, timeoutMs: repathMs, signal });
           if (!r.arrived) break;
         }
       }
@@ -1107,6 +1242,11 @@ export class WorkAdventureClient extends EventEmitter {
   // empty `message`; `type` is irrelevant in that case.
   clearBubble() {
     this._send({ setPlayerDetailsMessage: { sayMessage: { message: "", type: 0 } } });
+  }
+
+  // Show an emote above our avatar (C2S EmotePromptMessage); others get it as `emote`.
+  sendEmote(emote) {
+    this._send({ emotePromptMessage: { emote } });
   }
 
   close() {

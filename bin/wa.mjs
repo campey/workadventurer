@@ -23,7 +23,7 @@ const USAGE = `wa — WorkAdventure presence control
                               a failed first connect or a server refusal still exits
   wa leave
   wa status [--json]
-  wa goto <x> <y>
+  wa goto <x> <y> [--walk|--run]   human speed (wa-1.34 adapter); default unchanged
   wa to <player>              walk next to a player
   wa quiet                    step away to the nearest empty area (stays put if already quiet)
   wa greet <player>           walk over + "hi" speech bubble
@@ -57,6 +57,8 @@ try {
     target: { type: "string" },
     emote: { type: "string" },
     timeout: { type: "string" },
+    run: { type: "boolean" },
+    walk: { type: "boolean" },
     voice: { type: "string" },
     cancel: { type: "boolean", default: false },
     help: { type: "boolean", default: false },
@@ -233,9 +235,10 @@ switch (cmd) {
   }
   case "goto": {
     const [x, y] = args.map(Number);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) die("usage: wa goto <x> <y>", 2);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) die("usage: wa goto <x> <y> [--walk|--run]", 2);
     await needDaemon();
-    report((await api("POST", "/goto", { x, y })).json);
+    const pace = flags.run ? "run" : flags.walk ? "walk" : undefined;
+    report((await api("POST", "/goto", { x, y, ...(pace ? { pace } : {}) })).json);
     break;
   }
   case "to": {

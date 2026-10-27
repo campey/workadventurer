@@ -17,6 +17,15 @@ the Tiled `.tmj`'s `start` tile layer. On shared template maps the `.tmj`
 (afrolabs: the tile layer sits ~600 px north of the actual "Spawn Point" by
 the fire).
 
+Re-tested against prod with the `spawn` probe, 2026-10-10:
+
+- **afrolabs** confirms: the `.wam` start area "Spawn Point" is
+  {x:1895, y:2099, w:169, h:119, isDefault:true}; another avatar saw ours at
+  (1961, 2136), inside it; the Tiled `start` layer sampled (2192, 1520).
+- **the academy (lean-iterator campus) has no `.wam` start area**, so spawn
+  falls back to the Tiled `start` layer: the avatar appeared at (976, 2928).
+  The "`.wam` beats `.tmj`" rule only applies on maps that have a start area.
+
 The client handles this in `connect()`: after `_loadAreas()` populates
 `this.areas` from the live `.wam`, `_wamSpawnPoint()` picks a random point
 inside the start area and sets `this.pos` before the join message goes out.
@@ -87,7 +96,7 @@ in-flight guard synchronously at function entry, before its own awaits, so
 two near-simultaneous calls (a prime racing a real clip, or two peers
 connecting a few ms apart) can't both slip past the guard and corrupt each
 other; and `_leaveSpace` clears any pending `micReannounceMs` timers so a
-fast leave→rejoin (routine with the area-meeting dwell/linger debounce)
+fast leave→rejoin (routine with the wa-1.33 area-meeting dwell/linger debounce)
 can't have a stale timer fire against a later membership.
 
 ---
@@ -356,14 +365,54 @@ through several — spinning a WebRTC peer up and straight back down per
 crossing. That churn balloons werift (800 MB+, 100 % CPU) and floods the
 browser with offer/answer negotiation (observed: Chrome crashed).
 
-**Debounced (PR #28):** join only after **1.5 s continuously inside** (a real
-dwell, not a walk-through), and linger **2.5 s** after leaving before tearing
-down. Timers keyed by space name, cleared on `close()`. Walking through is now
-a no-op; stopping in a meeting area still works.
+**Debounced (PR #28), now adapter data:** the client reads `adapter.meeting.areaDwellMs` /
+`areaLingerMs` (fallback 1500 / 2500). The frozen **wa-1.33** adapter keeps them explicitly:
+join only after **1.5 s continuously inside** (a real dwell, not a walk-through), and linger
+**2.5 s** after leaving before tearing down. Timers keyed by space name, cleared on `close()`.
+
+**What a real browser does (probe `observe-humans`, 2026-10-11, two real players, 12 min):**
+no dwell and no linger. It flips `LIVEKIT` and joins the meeting space at the same instant it
+enters the area (118 to 336 ms before the first relayed position inside the rectangle; 6/6
+entries), and sends `ONLINE` within 0 to 183 ms of the first position outside, the space leave
+first or together. It flips even for a graze (passes of the "Blue table" lasted 0.8 s, 1.1 s and
+under 0.1 s, each LIVEKIT then ONLINE). So **wa-1.34 sets `areaDwellMs: 0, areaLingerMs: 0`**:
+join immediately on entering, leave immediately on leaving, no timers. The stuck-status guards
+stay: the join's `.then` re-checks `currentAreas` and leaves the space if we have since left,
+and `_leaveSpace` does the ONLINE bookkeeping. Scenario "A quick pass through a meeting area
+joins and leaves its meeting". (The churn the debounce prevented, #28, was on a 73-area map with
+werift peers; if it returns on wa-1.34, the fix belongs in the transport, not a dwell the
+browser does not have.)
+
+**Speed (same probe):** a real browser walks at a median **181 px/s** (1 s windows; steady laps
+173 to 183) with a position update about every 200 ms; running (shift held) is about 420 to
+520 px/s (12 windows from one stretch: low confidence, median about 460). Our `navTo` used 40 px
+per 100 ms = 400 px/s. **Speed is client-side; the server does not enforce it.** wa-1.34 has
+`movement: { walkPxPerS: 180, runPxPerS: 460 }`; `walkTo`/`navTo` take `pace: "walk" | "run"`
+and then step `speed * 100 ms / 1000` per 100 ms tick. With no pace (the default) or an adapter
+without the speed, nothing changes (40 px / 100 ms). `LiveWorld.moveTo` defaults to
+`pace: "walk"`; `wa goto <x> <y> --walk|--run` opts in from the CLI.
 
 `jitsiRoomProperty` areas are detected but not handled at all — the client has
 no Jitsi transport. Walking into one is out of scope and has confused the
 daemon in the past.
+
+## Meeting areas and availability
+
+A browser client sends `setPlayerDetailsMessage { availabilityStatus }` as it moves
+through a `livekitRoomProperty` meeting area: **LIVEKIT (11)** on entering, **ONLINE (1)**
+on leaving (probe `meeting-availability`, 2026-10-10, campey walking a browser avatar
+into the "Fire Pit"; relayed to others as `playerDetailsUpdatedMessage`). Our client used
+to say ONLINE always (set once at join), and campey saw our two avatars' proximity bubble
+persist while they walked through the Fire Pit. Probe `firepit-meeting` (same day) had
+`wa-probe-a` send LIVEKIT/ONLINE like a browser: all five steps looked right to a person
+(one meeting, no bubble, clean exit).
+
+Since then the **wa-1.34 adapter** defines `meeting.areaAvailabilityStatus: 11` and
+`WorkAdventureClient` sends it when it actually joins an area meeting (after the dwell on wa-1.33,
+at once on wa-1.34), and ONLINE when it leaves it (after the linger / at once) (ONLINE only once no area meeting remains). An
+adapter without the value (the frozen wa-1.33) behaves as before. Live check, scenario
+"A proximity pair walking into a meeting area leaves its bubble for the area meeting": it
+passes with the status sent and fails with it removed (the bubble persists).
 
 ---
 
@@ -495,6 +544,13 @@ avatar against a real room. Dates are when each was observed.
 - **`npm test`** (`node --test`) covers pure logic only: adapter resolution,
   the area-meeting debounce timers, invite message shapes, the mic-prime and
   Ogg mux with a fake peer / no live socket.
+- **`npm run scenarios`** (cucumber, `world-port/features/`) — behavioural
+  scenarios against the offline fake world. `WORLD=live npm run scenarios`
+  runs the same suite against prod (the gate for a new adapter; as of
+  2026-10-10 it has **not been run**, prod was blocked from the cloud
+  environment: see the Status section of `docs/fakes-with-probes.md`);
+  `node world-port/probes/run.mjs <probe>` re-tests one note live. See
+  `docs/fakes-with-probes.md`.
 - **`node scripts/selfcheck.mjs [--target <id>] [--room <url>]`** — ephemeral
   client, real join: connect / adapter match / move / bubble / area-meeting
   join / audio (SKIP without a second participant). The prod run is the merge
@@ -570,6 +626,16 @@ avatar against a real room. Dates are when each was observed.
   that was *joined* and is then rejected on reconnect (the fake only rejects) —
   that path is unit-tested through the reconnector only.
 
+### navTo never finished: goal vs tile centre, and goals inside a solid (2026-10-12)
+
+Reported from the afrolabs "Red Table" pocket: walking out to the north-east got stuck, in the CLI and the APK.
+A route's waypoints are tile **centres**, so it ends up to about 22 px from the real goal.
+- **Free goal, Node only**: with `stopWithin` 16 (what `LiveWorld.moveTo` uses) the walk stopped on the centre, never counted as arrived, and re-planned a zero-length route until its 120 s timeout. 3 of 6 test goals north-east of the pocket hit it. The Kotlin `Navigator` already walked the last step to the exact goal (`withExactGoal`); Node now does too.
+- **Goal inside a solid, Node and Kotlin**: `findPath` snaps the goal to the nearest free tile, but the arrival test was against the original point, so the same spin. Both now finish on that tile (Node returns `{arrived: true, snapped: true}`).
+- **Unreachable goals now fail (2026-10-13).** When `findPath` finds no route (a free tile on an island such as afrolabs' 942-tile east region), `navTo` used to fall back to a straight-line walk that crossed walls and reported arrival. From open floor (a start region of 50+ tiles) it now returns `{arrived: false, reason: "no-route"}` (Kotlin `Outcome.NO_ROUTE`) without moving. A start sealed in a tiny pocket keeps the straight-line escape: movement is client-authoritative and the map may be wrong about where we stand.
+- **Spot choosers must pick reachable tiles (also 2026-10-12).** `LiveWorld.openSpotNear`/`openSpotInside` (the scenarios' "open floor outside the area") and `MapNav.nearestEmptyArea` (`wa quiet`) chose the nearest *free* tile, which can sit in a walled-off pocket or on the east island. They now filter by `MapNav.reachableFrom(pos)`, a flood fill with the same rules as `findPath`. The Android `WalkToArea` (and `wa-cli --walk-to-area`) now use `NavGrid.snapToReachable` for the same reason.
+- Kotlin, verified 2026-10-13 with the full toolchain in the cloud container: `:nav` 50 tests pass (including `navToAGoalInsideASolidEndsOnTheNearestFreeTile`, which fails without the fix, and `snapToReachableNeverPicksAWalledOffPocket`), `:app` and `:wa-cli` compile with the `snapToReachable` call sites, and `testDebugUnitTest :nav:test :protocol:test :wa-cli:test` is 346 tests, 0 failed. See android/CLAUDE.md "Toolchain" for how the container was set up.
+
 ### When prod bumps
 
 Prod moved from `v1.33.8` to `v1.34.0` without notice (2026-10-05) and every
@@ -598,6 +664,18 @@ worked, in order:
    adapter's hash set drifts from its vendored `SOURCE`, or if the allowlist isn't
    on the newest release.
 5. `node bin/wa.mjs selfcheck --target production` against the live server.
+
+**Patch releases move the hash too (v1.34.0 → v1.34.1, 2026-10-11).** The hash covers
+`messages.proto` *and* `libs/messages/src/JsonMessages/*`; 1.34.1 changed only the analytics
+JSON files, so `messages.proto` was byte-identical but the hash went `23c8eb8c` → `b82fc568` and
+prod answered the old one with `NEW_VERSION`. Same-minor fix: add the new hash to the front of
+the adapter's `apiVersionHashes`, bump `releaseTag`, refresh `proto/<name>/SOURCE`, run `selfcheck`
+(no new adapter needed when the proto diff is empty). To compute the hash from a checkout (the
+GitHub API can be blocked, a shallow `git clone --depth 1 --branch vX.Y.Z` works): from `messages/`,
+`sha1sum protos/messages.proto ../libs/messages/src/JsonMessages/* | sha1sum | cut -c1-8`
+(paths must be relative to `messages/`, or the result is wrong).
+
+**Checked 2026-10-13:** upstream's newest tag is still v1.34.1 and prod accepts `b82fc568`. `master` (d2e3ecf, that day) hashes to the same `b82fc568`, so the staging `wa-master` adapter, which was pinned at 7d628838 / `3fb30729` from 2026-09-10, was refreshed (proto re-vendored; `proto-diff` reports no wire-breaking change referenced by `src/`; `selfcheck --target wa-master` passes against prod). The two `resolveAdapter` master tests now read the adapter's `trackedSha` instead of hardcoding it.
 
 **What this process cannot see:** a behaviour change behind an unchanged message
 shape. The adapter's `verified` record states what was exercised live and what

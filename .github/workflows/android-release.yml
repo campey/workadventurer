@@ -1,0 +1,89 @@
+# Builds the Android app and publishes it as a GitHub Release.
+#
+#   git tag android-v0.2.0 && git push origin android-v0.2.0     -> signed release APK attached to a new release
+#   Actions tab -> "Android release" -> Run workflow             -> builds and uploads the APK as a run artifact only
+#
+# Signing: the shared debug key in android/debug.keystore (public in the repo), so every build installs over every other.
+# Swap in a real release key from repo secrets when the app goes to a store.
+name: Android release
+
+on:
+  push:
+    tags: ["android-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create the release and attach the APK
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      ANDROID_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Version from the tag
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            name="${GITHUB_REF_NAME#android-v}"
+          else
+            name="0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "ANDROID_VERSION_NAME=${name}" >> "$GITHUB_ENV"
+
+      - name: Unit tests
+        working-directory: android
+        run: ./gradlew testDebugUnitTest :nav:test :protocol:test :wa-cli:test --no-daemon
+
+      - name: Build release APK
+        working-directory: android
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Check native libraries are 16 KB aligned
+        run: |
+          apk=$(ls android/app/build/outputs/apk/release/*.apk | head -1)
+          zipalign=$(ls -d "${ANDROID_HOME}"/build-tools/* | sort -V | tail -1)/zipalign
+          "${zipalign}" -c -P 16 -v 4 "${apk}" | tail -3
+
+      - name: Name the file
+        id: out
+        run: |
+          src=$(ls android/app/build/outputs/apk/release/*.apk | head -1)
+          dst="workadventurer-${{ steps.ver.outputs.name }}-debug-key.apk"
+          cp "${src}" "${dst}"
+          sha256sum "${dst}" | tee "${dst}.sha256"
+          echo "file=${dst}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload as a run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.out.outputs.file }}
+          path: |
+            ${{ steps.out.outputs.file }}
+            ${{ steps.out.outputs.file }}.sha256
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            "${{ steps.out.outputs.file }}" "${{ steps.out.outputs.file }}.sha256" \
+            --title "Android ${{ steps.ver.outputs.name }}" \
+            --generate-notes \
+            --prerelease
