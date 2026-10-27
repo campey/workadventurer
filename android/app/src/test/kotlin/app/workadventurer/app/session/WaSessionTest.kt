@@ -365,6 +365,17 @@ class WaSessionTest {
         assertTrue(kotlin.math.hypot(p.x - 300.0, p.y) <= 48.0, "should end inside bubble range of Ada, at $p")
     }
 
+    // #159: the Users screen orders areas by distance from us. Rounded to 64 px so walking doesn't redraw the list every step.
+    @Test
+    fun ourPositionIsMirroredToTheNearest64Px() = runTest {
+        val (session, conn) = connected(startX = 100, startY = 200)
+        assertEquals(128, session.state.value.myX); assertEquals(192, session.state.value.myY)
+        conn().state.setMyPosition(110, 210); runCurrent() // still the same 64 px cell
+        assertEquals(128, session.state.value.myX); assertEquals(192, session.state.value.myY)
+        conn().state.setMyPosition(1000, 40); runCurrent()
+        assertEquals(1024, session.state.value.myX); assertEquals(64, session.state.value.myY)
+    }
+
     @Test
     fun walkToAreaGoesToItsCentreAndAnUnknownAreaIsIgnored() = runTest {
         val (session, conn) = connected()
@@ -496,6 +507,44 @@ class WaSessionTest {
         // inviting again must not be overwritten by the previous outcome still sitting in the room state
         session.dispatch(Command.InvitePlayer(1)); runCurrent()
         assertEquals(InviteStatus.Sent("Ada"), session.state.value.inviteStatus)
+    }
+
+    // Issue #117: "Diccon accepted your invitation" stayed on screen for 20+ minutes.
+    @Test
+    fun anOutcomeFadesAfterTenSecondsAndDoesNotComeBackWhenSomeoneMoves() = runTest {
+        val (session, conn) = connected()
+        session.dispatch(Command.InvitePlayer(1)); runCurrent()
+        conn().state.setInviteOutcome(InviteOutcome.Accepted("Ada")); runCurrent()
+        advanceTimeBy(9_000); runCurrent()
+        assertEquals(InviteStatus.Accepted("Ada"), session.state.value.inviteStatus)
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(null, session.state.value.inviteStatus)
+        // the room still holds the old outcome; a player joining re-runs the mirror and must not bring it back
+        conn().state.applySub(join(2, "Bob", x = 5, y = 5)); runCurrent()
+        assertEquals(null, session.state.value.inviteStatus)
+    }
+
+    @Test
+    fun sentWaitsAMinuteForAnAnswerBeforeFading() = runTest {
+        val (session, _) = connected()
+        session.dispatch(Command.InvitePlayer(1)); runCurrent()
+        advanceTimeBy(59_000); runCurrent()
+        assertEquals(InviteStatus.Sent("Ada"), session.state.value.inviteStatus)
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(null, session.state.value.inviteStatus)
+    }
+
+    @Test
+    fun aNewOutcomeRestartsTheClock() = runTest {
+        val (session, conn) = connected()
+        session.dispatch(Command.InvitePlayer(1)); runCurrent()
+        conn().state.setInviteOutcome(InviteOutcome.Accepted("Ada")); runCurrent()
+        advanceTimeBy(8_000); runCurrent()
+        conn().state.setInviteOutcome(InviteOutcome.Declined("Ada")); runCurrent()
+        advanceTimeBy(8_000); runCurrent() // 16 s after the first, 8 s after the second
+        assertEquals(InviteStatus.Declined("Ada"), session.state.value.inviteStatus)
+        advanceTimeBy(3_000); runCurrent()
+        assertEquals(null, session.state.value.inviteStatus)
     }
 
     @Test

@@ -10,6 +10,8 @@ import app.workadventurer.protocol.WaStaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -24,6 +26,12 @@ class WaApp : Application() {
     private val http = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
     /** Your own woka layers as last seen per server, so the Join screen can preview you before connecting. */
     val lastTextures by lazy { LastTextures(PrefsStore(this)) }
+
+    /** The audio devices and which one a call uses (#164); tracks devices from the start so the bar can show them. */
+    val audioRouter: app.workadventurer.app.audio.AudioRouter by lazy { app.workadventurer.app.audio.AudioRouter(this, callLog).also { it.start() } }
+
+    /** How often you have been in each area, per room (#159). */
+    val areaVisits by lazy { AreaVisits(PrefsStore(this)) }
 
     /** Builds and remembers the woka pictures shown across the app. */
     val wokaLoader by lazy { app.workadventurer.app.ui.WokaLoader(http) }
@@ -72,13 +80,22 @@ class WaApp : Application() {
                     c.closed.invokeOnCompletion { logJob.cancel() }
                 }
             },
-            voiceHost = MeshVoiceHost(this, callLog),
+            voiceHost = MeshVoiceHost(this, callLog, audioRouter),
             log = { callLog.i("WaSession", it) },
         )
         // Our own picture arrives in the room-joined message; keep it for the Join screen's preview.
         appScope.launch {
             s.state.map { it.roomName to it.myTextures }.distinctUntilChanged().collect { (room, layers) ->
                 if (layers.isNotEmpty()) lastTextures.remember(room, layers)
+            }
+        }
+        // A visit to an area is being in it for a few seconds: crossing one on the way elsewhere doesn't count (#159).
+        appScope.launch {
+            var counted = emptySet<String>()
+            s.state.map { it.roomName to it.inAreas.map { a -> a.id ?: a.name }.toSet() }.distinctUntilChanged().collectLatest { (room, now) ->
+                delay(VISIT_DWELL_MS)
+                areasEntered(counted, now).forEach { areaVisits.record(room, it) }
+                counted = now
             }
         }
         // How much of the room the server has told us about (it only streams what is near us): counts only, no names.
@@ -102,3 +119,5 @@ class WaApp : Application() {
         s
     }
 }
+
+private const val VISIT_DWELL_MS = 5_000L

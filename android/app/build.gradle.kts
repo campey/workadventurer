@@ -18,6 +18,17 @@ android {
         versionName = "0.1.0"
     }
 
+    // One debug key for everyone (this Mac, the cloud container, any session), so a debug APK built anywhere installs over
+    // one built anywhere else and keeps the app's data. It signs nothing that ships: it is public in the repo.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildFeatures { compose = true }
 
     compileOptions {

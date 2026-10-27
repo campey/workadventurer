@@ -33,7 +33,12 @@ import kotlinx.coroutines.withContext
  *   has returned, never from another thread while native code may still be using it;
  * - nothing thrown in here may leave the job uncaught (that would crash the app) or leave the audio mode changed.
  */
-class MeshVoiceHost(private val context: Context, private val log: CallLog) : (PusherConnection) -> VoiceHandle {
+class MeshVoiceHost(
+    private val context: Context,
+    private val log: CallLog,
+    /** Which device the call's audio uses; told when the call's audio mode is on and when it is over. */
+    private val router: app.workadventurer.app.audio.AudioRouter? = null,
+) : (PusherConnection) -> VoiceHandle {
     /** Holds the mute choice from the first moment, so one pressed before the engine exists is applied when it does. */
     private class Handle(private val onClose: () -> Unit) : VoiceHandle {
         private var currentlyMuted = true
@@ -66,6 +71,7 @@ class MeshVoiceHost(private val context: Context, private val log: CallLog) : (P
             var mesh: MeshSession? = null
             try {
                 audio.mode = AudioManager.MODE_IN_COMMUNICATION // voice-call routing and volume
+                router?.callStarted()
                 val e = VoiceEngine(context) // at join, so the network list is known by the first bubble
                 engine = e
                 handle.attach(e) // applies a mute pressed before the engine existed
@@ -89,6 +95,7 @@ class MeshVoiceHost(private val context: Context, private val log: CallLog) : (P
                     handle.detach()
                     try { mesh?.closeAll() } catch (t: Throwable) { log.e("WaVoice", "closing links failed: ${t.message}") }
                     try { engine?.close() } catch (t: Throwable) { log.e("WaVoice", "closing the engine failed: ${t.message}") }
+                    router?.callEnded()
                     audio.mode = previousMode
                 }
             }

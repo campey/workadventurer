@@ -26,7 +26,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.hypot
@@ -83,6 +86,9 @@ data class SessionState(
     val activity: Activity = Activity.Idle,
     val pendingInvites: List<Invite> = emptyList(), // invitations we received and haven't answered
     val inviteStatus: InviteStatus? = null,
+    /** Where we stand, rounded to the nearest 64 px (so walking doesn't redraw the Users list every step); null until known. */
+    val myX: Int? = null,
+    val myY: Int? = null,
     /** The name we joined with. */
     val myName: String = "",
     /** Our own user id in the room, once the server has told us. */
@@ -120,6 +126,8 @@ private const val ARRIVE_WITHIN_PX = 8.0
 private const val BUBBLE_ARRIVE_PX = 44.0
 private const val BUBBLE_LEAVE_PX = 96.0 // clear of a bubble's ~48 px reach, with room to spare
 private const val WALK_TO_PLAYER_TIMEOUT_MS = 30_000L
+private const val INVITE_OUTCOME_SHOWN_MS = 10_000L // "Ada accepted your invitation" is news for a few seconds
+private const val INVITE_SENT_SHOWN_MS = 60_000L // "Inviting Ada…" waits a while for an answer (#117)
 
 /**
  * Owns one room presence: state out, [Command]s in. No Android imports, so it unit-tests on the JVM.
@@ -386,7 +394,7 @@ class WaSession(
                 it.copy(
                     connection = Connection.Reconnecting(attempt, wait),
                     players = emptyList(), inAreas = emptyList(), pendingInvites = emptyList(), inviteStatus = null,
-                    groups = emptyList(), myGroupId = null, myUserId = null,
+                    groups = emptyList(), myGroupId = null, myUserId = null, myX = null, myY = null,
                 )
             }
             delay(wait)
@@ -408,6 +416,16 @@ class WaSession(
                 }
             }
         }
+        // A status line is news, not state: it fades, and the room's remembered outcome goes with it or the next
+        // players/pose update would bring it straight back (#117).
+        launch {
+            _state.map { it.inviteStatus }.distinctUntilChanged().collectLatest { status ->
+                if (status == null) return@collectLatest
+                delay(if (status is InviteStatus.Sent) INVITE_SENT_SHOWN_MS else INVITE_OUTCOME_SHOWN_MS)
+                c.state.setInviteOutcome(null)
+                setState(gen) { if (it.inviteStatus == status) it.copy(inviteStatus = null) else it }
+            }
+        }
         // Pose too, so `inAreas` follows the avatar as it walks.
         combine(c.state.players, c.state.myPose, c.state.pendingInvites, c.state.inviteOutcome) { players, _, invites, outcome ->
             Triple(players, invites, outcome)
@@ -416,6 +434,8 @@ class WaSession(
                 it.copy(
                     players = players.values.sortedBy { p -> p.name.lowercase() },
                     inAreas = c.state.currentAreas(),
+                    myX = c.state.myPose.value.let { p -> roundTo64(p.x) },
+                    myY = c.state.myPose.value.let { p -> roundTo64(p.y) },
                     pendingInvites = invites,
                     // no outcome yet means keep whatever we show (e.g. "sent")
                     inviteStatus = outcome?.toStatus() ?: it.inviteStatus,
@@ -430,3 +450,5 @@ class WaSession(
         InviteOutcome.TooMany -> InviteStatus.TooMany
     }
 }
+
+private fun roundTo64(v: Double): Int = Math.round(v / 64.0).toInt() * 64
