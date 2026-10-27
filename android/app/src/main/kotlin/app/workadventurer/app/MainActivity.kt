@@ -17,6 +17,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.workadventurer.app.session.Command
 import app.workadventurer.app.ui.AppRoot
 import app.workadventurer.app.ui.WorkAdventurerTheme
+import app.workadventurer.protocol.Texture
 
 /** The single activity: permissions and the foreground-service handoff live here; everything on screen is in [AppRoot]. */
 class MainActivity : ComponentActivity() {
@@ -64,6 +65,9 @@ class MainActivity : ComponentActivity() {
                     wokaLoader = (application as WaApp).wokaLoader,
                     texturesFor = { room -> (application as WaApp).lastTextures.get(room) },
                     visitsFor = { room -> (application as WaApp).areaVisits.counts(room) },
+                    chosenWokaFor = { room -> (application as WaApp).chosenWoka.get(room) },
+                    loadWokas = { room -> (application as WaApp).wokaCatalogue(room) },
+                    onChooseWoka = { room, woka -> (application as WaApp).chosenWoka.choose(room, Texture(woka.id, woka.url)) },
                     onMicChoice = ::chooseMic,
                     audio = audio,
                     onAudioPick = audioRouter::pick,

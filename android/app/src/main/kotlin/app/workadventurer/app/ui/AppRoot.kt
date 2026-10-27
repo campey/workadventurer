@@ -37,6 +37,8 @@ import app.workadventurer.app.audio.AudioRoute
 import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.SessionState
 import app.workadventurer.protocol.Texture
+import app.workadventurer.protocol.WokaCatalogue
+import app.workadventurer.protocol.WokaTexture
 import kotlinx.coroutines.launch
 
 /**
@@ -67,6 +69,10 @@ fun AppRoot(
     /** Which devices there are and which one a call uses (#164); the speaker button opens the sheet where you pick one. */
     audio: AudioRoute = AudioRoute(),
     onAudioPick: (AudioDevice) -> Unit = {},
+    /** The woka picker (#108): the woka chosen for a room's server, a room's catalogue, and what happens when one is picked. */
+    chosenWokaFor: (roomUrl: String) -> Texture? = { null },
+    loadWokas: suspend (roomUrl: String) -> Result<WokaCatalogue> = { Result.failure(IllegalStateException("no catalogue")) },
+    onChooseWoka: (roomUrl: String, woka: WokaTexture) -> Unit = { _, _ -> },
     /** The Network sheet's numbers (#171); [onNetworkWatching] tells when the sheet is open, so the call links are only read then. */
     net: NetSnapshot = NetSnapshot(),
     onNetworkWatching: (Boolean) -> Unit = {},
@@ -76,6 +82,10 @@ fun AppRoot(
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showAvSheet by remember { mutableStateOf(false) }
+    // The room whose catalogue the picker shows (the Join screen's address, or the room you are in), and a count that changes on every pick
+    // so the tiles that show your choice read it again.
+    var wokaRoom by remember { mutableStateOf("") }
+    var wokaPicks by remember { mutableStateOf(0) }
     var showNetwork by remember { mutableStateOf(false) }
     val networkSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     DisposableEffect(showNetwork) {
@@ -121,7 +131,10 @@ fun AppRoot(
                     onShareLogs = onShareLogs,
                     onLeave = onLeave,
                     myName = state.myName, myTextures = state.myTextures, connected = state.connection is Connection.Connected,
-                    onWoka = { scope.launch { snackbar.showSnackbar(WOKA_CUSTOMISATION_MESSAGE) } },
+                    pendingWoka = remember(wokaPicks, state.roomName, state.myTextures) {
+                        chosenWokaFor(state.roomName)?.takeIf { c -> state.myTextures.none { it.id == c.id } }
+                    },
+                    onWoka = { wokaRoom = state.roomName; scope.launch { drawer.close() }; nav.navigate(Route.Woka.path) },
                     onRejoin = { name -> scope.launch { drawer.close() }; onJoin(name, state.roomName) },
                 )
             },
@@ -155,7 +168,27 @@ fun AppRoot(
                     enterTransition = { fadeIn() }, exitTransition = { fadeOut() },
                     popEnterTransition = { fadeIn() }, popExitTransition = { fadeOut() },
                 ) {
-                    composable(Route.Join.path) { JoinScreen(state.connection, initialName, texturesFor, onMessage = { scope.launch { snackbar.showSnackbar(it) } }, onJoin = onJoin) }
+                    composable(Route.Join.path) {
+                        JoinScreen(
+                            state.connection, initialName, texturesFor,
+                            chosenFor = chosenWokaFor, wokaPicks = wokaPicks,
+                            onWoka = { room -> wokaRoom = room; nav.navigate(Route.Woka.path) },
+                            onJoin = onJoin,
+                        )
+                    }
+                    composable(
+                        Route.Woka.path,
+                        enterTransition = { slideInHorizontally { it } },
+                        exitTransition = { fadeOut() },
+                        popEnterTransition = { fadeIn() },
+                        popExitTransition = { slideOutHorizontally { it } },
+                    ) {
+                        WokaPickerScreen(
+                            wokaRoom, chosenWokaFor(wokaRoom), loadWokas,
+                            onChoose = { woka -> onChooseWoka(wokaRoom, woka); wokaPicks++; nav.popBackStack() },
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
                     composable(
                         Route.Users.path,
                         // The list steps left a little when a screen slides in over it, and back when it leaves.
