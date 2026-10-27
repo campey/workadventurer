@@ -71,7 +71,7 @@ fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> 
             m.emptyText?.let {
                 Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
             }
-            m.members.forEach { p -> PersonRow(p, onClick = if (p.isMe) null else ({ p.userId?.let(onOpenPerson) })) }
+            m.members.forEach { p -> PersonRow(p, onClick = { p.userId?.let(onOpenPerson) }) }
         }
 
         val join: Command? = when (key) {

@@ -83,8 +83,58 @@ class WhereaboutsTest {
         val table = area("t1", "Coffee table 1", 0, 0, meeting = true)
         val s = state(listOf(player(2, "Priya", 50, 50)), areas = listOf(table), inAreas = listOf(table))
         val w = whereIs(2, s)
-        assertEquals("In this area with you", whereText(w))
+        assertEquals("In Coffee table 1 with you", whereText(w))
         assertEquals(true, w.isTogether())
+    }
+
+    // Together in an area it still says which area, unlike a bubble, which has no name.
+    @Test
+    fun someoneWithYouAndAnotherInAMeetingAreaNamesTheArea() {
+        val table = area("t1", "Coffee table 1", 0, 0, meeting = true)
+        val s = state(listOf(player(2, "Priya", 50, 50), player(3, "Tom", 60, 60)), areas = listOf(table), inAreas = listOf(table))
+        assertEquals("In Coffee table 1 with you and Tom", whereText(whereIs(2, s)))
+    }
+
+    // Your own screen: the same facts from your side.
+    @Test
+    fun youInABubbleAreWithTheOthersInIt() {
+        val s = state(listOf(player(2, "Maya"), player(3, "Sam")), groups = listOf(Group(5, 0, 0, listOf(1, 2, 3))), myGroupId = 5)
+        val w = whereAmI(s)
+        assertEquals(Whereabouts.InBubble(ConversationKey.Bubble(5), others = listOf("Maya", "Sam"), withYou = true), w)
+        assertEquals("In a bubble with Maya and Sam", whereTextForMe(w))
+        assertEquals(ConversationKey.Bubble(5), w.conversation())
+    }
+
+    @Test
+    fun youInAMeetingAreaNameItAndTheOthersThere() {
+        val table = area("t1", "Coffee table 1", 0, 0, meeting = true)
+        val s = state(listOf(player(2, "Priya", 50, 50), player(3, "Tom", 5000, 5000)), areas = listOf(table), inAreas = listOf(table))
+        val w = whereAmI(s)
+        assertEquals("In Coffee table 1 with Priya", whereTextForMe(w))
+        assertEquals(ConversationKey.AreaKey("t1"), w.conversation())
+    }
+
+    @Test
+    fun youAloneInAMeetingAreaOrAPlainArea() {
+        val table = area("t1", "Coffee table 1", 0, 0, meeting = true)
+        assertEquals("In Coffee table 1", whereTextForMe(whereAmI(state(emptyList(), areas = listOf(table), inAreas = listOf(table)))))
+        val spawn = area("s", "Spawn Point", 0, 0, meeting = false)
+        val w = whereAmI(state(emptyList(), areas = listOf(spawn), inAreas = listOf(spawn)))
+        assertEquals("In Spawn Point, on your own", whereTextForMe(w))
+        assertNull(w.conversation())
+    }
+
+    @Test
+    fun youOnTheOpenMap() {
+        val w = whereAmI(state(listOf(player(2, "Noor"))))
+        assertEquals(Whereabouts.OnTheMap, w)
+        assertEquals("On the map, on your own", whereTextForMe(w))
+    }
+
+    @Test
+    fun aJitsiAreaIsNamedForYouToo() {
+        val room = Area("j", "Jitsi room", 0, 0, 100, 100, setOf("jitsiRoomProperty"), false, false, null)
+        assertEquals("In Jitsi room (Jitsi meeting)", whereTextForMe(whereAmI(state(emptyList(), areas = listOf(room), inAreas = listOf(room)))))
     }
 
     @Test
@@ -135,7 +185,7 @@ class WhereaboutsTest {
         assertEquals("You are already in this bubble together", togetherNote(whereIs(2, bubble)))
         val meeting = area("m", "Red Table", 0, 0, meeting = true)
         val inArea = state(listOf(player(2, "Maya", 50, 50)), areas = listOf(meeting), inAreas = listOf(meeting))
-        assertEquals("You are already in this area together", togetherNote(whereIs(2, inArea)))
+        assertEquals("You are already in Red Table together", togetherNote(whereIs(2, inArea)))
         assertNull(togetherNote(Whereabouts.OnTheMap))
     }
 }

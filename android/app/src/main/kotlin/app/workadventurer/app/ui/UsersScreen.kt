@@ -80,7 +80,7 @@ fun UsersScreen(
             if (model.onMap.isNotEmpty()) item(key = "map") {
                 Spacer(Modifier.height(8.dp))
                 SectionHeader("Elsewhere on the map", onClick = null, description = "Elsewhere on the map")
-                model.onMap.forEach { PersonRow(it, onClick = if (it.isMe) null else ({ it.userId?.let(onOpenPerson) })) }
+                model.onMap.forEach { PersonRow(it, onClick = { it.userId?.let(onOpenPerson) }) }
                 Spacer(Modifier.height(8.dp))
             }
             model.otherAreas.forEach { entry ->
@@ -90,7 +90,7 @@ fun UsersScreen(
                         onClick = { onOpenConversation(ConversationKey.AreaKey(entry.area.id ?: entry.area.name)) },
                         description = "Open ${entry.area.name}, ${if (entry.occupants.isEmpty()) "empty" else "${entry.occupants.size} here"}",
                     )
-                    entry.occupants.forEach { PersonRow(it, onClick = if (it.isMe) null else ({ it.userId?.let(onOpenPerson) })) }
+                    entry.occupants.forEach { PersonRow(it, onClick = { it.userId?.let(onOpenPerson) }) }
                 }
             }
         }
@@ -145,7 +145,7 @@ private fun ConversationSection(c: Conversation, you: Boolean, onHeader: () -> U
         title, onClick = onHeader,
         description = "${if (you) "You are in " else "Open "}${c.title}, ${c.members.size} people",
     )
-    c.members.forEach { PersonRow(it, onClick = if (it.isMe) null else ({ it.userId?.let(onPerson) })) }
+    c.members.forEach { PersonRow(it, onClick = { it.userId?.let(onPerson) }) }
 }
 
 /** A section's title; the web's uppercase, spaced style. An arrow means it can be opened. */
@@ -181,7 +181,7 @@ internal fun PersonRow(p: Participant, onClick: (() -> Unit)?) {
             .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
             .padding(horizontal = 16.dp, vertical = 6.dp)
             .semantics(mergeDescendants = true) {
-                contentDescription = "$label, ${statusLabel(p.status)}${if (onClick != null) ". Opens their screen" else ""}"
+                contentDescription = "$label, ${statusLabel(p.status)}${if (onClick != null) (if (p.isMe) ". Opens your screen" else ". Opens their screen") else ""}"
             },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
