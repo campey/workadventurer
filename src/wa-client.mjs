@@ -77,7 +77,7 @@ export class WorkAdventureClient extends EventEmitter {
     this.spaces = new Map(); // spaceName -> our membership
     this.groupId = null; // current proximity group, or null
     this.availabilityStatus = AVAILABILITY_ONLINE; // what we announce; LIVEKIT while in a meeting area (#177)
-    this._meetingAreaKeys = new Set(); // livekitRoomProperty areas we are standing in
+    this._meetingAreaSpaces = new Map(); // livekitRoomProperty areas we are standing in -> their space name
     this.spaceUserNames = new Map(); // spaceUserId -> display name, from SpaceUser
 
     // Map areas (from the room's .wam) and which ones the avatar is inside.
@@ -447,13 +447,30 @@ export class WorkAdventureClient extends EventEmitter {
   // announced ONLINE, so a second avatar arriving next to us was grouped with us
   // and the bubble knocked us off the area's LiveKit meeting (#177). Immediate, not
   // dwell-debounced: it is one small message, unlike a space join.
-  _announceMeetingArea(key, entering) {
-    if (entering) this._meetingAreaKeys.add(key);
-    else this._meetingAreaKeys.delete(key);
-    const want = this._meetingAreaKeys.size > 0 ? AVAILABILITY_LIVEKIT : AVAILABILITY_ONLINE;
+  //
+  // A meeting area is also modal (#179): while in one we hold no proximity space.
+  // Entering ejects any we were in; _handle refuses new ones. Without this a bubble
+  // moves us from the area's LiveKit to P2P, and nothing brings us back.
+  _announceMeetingArea(key, spaceName, entering) {
+    if (entering) this._meetingAreaSpaces.set(key, spaceName);
+    else this._meetingAreaSpaces.delete(key);
+    if (entering) this._ejectProximitySpaces();
+    const want = this._meetingAreaSpaces.size > 0 ? AVAILABILITY_LIVEKIT : AVAILABILITY_ONLINE;
     if (want === this.availabilityStatus) return;
     this.availabilityStatus = want;
     if (this._joined) this._send({ setPlayerDetailsMessage: { availabilityStatus: want } });
+  }
+
+  _isAreaSpace(spaceName) {
+    return [...this._meetingAreaSpaces.values()].includes(spaceName);
+  }
+
+  _ejectProximitySpaces() {
+    for (const name of [...this.spaces.keys()]) {
+      if (this._isAreaSpace(name)) continue;
+      this.emit("log", `entered a meeting area → leaving proximity space ${name}`);
+      this._leaveSpace(name);
+    }
   }
 
   // On entering/leaving a `livekitRoomProperty` area, proactively join/leave its
@@ -468,8 +485,8 @@ export class WorkAdventureClient extends EventEmitter {
     const prop = (area.rawProps ?? []).find((p) => p.type === "livekitRoomProperty");
     if (!prop) return;
     const key = area.id ?? area.name;
-    this._announceMeetingArea(key, entering);
     const spaceName = this._areaSpaceName(prop);
+    this._announceMeetingArea(key, spaceName, entering);
     const DWELL_MS = 1500;
     const LINGER_MS = 2500;
     this._meetingTimers ??= new Map(); // spaceName -> { join?, leave? }
@@ -598,6 +615,10 @@ export class WorkAdventureClient extends EventEmitter {
     if (obj.answerMessage) { this._resolveQuery(obj.answerMessage); return; }
     if (obj.joinSpaceRequestMessage) {
       const { spaceName, propertiesToSync } = obj.joinSpaceRequestMessage;
+      if (this._meetingAreaSpaces.size > 0 && !this._isAreaSpace(spaceName)) {
+        this.emit("log", `in a meeting area → refusing proximity space ${spaceName}`);
+        return;
+      }
       if (!this.spaces.has(spaceName)) {
         this._joinSpace(spaceName, propertiesToSync).catch((e) =>
           this.emit("log", `joinSpace failed: ${e.message}`)

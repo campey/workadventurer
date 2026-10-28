@@ -54,9 +54,16 @@ last one is left; the join message uses the stored status. [live: two bots to
 the same human stayed on the area's LiveKit with no proximity space for 100 s.]
 Other players' status is now kept (`wa status --json` → `players[].availabilityStatus`).
 
-**Still open:** a bot that *is* moved to a proximity space for another reason
-(walking up to someone outside an area) and then loses its peer does not return
-to its area's LiveKit. Same family as #150.
+**A meeting area is modal (#179).** The status is not the only guard: while we
+stand in a `livekitRoomProperty` area `_handle` refuses any `joinSpaceRequestMessage`
+for a space that isn't one of our area-meeting spaces, and entering an area leaves
+any proximity space we were already in (`_ejectProximitySpaces`). Recovering after
+the fact (re-joining the area's LiveKit when a bubble ends) was the alternative; it
+isn't needed because we never hold the bubble. [live, prod: a bot in a bubble with
+another walked into the area: `entered a meeting area → leaving proximity space`,
+then the server tried a new bubble and got `in a meeting area → refusing proximity
+space`; both ended on the area's LiveKit with 4 peers.] Leaving the area restores
+normal proximity behaviour.
 
 ## `#10` — the red mic, mic-state propagation
 
