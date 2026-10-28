@@ -13,11 +13,14 @@ import { resolveConfig, configToEnv, explicitPort } from "../src/config.mjs";
 import { createRegistry, AmbiguousDaemonError } from "../src/daemon-registry.mjs";
 
 const DAEMON = fileURLToPath(new URL("../src/wa-daemon.mjs", import.meta.url));
+const SUPERVISOR = fileURLToPath(new URL("../src/wa-supervisor.mjs", import.meta.url));
 const registry = createRegistry();
 
 const USAGE = `wa — WorkAdventure presence control
 
-  wa join [<room-url>] [--detach] [--name N] [--port P] [--stt [--transcript <file>]]
+  wa join [<room-url>] [--detach] [--keep-alive] [--name N] [--port P] [--stt [--transcript <file>]]
+                              --keep-alive restarts the daemon if it is killed (OOM, SIGKILL);
+                              a failed first connect or a server refusal still exits
   wa leave
   wa status [--json]
   wa goto <x> <y>
@@ -28,6 +31,8 @@ const USAGE = `wa — WorkAdventure presence control
   wa thought-bubble <text…>
   wa clear-bubble             dismiss whatever bubble is showing
   wa sound <name|file>        play a clip into the proximity voice chat
+  wa say <text…> [--voice <id>]  speak text aloud to the bubble (TTS)
+  wa say --cancel             stop speaking
   wa chat <text…>             send a chat message to whoever's currently nearby
                               (proximity bubble or meeting-room area — not Matrix)
   wa wait-emote [player]      block until a player emotes  [--emote <match>] [--timeout <ms>]
@@ -36,13 +41,16 @@ const USAGE = `wa — WorkAdventure presence control
   global: --json  --if-running (no-op if the daemon isn't up)  --port <P>
 `;
 
-const { values: flags, positionals } = parseArgs({
+let parsed;
+try {
+  parsed = parseArgs({
   allowPositionals: true,
   options: {
     json: { type: "boolean", default: false },
     "if-running": { type: "boolean", default: false },
     detach: { type: "boolean", default: false },
     transcript: { type: "string" }, // JSONL file for --stt finals (#64)
+    "keep-alive": { type: "boolean", default: false },
     stt: { type: "boolean" }, // undefined unless passed, so it never overrides WA_STT/config.json
     port: { type: "string" },
     room: { type: "string" },
@@ -50,9 +58,19 @@ const { values: flags, positionals } = parseArgs({
     target: { type: "string" },
     emote: { type: "string" },
     timeout: { type: "string" },
+    voice: { type: "string" },
+    cancel: { type: "boolean", default: false },
     help: { type: "boolean", default: false },
   },
-});
+  });
+} catch (e) {
+  // Text like "-5 degrees" is read as a flag. Say how to pass it instead of
+  // dumping a stack trace.
+  const hint = process.argv[2] === "say" ? ` (to speak text that starts with a dash: wa say -- "-5 degrees")` : "";
+  process.stderr.write(`wa: ${e.message.split("\n")[0]}${hint}\n`);
+  process.exit(2);
+}
+const { values: flags, positionals } = parsed;
 
 const [cmd, ...args] = positionals;
 if (!cmd || flags.help) {
@@ -119,19 +137,21 @@ async function daemonReachable() {
   }
 }
 
-function spawnDaemon({ detached, roomUrl }) {
+function spawnDaemon({ detached, roomUrl, keepAlive }) {
   const env = { ...process.env, ...configToEnv(cfg) };
+  // --keep-alive runs the daemon under a restart-on-kill supervisor (#138).
+  const entry = keepAlive ? SUPERVISOR : DAEMON;
   if (roomUrl) env.WA_ROOM = roomUrl;
   if (detached) {
     const logFile = registry.logPath(cfg.port);
     fs.mkdirSync(path.dirname(logFile), { recursive: true });
     const out = fs.openSync(logFile, "a");
     note(`daemon log: ${logFile}`);
-    const child = spawn(process.execPath, [DAEMON], { detached: true, stdio: ["ignore", out, out], env });
+    const child = spawn(process.execPath, [entry], { detached: true, stdio: ["ignore", out, out], env });
     child.unref();
     return null;
   }
-  return spawn(process.execPath, [DAEMON], { stdio: "inherit", env });
+  return spawn(process.execPath, [entry], { stdio: "inherit", env });
 }
 
 async function waitForDaemon(ms = 15000) {
@@ -165,7 +185,7 @@ function report(json) {
   if (flags.json) { process.stdout.write(JSON.stringify(json, null, 2) + "\n"); return; }
   if (json.raw) { process.stdout.write(String(json.raw).trim() + "\n"); return; }
   const bits = [];
-  for (const k of ["goingTo", "quietSpot", "greeted", "speechBubble", "thoughtBubble", "sound", "chat", "alreadyQuiet", "leaving"]) {
+  for (const k of ["goingTo", "quietSpot", "greeted", "speechBubble", "thoughtBubble", "sound", "say", "cancelled", "chat", "alreadyQuiet", "leaving"]) {
     if (json[k] !== undefined && json[k] !== null && json[k] !== false) bits.push(`${k}: ${typeof json[k] === "object" ? JSON.stringify(json[k]) : json[k]}`);
   }
   process.stdout.write((bits.length ? bits.join(", ") : "ok") + "\n");
@@ -190,12 +210,12 @@ switch (cmd) {
       process.exit(0);
     }
     if (flags.detach) {
-      spawnDaemon({ detached: true, roomUrl });
+      spawnDaemon({ detached: true, roomUrl, keepAlive: flags["keep-alive"] });
       if (!(await waitForDaemon())) die("daemon did not come up in time");
       const s = (await api("GET", "/state")).json;
       process.stdout.write(flags.json ? JSON.stringify(s, null, 2) + "\n" : `joined as ${s.name}\n`);
     } else {
-      const child = spawnDaemon({ detached: false, roomUrl });
+      const child = spawnDaemon({ detached: false, roomUrl, keepAlive: flags["keep-alive"] });
       child.on("exit", (code) => process.exit(code ?? 0));
     }
     break;
@@ -275,6 +295,22 @@ switch (cmd) {
     await needDaemon();
     const r = await api("POST", "/sound", { name: args.join(" "), cwd: process.cwd() });
     if (!r.ok) die(r.json.error || `sound failed (${r.status})`);
+    report(r.json);
+    break;
+  }
+  case "say": {
+    if (flags.cancel) {
+      await needDaemon();
+      const r = await api("POST", "/say-cancel", {});
+      if (!r.ok) die(r.json.error || `say --cancel failed (${r.status})`);
+      report(r.json);
+      break;
+    }
+    const text = args.join(" ").trim();
+    if (!text) die("usage: wa say <text…> [--voice <id>]   |   wa say --cancel", 2);
+    await needDaemon();
+    const r = await api("POST", "/say", { text, voice: flags.voice });
+    if (!r.ok) die(r.json.error || `say failed (${r.status})`);
     report(r.json);
     break;
   }

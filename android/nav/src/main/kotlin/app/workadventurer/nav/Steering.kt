@@ -59,6 +59,27 @@ fun frontOf(target: Target, me: Pt, spacing: Double = 64.0, grid: NavGrid? = nul
 }
 
 private const val RING_POINTS = 16
+private const val OUTSIDE_STEP_PX = 24.0
+private const val OUTSIDE_MAX_PX = 720.0
+
+/**
+ * The nearest point to [me] that is [free] and not [inside]: the way out of a region (a bubble, an area), found by
+ * widening rings around [me]. Null if nothing within reach qualifies.
+ */
+fun nearestOutside(me: Pt, inside: (Pt) -> Boolean, free: (Pt) -> Boolean = { true }): Pt? {
+    var r = OUTSIDE_STEP_PX
+    while (r <= OUTSIDE_MAX_PX) {
+        val hit = (0 until RING_POINTS)
+            .map { k -> Pt(me.x + cos(k * 2 * PI / RING_POINTS) * r, me.y + sin(k * 2 * PI / RING_POINTS) * r) }
+            .firstOrNull { free(it) && !inside(it) }
+        if (hit != null) return hit
+        r += OUTSIDE_STEP_PX
+    }
+    return null
+}
+
+/** [nearestOutside] over the walkable tiles of this grid. */
+fun NavGrid.nearestFreeOutside(me: Pt, inside: (Pt) -> Boolean): Pt? = nearestOutside(me, inside, { !isPxBlocked(it.x, it.y) })
 
 private fun NavGrid.nearestFreeOnRing(center: Pt, radius: Double, me: Pt): Pt? =
     (0 until RING_POINTS)

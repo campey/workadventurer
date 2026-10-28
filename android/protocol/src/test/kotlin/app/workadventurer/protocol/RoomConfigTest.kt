@@ -19,6 +19,14 @@ class RoomConfigTest {
         assertEquals(WaStaging.DEFAULT_WOKA, c.wokaId)
     }
 
+    // Staging runs master, whose hash differs from prod's release hash: each is refused with NEW_VERSION under the other's.
+    @Test
+    fun aStagingRoomSendsStagingsVersionHashAndAProdRoomSendsProds() {
+        assertEquals(WaStaging.API_VERSION_HASH, RoomConfig.forRoom("Ada", "https://play.staging.workadventu.re/@/a/b/c").apiVersionHash)
+        assertEquals(Wa133.API_VERSION_HASHES[0], RoomConfig.forRoom("Ada", "https://play.workadventu.re/@/a/b/c").apiVersionHash)
+        assertEquals("d2d82672", WaStaging.API_VERSION_HASH)
+    }
+
     // #77: the mic choice made on the Join screen travels with the join.
     @Test
     fun theMicChoiceTravelsWithTheConfigAndDefaultsToMuted() {

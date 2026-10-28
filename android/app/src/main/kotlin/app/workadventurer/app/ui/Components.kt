@@ -1,4 +1,9 @@
 package app.workadventurer.app.ui
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -8,7 +13,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -25,6 +32,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
+val DONE_COLOR = androidx.compose.ui.graphics.Color(0xFF68E97A)
+
 /**
  * The big pill at the bottom of a screen with a one-line explainer under it. Joining is always the blue one in this spot;
  * leaving is the same pill outlined in the danger colour ([danger]), a quieter choice is outlined in the neutral colour.
@@ -38,10 +47,21 @@ fun PrimaryAction(
     enabled: Boolean = true,
     danger: Boolean = false,
     quiet: Boolean = false,
+    done: Boolean = false,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).semantics { contentDescription = description }
-        if (danger) {
+        if (done) {
+            // A state, not a button: the green pill with a tick that Join turns into once you are in.
+            Button(
+                onClick = onClick, enabled = false, modifier = modifier, shape = RoundedCornerShape(32.dp),
+                colors = ButtonDefaults.buttonColors(disabledContainerColor = DONE_COLOR, disabledContentColor = androidx.compose.ui.graphics.Color(0xFF0B1B32)),
+            ) {
+                Icon(WaIcons.Check, contentDescription = null, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(label, style = MaterialTheme.typography.titleMedium)
+            }
+        } else if (danger) {
             OutlinedButton(
                 onClick = onClick, enabled = enabled, modifier = modifier, shape = RoundedCornerShape(32.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
@@ -57,7 +77,7 @@ fun PrimaryAction(
                 Text(label, style = MaterialTheme.typography.titleMedium)
             }
         }
-        Text(
+        if (explainer.isNotEmpty()) Text(
             explainer, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
         )
@@ -92,4 +112,15 @@ fun WorldInfo(details: WorldDetails, plain: Boolean = false, modifier: Modifier 
             }
         }
     }
+}
+
+/** Your woka in a tile like the world's: same border, corners and background, the picture just inside it. Tapping it chooses another. */
+@Composable
+fun WokaTile(layers: List<app.workadventurer.protocol.Texture>, name: String, onClick: () -> Unit, description: String, offline: Boolean) {
+    Box(
+        Modifier.size(56.dp).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface).clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) { WokaAvatar(layers, name.ifBlank { "?" }, 48.dp, offline = offline, plain = true, placeholder = WOKA_PREVIEW_PLACEHOLDER) }
 }

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app draws its own top bar (Compose), so the system one must not show above it. Dark to match the app. -->
+    <style name="Theme.WorkAdventurer" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF0B1B32</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

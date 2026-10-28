@@ -38,6 +38,10 @@ const DEFAULTS = {
 
 const DIRECTION = { UP: 0, RIGHT: 1, DOWN: 2, LEFT: 3 };
 const AVAILABILITY_ONLINE = 1;
+const AVAILABILITY_LIVEKIT = 11;
+const HEARTBEAT_INTERVAL_MS = 15_000; // transport-level ws ping, and the watchdog's tick
+const DEAD_AFTER_MS = 45_000; // no inbound frame or pong for this long => the socket is dead (#138)
+const CONNECT_TIMEOUT_MS = 15_000; // login fetch / socket join; a hung attempt must fail, not stall reconnect (#138)
 
 export class WorkAdventureClient extends EventEmitter {
   constructor(opts = {}) {
@@ -45,6 +49,13 @@ export class WorkAdventureClient extends EventEmitter {
     this.cfg = { ...DEFAULTS, ...opts };
     this.adapter = opts.adapter ?? null;
     this._target = this.cfg.target ?? "auto";
+    this._connectTimeoutMs = this.cfg.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+    this._heartbeatIntervalMs = this.cfg.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
+    this._deadAfterMs = this.cfg.deadAfterMs ?? DEAD_AFTER_MS;
+    this._heartbeat = null;
+    this._openedAt = 0;
+    this._lastRx = 0;
+    this._hbLastTick = 0;
     this.token = null;
     this.ws = null;
     this.myUserId = null;
@@ -65,6 +76,8 @@ export class WorkAdventureClient extends EventEmitter {
     /** @type {Map<string,{spaceUserId:string,propertiesToSync:string[]}>} */
     this.spaces = new Map(); // spaceName -> our membership
     this.groupId = null; // current proximity group, or null
+    this.availabilityStatus = AVAILABILITY_ONLINE; // what we announce; LIVEKIT while in a meeting area (#177)
+    this._meetingAreaSpaces = new Map(); // livekitRoomProperty areas we are standing in -> their space name
     this.spaceUserNames = new Map(); // spaceUserId -> display name, from SpaceUser
 
     // Map areas (from the room's .wam) and which ones the avatar is inside.
@@ -130,6 +143,8 @@ export class WorkAdventureClient extends EventEmitter {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
+      // No timeout here once hung a reconnect for over an hour (#138).
+      signal: AbortSignal.timeout(this._connectTimeoutMs),
     });
     if (!res.ok) throw new Error(`anonymLogin failed: ${res.status} ${await res.text()}`);
     const data = await res.json();
@@ -265,12 +280,22 @@ export class WorkAdventureClient extends EventEmitter {
 
     this.ws.on("open", () => {
       this.emit("log", "socket open; waiting for roomConnectedMessage");
+      this._startHeartbeat();
     });
 
     this.ws.on("message", (data) => this._onMessage(data));
     this.ws.on("close", (code, reason) => {
       if (this._keepAlive) clearInterval(this._keepAlive);
-      this.emit("close", { code, reason: reason?.toString() });
+      this._stopHeartbeat();
+      // How long the connection lived and how long it had been silent tell a
+      // periodic idle-timeout drop apart from network loss (#138).
+      const now = Date.now();
+      this.emit("close", {
+        code,
+        reason: reason?.toString(),
+        uptimeMs: this._openedAt ? now - this._openedAt : null,
+        idleMs: this._lastRx ? now - this._lastRx : null,
+      });
     });
     this.ws.on("error", (err) => this.emit("error", err));
 
@@ -278,7 +303,15 @@ export class WorkAdventureClient extends EventEmitter {
       const onJoin = () => { cleanup(); resolve(this); };
       const onClose = (c) => { cleanup(); reject(new Error(`closed before join: ${c.code} ${c.reason}`)); };
       const onErr = (e) => { cleanup(); reject(e); };
+      // A socket that never opens or never answers must fail the attempt, not
+      // block the reconnect chain forever (#138).
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`join timed out after ${this._connectTimeoutMs / 1000}s`));
+        try { this.ws.terminate(); } catch {}
+      }, this._connectTimeoutMs);
       const cleanup = () => {
+        clearTimeout(timer);
         this.off("joined", onJoin); this.off("close", onClose); this.off("error", onErr);
       };
       this.once("joined", onJoin);
@@ -409,6 +442,37 @@ export class WorkAdventureClient extends EventEmitter {
     return this.adapter.areaMeetingSpaceName(this.cfg.roomUrl, prop);
   }
 
+  // A browser standing in a livekitRoomProperty area announces availabilityStatus
+  // LIVEKIT, and the server keeps such a player out of proximity bubbles. We
+  // announced ONLINE, so a second avatar arriving next to us was grouped with us
+  // and the bubble knocked us off the area's LiveKit meeting (#177). Immediate, not
+  // dwell-debounced: it is one small message, unlike a space join.
+  //
+  // A meeting area is also modal (#179): while in one we hold no proximity space.
+  // Entering ejects any we were in; _handle refuses new ones. Without this a bubble
+  // moves us from the area's LiveKit to P2P, and nothing brings us back.
+  _announceMeetingArea(key, spaceName, entering) {
+    if (entering) this._meetingAreaSpaces.set(key, spaceName);
+    else this._meetingAreaSpaces.delete(key);
+    if (entering) this._ejectProximitySpaces();
+    const want = this._meetingAreaSpaces.size > 0 ? AVAILABILITY_LIVEKIT : AVAILABILITY_ONLINE;
+    if (want === this.availabilityStatus) return;
+    this.availabilityStatus = want;
+    if (this._joined) this._send({ setPlayerDetailsMessage: { availabilityStatus: want } });
+  }
+
+  _isAreaSpace(spaceName) {
+    return [...this._meetingAreaSpaces.values()].includes(spaceName);
+  }
+
+  _ejectProximitySpaces() {
+    for (const name of [...this.spaces.keys()]) {
+      if (this._isAreaSpace(name)) continue;
+      this.emit("log", `entered a meeting area → leaving proximity space ${name}`);
+      this._leaveSpace(name);
+    }
+  }
+
   // On entering/leaving a `livekitRoomProperty` area, proactively join/leave its
   // space — the server never invites a headless client to an area meeting the
   // way it does for proximity bubbles.
@@ -422,6 +486,7 @@ export class WorkAdventureClient extends EventEmitter {
     if (!prop) return;
     const key = area.id ?? area.name;
     const spaceName = this._areaSpaceName(prop);
+    this._announceMeetingArea(key, spaceName, entering);
     const DWELL_MS = 1500;
     const LINGER_MS = 2500;
     this._meetingTimers ??= new Map(); // spaceName -> { join?, leave? }
@@ -525,7 +590,7 @@ export class WorkAdventureClient extends EventEmitter {
             moving: false,
           },
           viewportMessage: this._viewport(),
-          availabilityStatus: AVAILABILITY_ONLINE,
+          availabilityStatus: this.availabilityStatus,
         },
       });
       return;
@@ -550,6 +615,10 @@ export class WorkAdventureClient extends EventEmitter {
     if (obj.answerMessage) { this._resolveQuery(obj.answerMessage); return; }
     if (obj.joinSpaceRequestMessage) {
       const { spaceName, propertiesToSync } = obj.joinSpaceRequestMessage;
+      if (this._meetingAreaSpaces.size > 0 && !this._isAreaSpace(spaceName)) {
+        this.emit("log", `in a meeting area → refusing proximity space ${spaceName}`);
+        return;
+      }
       if (!this.spaces.has(spaceName)) {
         this._joinSpace(spaceName, propertiesToSync).catch((e) =>
           this.emit("log", `joinSpace failed: ${e.message}`)
@@ -596,8 +665,18 @@ export class WorkAdventureClient extends EventEmitter {
         x: u.position?.x ?? 0,
         y: u.position?.y ?? 0,
         direction: u.position?.direction ?? DIRECTION.DOWN,
+        availabilityStatus: u.availabilityStatus ?? 0,
       });
       this.emit("playerJoined", this.players.get(u.userId));
+      return;
+    }
+    if (sub.playerDetailsUpdatedMessage) {
+      // Status changes (e.g. a browser entering a meeting area) arrive here. Kept so
+      // `wa status --json` shows what a real client announces in a meeting (#177).
+      const d = sub.playerDetailsUpdatedMessage;
+      const p = this.players.get(d.userId);
+      const st = d.details?.availabilityStatus;
+      if (p && st) p.availabilityStatus = st;
       return;
     }
     if (sub.userMovedMessage) {
@@ -703,6 +782,46 @@ export class WorkAdventureClient extends EventEmitter {
       const k = Object.keys(sub)[0];
       if (k && k !== "userMovedMessage") this.emit("log", `SUB ${k}: ${JSON.stringify(sub[k]).slice(0, 300)}`);
     }
+  }
+
+  // Liveness watchdog + keepalive (#138). Our only outbound traffic is the
+  // position re-broadcast, and nothing checked that anything came back, so a
+  // dead network went unnoticed until the server gave up on us ("did not send a
+  // pong in time", soak 2026-10-08). Ping at the transport level every tick —
+  // that also keeps idle NAT / proxy entries warm — and terminate the socket if
+  // neither a frame nor a pong has arrived for deadAfterMs; "close" then drives
+  // the normal reconnect chain.
+  _startHeartbeat() {
+    this._stopHeartbeat();
+    const ws = this.ws;
+    this._openedAt = this._lastRx = this._hbLastTick = Date.now();
+    const rx = () => { this._lastRx = Date.now(); };
+    ws.on("message", rx);
+    ws.on("pong", rx);
+    this._heartbeat = setInterval(() => {
+      const now = Date.now();
+      // Timers that fire far later than scheduled mean the process was
+      // suspended (laptop sleep) or the loop was blocked. Anything received
+      // before that is no evidence about the socket now: grant one fresh
+      // window to hear back instead of killing a socket that may be fine.
+      if (now - this._hbLastTick > this._heartbeatIntervalMs * 3) {
+        this.emit("log", `system stalled/slept ~${Math.round((now - this._hbLastTick) / 1000)}s — re-checking the socket`);
+        this._lastRx = now;
+      }
+      this._hbLastTick = now;
+      const silent = now - this._lastRx;
+      if (silent > this._deadAfterMs) {
+        this.emit("log", `no traffic for ${Math.round(silent / 1000)}s — treating the connection as dead`);
+        ws.terminate();
+        return;
+      }
+      if (ws.readyState === WebSocket.OPEN) ws.ping();
+    }, this._heartbeatIntervalMs);
+  }
+
+  _stopHeartbeat() {
+    if (this._heartbeat) clearInterval(this._heartbeat);
+    this._heartbeat = null;
   }
 
   _startKeepAlive() {
@@ -1041,6 +1160,7 @@ export class WorkAdventureClient extends EventEmitter {
 
   close() {
     if (this._keepAlive) clearInterval(this._keepAlive);
+    this._stopHeartbeat();
     for (const { reject, timer } of this._pendingQueries.values()) {
       clearTimeout(timer);
       reject(new Error("client closed"));

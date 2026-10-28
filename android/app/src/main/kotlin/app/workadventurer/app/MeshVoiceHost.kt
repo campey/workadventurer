@@ -33,7 +33,14 @@ import kotlinx.coroutines.withContext
  *   has returned, never from another thread while native code may still be using it;
  * - nothing thrown in here may leave the job uncaught (that would crash the app) or leave the audio mode changed.
  */
-class MeshVoiceHost(private val context: Context, private val log: CallLog) : (PusherConnection) -> VoiceHandle {
+class MeshVoiceHost(
+    private val context: Context,
+    private val log: CallLog,
+    /** Which device the call's audio uses; told when the call's audio mode is on and when it is over. */
+    private val router: app.workadventurer.app.audio.AudioRouter? = null,
+    /** Told which connection the call is on, and given each link's numbers while the Network sheet is open. */
+    private val net: app.workadventurer.app.net.NetHub? = null,
+) : (PusherConnection) -> VoiceHandle {
     /** Holds the mute choice from the first moment, so one pressed before the engine exists is applied when it does. */
     private class Handle(private val onClose: () -> Unit) : VoiceHandle {
         private var currentlyMuted = true
@@ -66,6 +73,8 @@ class MeshVoiceHost(private val context: Context, private val log: CallLog) : (P
             var mesh: MeshSession? = null
             try {
                 audio.mode = AudioManager.MODE_IN_COMMUNICATION // voice-call routing and volume
+                router?.callStarted()
+                net?.attach(conn)
                 val e = VoiceEngine(context) // at join, so the network list is known by the first bubble
                 engine = e
                 handle.attach(e) // applies a mute pressed before the engine existed
@@ -79,7 +88,10 @@ class MeshVoiceHost(private val context: Context, private val log: CallLog) : (P
                 // Every 5 s, per live connection: audio packets sent/received, ICE state, negotiated direction, mic on/off.
                 // Counts and states only. Answers "is audio leaving the phone?" when a browser shows a red mic.
                 // Taken on the mesh coroutine itself, not a second thread: libwebrtc objects aren't safe to read mid-negotiation or teardown.
-                m.run(inbox.receiveAsFlow(), statsEveryMs = 5_000, onStats = { log.i("WaVoice", it) })
+                m.run(
+                    inbox.receiveAsFlow(), statsEveryMs = 5_000, onStats = { log.i("WaVoice", it) },
+                    linkStatsEveryMs = 1_000, wantLinkStats = { net?.wanted == true }, onLinkStats = { net?.peerStats(it) },
+                )
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
@@ -89,6 +101,8 @@ class MeshVoiceHost(private val context: Context, private val log: CallLog) : (P
                     handle.detach()
                     try { mesh?.closeAll() } catch (t: Throwable) { log.e("WaVoice", "closing links failed: ${t.message}") }
                     try { engine?.close() } catch (t: Throwable) { log.e("WaVoice", "closing the engine failed: ${t.message}") }
+                    router?.callEnded()
+                    net?.attach(null)
                     audio.mode = previousMode
                 }
             }

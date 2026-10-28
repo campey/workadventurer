@@ -27,15 +27,9 @@ class AvBarStateTest {
         }
     }
 
+    // The sheet is audio only (video gets its own, from the camera button, later); muting is the bar's mic, not a row in it.
     @Test
-    fun theOverflowButtonOpensTheAudioAndVideoSheet() {
-        assertEquals("More audio and video options", avBarState(true).moreDescription)
-        assertEquals("Audio and video", AUDIO_VIDEO_SHEET_TITLE)
-    }
-
-    @Test
-    fun theSheetDescribesTheMicrophone() {
-        assertEquals("Muted · Built-in microphone", micSheetText(muted = true))
-        assertEquals("On · Built-in microphone", micSheetText(muted = false))
+    fun theAudioSheetIsTitledAudio() {
+        assertEquals("Audio", AUDIO_SHEET_TITLE)
     }
 }

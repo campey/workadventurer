@@ -48,11 +48,18 @@ import {
 } from "@livekit/rtc-node";
 import { readOggOpus } from "./ogg-opus.mjs";
 import { ensureOpus, ensurePcm, silenceOpusFile, invalidateCache } from "./transcode.mjs";
+import { speakWebrtc, speakLiveKit } from "./say.mjs";
 import { SttStream } from "./wa-stt.mjs";
 import { writeFileSync } from "node:fs"; // TEMP: SDP_DEBUG diagnostic only
 
 const LIVEKIT_SAMPLE_RATE = 48000;
 const LIVEKIT_FRAME_MS = 20; // matches the WEBRTC path's Opus frame pacing
+
+// Streaming playback (`say`): hold this many 20 ms packets before the first RTP
+// goes out, and treat a packet arriving later than the underrun threshold as a
+// new talkspurt rather than bursting to catch up.
+const PUMP_PREBUFFER_PACKETS = 25; // 500 ms
+const PUMP_UNDERRUN_MS = 60;
 
 // Module-level (not per-instance): the LiveKit FFI runtime is shared process-
 // wide, so its one-shot dispose() belongs at process-exit time, not tucked
@@ -138,7 +145,7 @@ function opusSamples(pkt) {
 
 export class WaAudio extends EventEmitter {
   /** @param {import("./wa-client.mjs").WorkAdventureClient} client */
-  constructor(client, { iceServers, listen = false } = {}) {
+  constructor(client, { iceServers, listen = false, tts = {} } = {}) {
     super();
     this.client = client;
     this.iceServers = iceServers ?? [{ urls: "stun:stun.l.google.com:19302" }];
@@ -158,6 +165,7 @@ export class WaAudio extends EventEmitter {
     // resurrecting a dead connection (#32).
     this._closedConnIds = new Set();
     this._play = null; // { stop(): void } while a clip is playing
+    this._tts = tts; // { python, sayPath, backend? } for say() (issue #7)
     this._silencePath = null; // cached short silence clip for the connect-time prime
     this._livekit = null; // { room, source, track } while a LiveKit-escalated meeting is active (#8)
     this._livekitConnecting = null; // Promise while _connectLiveKit() is in flight (#8 connect race)
@@ -249,11 +257,23 @@ export class WaAudio extends EventEmitter {
       case "webRtcDisconnectMessage":
         this._closePeer(this._connIdForUser(senderUserId), "peer disconnect");
         break;
-      case "switchMessage":
       case "finalizeSwitchMessage":
+        // Names the transport being SHUT DOWN (WEBRTC after an escalation,
+        // LIVEKIT after a de-escalation), so it says nothing about what to
+        // switch to. Treating it like switchMessage hung up the freshly
+        // started mesh peers after a de-escalation and left no transport (#150).
+        break;
+      case "switchMessage":
         if (payload.strategy && payload.strategy.toUpperCase() !== this.client.adapter.meeting.webrtcStrategyName) {
           this.emit("log", `meeting strategy → ${payload.strategy}; P2P audio idle`);
           this.hangup(`switched to ${payload.strategy}`);
+        } else if (payload.strategy && this._livekit) {
+          // A de-escalation back to the mesh: the server sends webRtcStart for
+          // the new peers but no livekitDisconnectMessage (observed live, #150),
+          // so drop the LiveKit room ourselves. Left connected it would win
+          // play()'s routing and publish into a room nobody is listening to.
+          this.emit("log", `meeting strategy → ${payload.strategy}; leaving LiveKit`);
+          this._disconnectLiveKit().catch((e) => this.emit("log", `LiveKit disconnect error: ${e.message}`));
         }
         break;
       case "livekitInvitationMessage":
@@ -723,6 +743,150 @@ export class WaAudio extends EventEmitter {
     return this._livekit ? this._playLiveKit(file, opts) : this._playWebrtc(file, opts);
   }
 
+  // Feed 20 ms PCM frames to a LiveKit AudioSource (#7, slice 1). Unlike the
+  // RTP path there is no pacing of our own: AudioSource keeps its own jitter
+  // buffer (queueSize, 30 s) and paces playout, and captureFrame()'s await is
+  // throttle enough. So frames arrive as fast as the TTS produces them, which
+  // is why a stop must `clearQueue()` (see say()): audio already queued would
+  // otherwise keep playing for seconds after a cancel.
+  async _pumpLiveKit(frames, { source, isStopped, indicator = true }) {
+    let sent = 0;
+    let errs = 0;
+    let firstSendAt = null;
+    let speaking = false;
+    try {
+      for await (const chunk of frames) {
+        if (isStopped()) break;
+        if (!speaking) {
+          this._setSpeaking(true, indicator);
+          speaking = true;
+        }
+        try {
+          await source.captureFrame(new AudioFrame(chunk, LIVEKIT_SAMPLE_RATE, 1, chunk.length));
+          sent++;
+          firstSendAt ??= performance.now();
+        } catch (e) {
+          errs++;
+          if (errs === 1) this.emit("log", `LiveKit captureFrame error: ${e.message}`);
+        }
+      }
+      // The queued tail is still playing: keep the indicator lit until it ends.
+      if (!isStopped() && sent) {
+        try {
+          await source.waitForPlayout();
+        } catch {}
+      }
+    } finally {
+      if (speaking) this._setSpeaking(false, indicator);
+    }
+    return { packetsSent: sent, writeErrors: errs, firstSendAt };
+  }
+
+  /**
+   * Speak `text` into the active transport: say.py streams PCM and src/say.mjs
+   * converts it for whichever transport the bubble is on. WEBRTC mesh: ffmpeg
+   * encodes Opus and _pump paces it out as RTP with a 500 ms prebuffer.
+   * LiveKit: 20 ms PCM frames go to AudioSource.captureFrame (_pumpLiveKit).
+   * Claims the same `_play` token as play(), so a new say (or a sound)
+   * supersedes it and hangup() stops it. Resolves when speech ends or is
+   * stopped; never rejects.
+   */
+  async say(text, { voice, indicator = true } = {}) {
+    this._play?.stop();
+    const ac = new AbortController();
+    let stopped = false;
+    let onStop = null; // transport-specific cancel hook (LiveKit: flush the queue)
+    const token = (this._play = {
+      kind: "say",
+      stop: () => {
+        stopped = true;
+        ac.abort();
+        onStop?.();
+      },
+    });
+    const t0 = performance.now();
+    let firstAudioAt = null;
+    let packetsSent = 0;
+    const tap = async function* (src) {
+      for await (const p of src) {
+        firstAudioAt ??= performance.now();
+        yield p;
+      }
+    };
+    try {
+      const lk = this._livekit;
+      if (lk) {
+        const { source } = lk; // captured now: hangup() clears this._livekit
+        onStop = () => {
+          try {
+            source.clearQueue();
+          } catch {}
+        };
+        const r = await this._pumpLiveKit(tap(speakLiveKit(text, { ...this._tts, voice, signal: ac.signal })), {
+          source,
+          isStopped: () => stopped,
+          indicator,
+        });
+        // A stop that lands after the last frame is queued must still cut the
+        // tail: the token's stop() already flushed, this covers the race where
+        // it fired between captureFrame and waitForPlayout.
+        if (stopped) onStop();
+        packetsSent = r.packetsSent;
+        return {
+          played: !stopped && r.packetsSent > 0,
+          packetsSent: r.packetsSent,
+          writeErrors: r.writeErrors,
+          peers: lk.room.remoteParticipants.size,
+          firstAudioMs: firstAudioAt == null ? null : Math.round(firstAudioAt - t0),
+          firstRtpMs: r.firstSendAt == null ? null : Math.round(r.firstSendAt - t0),
+          transport: "livekit",
+        };
+      }
+      if (!this._connectedPeers().length) return { played: false, reason: "no connected peers" };
+      const packets = tap(speakWebrtc(text, { ...this._tts, voice, signal: ac.signal }));
+      const r = await this._pump(packets, {
+        getTargets: () => this._connectedPeers(),
+        isStopped: () => stopped,
+        indicator,
+        prebuffer: PUMP_PREBUFFER_PACKETS,
+      });
+      packetsSent = r.packetsSent;
+      return {
+        played: !stopped && r.packetsSent > 0,
+        reason: r.reason,
+        packetsSent: r.packetsSent,
+        writeErrors: r.writeErrors,
+        peers: r.peers,
+        peerStates: r.peerStates,
+        firstAudioMs: firstAudioAt == null ? null : Math.round(firstAudioAt - t0),
+        firstRtpMs: r.firstSendAt == null ? null : Math.round(r.firstSendAt - t0),
+        transport: "webrtc",
+      };
+    } catch (e) {
+      return { played: false, reason: e.message };
+    } finally {
+      if (this._play === token) this._play = null;
+      // While a say held `_play` (a cold start can take a minute), _primeMic
+      // skipped any peer that connected, assuming a clip was about to reach
+      // it. A say that produced no audio leaves that peer with the red
+      // "mic on, nothing arriving" icon (#10), so prime now.
+      if (!stopped && packetsSent === 0 && this._connectedPeers().length) {
+        await this._primeMic().catch(() => {});
+      }
+    }
+  }
+
+  /** Stop a say in flight (not a sound/clip). @returns {boolean} whether one was stopped */
+  stopSay() {
+    if (this._play?.kind !== "say") return false;
+    this._play.stop();
+    return true;
+  }
+
+  _connectedPeers() {
+    return [...this.peers.values()].filter((p) => p.pc.connectionState === "connected");
+  }
+
   async _playWebrtc(file, { indicator = true } = {}) {
     // Claim `_play` synchronously, before any awaits, so a second concurrent
     // call (e.g. a real clip landing mid-prime, or two peers connecting a few
@@ -744,67 +908,154 @@ export class WaAudio extends EventEmitter {
       return { played: false, reason: "empty clip" };
     }
 
-    const targets = [...this.peers.values()].filter(
-      (p) => p.pc.connectionState === "connected"
-    );
+    const targets = this._connectedPeers();
     if (!targets.length) {
       if (this._play === token) this._play = null;
       return { played: false, reason: "no connected peers" };
     }
 
-    // Advance each peer's timestamp over the silent gap since its last clip so
-    // the RTP clock stays wall-clock-continuous, and mark the first packet as a
-    // new talkspurt (RFC 3551) so the receiver resyncs its jitter buffer.
-    const now0 = performance.now();
-    for (const p of targets) {
-      const gapSamples = Math.round(((now0 - p.lastPlayEnd) / 1000) * 48000);
-      p.ts = (p.ts + Math.max(0, gapSamples)) >>> 0;
-    }
-    this._setSpeaking(true, indicator);
-
-    let sent = 0;
-    let errs = 0;
-    let firstOfTalkspurt = true;
-    const startedAt = performance.now();
-    let elapsedMs = 0;
-    for (const { data, samples } of packets) {
-      if (stopped) break;
-      for (const p of targets) {
-        const header = new RtpHeader({
-          payloadType: OPUS.payloadType,
-          sequenceNumber: p.seq++ & 0xffff,
-          timestamp: p.ts >>> 0,
-          ssrc: p.ssrc,
-          marker: firstOfTalkspurt,
-        });
-        try {
-          p.track.writeRtp(new RtpPacket(header, data));
-          sent++;
-        } catch (e) {
-          errs++;
-          if (errs === 1) this.emit("log", `writeRtp error: ${e.message}`);
-        }
-        p.ts = (p.ts + samples) >>> 0;
-      }
-      firstOfTalkspurt = false;
-      elapsedMs += (samples / 48000) * 1000;
-      const drift = startedAt + elapsedMs - performance.now();
-      if (drift > 1) await sleep(drift);
-    }
-
-    const endAt = performance.now();
-    for (const p of targets) p.lastPlayEnd = endAt;
-    this._setSpeaking(false, indicator);
+    const r = await this._pump(packets, {
+      getTargets: () => targets,
+      isStopped: () => stopped,
+      indicator,
+    });
     if (this._play === token) this._play = null;
-    const states = targets.map((p) => p.pc.connectionState);
     return {
       played: !stopped,
       seconds: +(totalSamples / 48000).toFixed(2),
-      peers: targets.length,
-      packetsSent: sent,
-      writeErrors: errs,
-      peerStates: states,
+      peers: r.peers,
+      packetsSent: r.packetsSent,
+      writeErrors: r.writeErrors,
+      peerStates: r.peerStates,
     };
+  }
+
+  // Pace Opus packets out as RTP to `getTargets()` on the 20 ms wall clock.
+  // `source` is an array or (async) iterable of { data, samples }. With
+  // `prebuffer` > 0 (the streaming path, `say`) it first collects that many
+  // packets so producer jitter doesn't glitch the start, and afterwards treats
+  // a packet that arrives more than PUMP_UNDERRUN_MS late as the start of a new
+  // talkspurt (marker bit, RTP timestamp advanced over the gap, clock
+  // re-based) instead of bursting to catch up. prebuffer 0 (file playback)
+  // keeps the original behaviour. Always closes `source`, which is what tears
+  // down say.py/ffmpeg when playback is superseded.
+  async _pump(source, { getTargets, isStopped, indicator = true, prebuffer = 0 }) {
+    const it = source[Symbol.asyncIterator]?.() ?? source[Symbol.iterator]();
+    let ended = false;
+    const pull = async () => {
+      if (ended) return null;
+      const r = await it.next();
+      if (r.done) {
+        ended = true;
+        return null;
+      }
+      return r.value;
+    };
+    const none = (reason) => ({
+      packetsSent: 0, writeErrors: 0, peers: 0, peerStates: [], firstSendAt: null, reason,
+    });
+    const queue = [];
+    try {
+      while (queue.length < prebuffer && !isStopped()) {
+        const first = await pull();
+        if (!first) break;
+        queue.push(first);
+      }
+      if (isStopped()) return none("superseded");
+      const targets = getTargets();
+      if (!targets.length) return none("no connected peers");
+      if (!queue.length) {
+        const first = await pull();
+        if (!first) return none("empty");
+        queue.push(first);
+      }
+
+      // Advance each peer's timestamp over the silent gap since its last clip so
+      // the RTP clock stays wall-clock-continuous, and mark the first packet as
+      // a new talkspurt (RFC 3551) so the receiver resyncs its jitter buffer.
+      const now0 = performance.now();
+      for (const p of targets) {
+        const gapSamples = Math.round(((now0 - p.lastPlayEnd) / 1000) * 48000);
+        p.ts = (p.ts + Math.max(0, gapSamples)) >>> 0;
+      }
+      this._setSpeaking(true, indicator);
+
+      let sent = 0;
+      let errs = 0;
+      let marker = true;
+      let firstSendAt = null;
+      let startedAt = performance.now();
+      let elapsedMs = 0;
+      // Peers can connect mid-stream (a say outlasts a cold start): every packet
+      // re-reads the live targets, and a newcomer gets its timestamp advanced
+      // over its own silent gap and a talkspurt marker on its first packet.
+      const known = new Set(targets);
+      const fresh = new Set();
+      try {
+        for (let pkt = queue.shift(); pkt; pkt = queue.shift() ?? (await pull())) {
+          if (isStopped()) break;
+          if (prebuffer > 0) {
+            const lateMs = performance.now() - (startedAt + elapsedMs);
+            if (lateMs > PUMP_UNDERRUN_MS) {
+              const gap = Math.round((lateMs / 1000) * 48000);
+              for (const p of known) p.ts = (p.ts + gap) >>> 0;
+              marker = true;
+              startedAt = performance.now();
+              elapsedMs = 0;
+            }
+          }
+          const live = getTargets();
+          for (const p of live) {
+            if (known.has(p)) continue;
+            known.add(p);
+            fresh.add(p);
+            const gapSamples = Math.round(((performance.now() - p.lastPlayEnd) / 1000) * 48000);
+            p.ts = (p.ts + Math.max(0, gapSamples)) >>> 0;
+          }
+          for (const p of live) {
+            const header = new RtpHeader({
+              payloadType: OPUS.payloadType,
+              sequenceNumber: p.seq++ & 0xffff,
+              timestamp: p.ts >>> 0,
+              ssrc: p.ssrc,
+              marker: marker || fresh.has(p),
+            });
+            try {
+              p.track.writeRtp(new RtpPacket(header, pkt.data));
+              sent++;
+            } catch (e) {
+              errs++;
+              if (errs === 1) this.emit("log", `writeRtp error: ${e.message}`);
+            }
+            p.ts = (p.ts + pkt.samples) >>> 0;
+          }
+          firstSendAt ??= performance.now();
+          marker = false;
+          fresh.clear();
+          elapsedMs += (pkt.samples / 48000) * 1000;
+          // Keep the end-of-audio time current on every packet, not only at the
+          // end: a pump that supersedes this one can start before this one's
+          // cleanup runs, and would otherwise measure its silent gap from a
+          // stale time and jump the RTP timestamp forward.
+          for (const p of known) p.lastPlayEnd = startedAt + elapsedMs;
+          const drift = startedAt + elapsedMs - performance.now();
+          if (drift > 1) await sleep(drift);
+        }
+      } finally {
+        const endAt = performance.now();
+        for (const p of known) p.lastPlayEnd = endAt;
+        this._setSpeaking(false, indicator);
+      }
+      return {
+        packetsSent: sent,
+        writeErrors: errs,
+        peers: known.size,
+        peerStates: [...known].map((p) => p.pc.connectionState),
+        firstSendAt,
+      };
+    } finally {
+      await it.return?.();
+    }
   }
 
   // LiveKit publish path (#8). Mirrors _playWebrtc's shape (same `_play`

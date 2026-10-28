@@ -30,6 +30,41 @@ an open follow-up.
 
 ---
 
+## `#177` — an avatar in a meeting area must not be grouped into a proximity bubble
+
+**Symptom:** two bots sent to the same human (`wa to`) both stand in a
+`livekitRoomProperty` area. The second one's arrival makes the server form a
+proximity bubble from the two bots (`joinSpaceRequestMessage` for a `…#NNNN#…`
+space). The first bot is told `meeting strategy → WEBRTC; leaving LiveKit`, the
+second gets the area's LiveKit invitation and switches, and the first is left on
+a P2P link to a peer that has gone: `wa status` says `audio.connected:false,
+peers:0, inMeeting:true`, peers see a red mic, `wa sound` reaches nobody.
+
+**Cause:** a real browser in a meeting area announces `availabilityStatus =
+LIVEKIT` (11), and the server keeps such a player out of proximity groups. We
+announced `ONLINE` (1) for the whole session. [live: humans in the area read 11,
+our bots read 1; a human ~35px from a bot was never grouped, the two bots were.
+That the server skips LIVEKIT players is inferred from this and borne out by the
+fix below.]
+
+**Fix:** `WorkAdventureClient._announceMeetingArea` sends
+`setPlayerDetailsMessage{availabilityStatus: LIVEKIT}` on entering a meeting
+area (immediately, not dwell-debounced: one small message) and `ONLINE` when the
+last one is left; the join message uses the stored status. [live: two bots to
+the same human stayed on the area's LiveKit with no proximity space for 100 s.]
+Other players' status is now kept (`wa status --json` → `players[].availabilityStatus`).
+
+**A meeting area is modal (#179).** The status is not the only guard: while we
+stand in a `livekitRoomProperty` area `_handle` refuses any `joinSpaceRequestMessage`
+for a space that isn't one of our area-meeting spaces, and entering an area leaves
+any proximity space we were already in (`_ejectProximitySpaces`). Recovering after
+the fact (re-joining the area's LiveKit when a bubble ends) was the alternative; it
+isn't needed because we never hold the bubble. [live, prod: a bot in a bubble with
+another walked into the area: `entered a meeting area → leaving proximity space`,
+then the server tried a new bubble and got `in a meeting area → refusing proximity
+space`; both ended on the area's LiveKit with 4 peers.] Leaving the area restores
+normal proximity behaviour.
+
 ## `#10` — the red mic, mic-state propagation
 
 **Symptom:** a peer renders our mic red ("microphone is on, but I'm receiving
@@ -393,17 +428,26 @@ daemon in the past.
 `## Version targets` for selection logic. Field notes:
 
 - **Prod is one server.** `play.workadventu.re` hosts afrolabs, lean-iterator,
-  tcm, … all on the tagged release (`v1.34.0` → `wa-1.34`; was `v1.33.x` → `wa-1.33` until 2026-10-05).
+  tcm, … all on the tagged release (`v1.34.2` → `wa-1.34`, hash `62e25483`; `v1.34.1` was `b82fc568`, `v1.34.0` `23c8eb8c`; was `v1.33.x` → `wa-1.33` until 2026-10-05). Seen 2026-10-20: prod moved to v1.34.2 and answered `b82fc568` with `NEW_VERSION`. The re-vendored proto has 22 additive changes since v1.34.0 and nothing wire-breaking that `src/` uses (`proto-diff.mjs`); `selfcheck --target production` passes.
 - **Staging is rolling `master`**, untagged — `play.staging.workadventu.re`.
   Its commit sha *moves between sessions* (`7c5ff99b` → `7d628838` → …), and
   each move can shift the `apiVersionHash`. `wa-master` warns on sha drift;
   refresh it with `node scripts/vendor-proto.mjs master wa-master` (prints the
   recomputed hash — self-verified: `v1.33.5` → `bfd20fc4`).
-- **The `wa-master` adapter is behind staging (checked 2026-10-08).** Staging was at
-  `master@6ae415d`; the adapter tracks `7d628838` and lists hash `3fb30729`, while
-  `vendor-proto.mjs --check 6ae415d` gives `23c8eb8c` (the same as prod v1.34.0, and the
-  Android app joined staging with it). The CLI has not been re-tested against staging
-  since, so it is unknown whether it still connects.
+- **`wa-master` was refreshed to staging `master@d2e3ecfe` (2026-10-13, #145).** Staging
+  had moved on and answered the old hash (`3fb30729`) with `errorScreen NEW_VERSION`, so
+  the CLI could not join at all. Hash is now `b82fc568` (same as prod v1.34.1); the proto
+  is wire-identical to `wa-1.34` (`proto-diff.mjs` reports nothing). `selfcheck --target
+  wa-master` passes connect, move, bubble and area-meeting join (audio unexercised).
+  `vendor-proto.mjs` vendors the proto and *prints* the hash but does not edit the
+  adapter: set `trackedSha`, `apiVersionHashes` and `verifiedDate` by hand. The
+  `test/adapters.test.mjs` sha tests read `trackedSha`, so a refresh doesn't break them.
+- **Staging moved again (2026-10-20): `master@118dd84c`, hash `d2d82672`.** It rejected both `b82fc568` and prod's new
+  `62e25483` with `NEW_VERSION` and accepted only master's own hash, so prod and staging no longer share one. A probe
+  with the wrong pusher (prod's) answers `WORLD_NOT_FOUND`, which is *after* the hash check and so proves nothing:
+  probe staging with `WA_PUSHER_URL=https://pusher.staging.workadventu.re` and a staging woka. `wa-master` is
+  re-vendored and `selfcheck --target wa-master` passes; the Android app sends staging's hash for staging rooms
+  (`WaStaging.API_VERSION_HASH`).
 - **Staging has its own everything.** Different pusher
   (`pusher.staging.workadventu.re`) and a **different woka catalogue** — a
   production woka id returns `invalid character texture`. Use a staging id
@@ -516,7 +560,9 @@ avatar against a real room. Dates are when each was observed.
   file): `NEW_VERSION`, or a server `timeToRetry` ≥ 3600 s (WA sends 999999
   with `NEW_VERSION`), means don't auto-retry. The daemon exits 1 with the
   message — at initial connect, and for an established daemon via the
-  reconnector. Unknown codes keep the bounded 5-attempt retry.
+  reconnector. Unknown codes retry indefinitely (delays 2, 5, 10, 20, 30, then
+  60 s repeating — #138; it used to give up after 5 attempts, which ended an
+  overnight session on a flapping network).
 - **The exponential-chain lesson.** A rejected attempt makes the server close
   the socket. If the attempt client carries the "reconnect on close" handler,
   that close starts a *second* chain, and each of its attempts starts more:
@@ -524,7 +570,32 @@ avatar against a real room. Dates are when each was observed.
   belongs to the live client only (`watchLive` in `wa-daemon.mjs`);
   `createReconnector` (`src/reconnect.mjs`) keeps a single chain in flight and
   checks `deliberateShutdown` every iteration. A log tell: `reconnect attempt
-  1/5…` appearing repeatedly instead of `1/5`, `2/5`.
+  1 (down 0s)…` appearing repeatedly instead of counting up `1`, `2`, `3`.
+- **Liveness watchdog (#138).** The client's only outbound traffic is a position
+  re-broadcast every 5 s, and nothing checked that anything came back: in the
+  2026-10-08 soak the server closed us with `4000 … did not send a pong in time`
+  while we thought we were fine. `_startHeartbeat` (`wa-client.mjs`) sends a
+  transport-level `ws.ping()` every 15 s (also keeps idle NAT/proxy entries warm)
+  and terminates the socket after 45 s with no inbound frame or pong; the normal
+  close → reconnect path takes over. Verified live that the production-style
+  pusher (staging) answers ws pings (~150 ms). A tick that fires > 3 intervals
+  late is logged as `system stalled/slept` and grants one fresh window rather than
+  killing a socket that may be fine after a laptop wake. `socket closed` lines
+  now carry `(up Ns, silent Ns)` to tell periodic idle drops from network loss.
+- **Supervision: `wa join --keep-alive` (#138).** With the indefinite reconnect and
+  the heartbeat, a network outage no longer ends the daemon; what is left is it
+  being *killed* (OOM balloon #29, SIGKILL). `src/wa-supervisor.mjs` runs the
+  daemon and restarts it (backoff 2, 5, 10, 20, 30, 60 s; reset after a 5-minute
+  run) only when it dies from a signal or an unexpected code. Never restarted:
+  exit 0 (`wa leave`, SIGINT/SIGTERM), exit 1 (it never connected, or any
+  generic failure: "it was never alive"), exit 2/3 (usage / port), exit 4 (the
+  server refuses this client, e.g. `NEW_VERSION`: restarting would just hammer
+  it). Exit 4 is new; the daemon used to exit 1 for a refusal. Verified live:
+  `kill -9` on the daemon → back in the room 2 s later under a new pid, and
+  `wa leave` takes down both processes. Caveat: while the daemon is in the
+  restart backoff the control API is down, so a bare `wa status` says "not
+  joined" and a command that auto-starts a daemon (`needDaemon`) would race the
+  supervisor for the port.
 - **Repro without production traffic:** `node scripts/fake-pusher.mjs 8855
   [code] [timeToRetry]` (serves `anonymLogin`, `/map` and a `/ws/room` that
   sends one `errorScreenMessage` then closes 1000), then
@@ -668,3 +739,52 @@ vendored proto (`proto/wa-1.33/messages.proto`):
     issue, affects any identity including a real logged-in browser
     session). Net effect either way: #39 needs a live Matrix-enabled area
     on the map before it's testable, which it currently doesn't have.
+
+## `wa say` (issue #7)
+
+- Interface: `python3 <huggingsesame>/src/say.py --pcm-out --quiet --backend modal -`
+  with the text on **stdin**; stdout is raw 24 kHz mono s16le PCM. Config:
+  `WA_TTS_PYTHON`, `WA_TTS_SAY`. All TTS work stays in that repo.
+- WEBRTC mesh path: `src/say.mjs` pipes the PCM into one persistent
+  `ffmpeg … -c:a libopus -frame_duration 20 -page_duration 20000 -flush_packets 1 -f ogg`.
+  **`-page_duration 20000` is what keeps latency at one frame**; without it ffmpeg
+  batches ~1 s per Ogg page. `src/ogg-stream.mjs` demuxes it incrementally and
+  `WaAudio._pump` paces the packets as RTP.
+- `_pump` with `prebuffer` > 0 (say only) holds 500 ms before the first packet and
+  treats a packet more than 60 ms late as a new talkspurt (marker bit, RTP timestamp
+  advanced over the gap, clock re-based). File playback keeps prebuffer 0.
+- Teardown trap: a child's `close` event waits for all its stdio, so after an early
+  stop `say.py`'s unread stdout kept it from ever firing. `speakWebrtc()` destroys the
+  child streams before awaiting exit.
+- `node --test` runs every file under `test/` as a test. A helper there that blocks
+  (e.g. reads stdin) hangs the whole suite, so the say.py stand-in lives in
+  `scripts/fake-say.mjs`.
+- LiveKit transport (slice 1 of #7): `speakLiveKit()` resamples to 48 kHz and re-chunks
+  into 20 ms `Int16Array` frames (each a copy in its own zero-offset buffer, see the
+  `.slice()` note in #8); `WaAudio._pumpLiveKit` feeds `captureFrame` with no pacing of
+  its own, since `AudioSource`'s 30 s queue paces playout. Because audio is queued
+  ahead of playout, every stop (cancel, supersede, hang-up) calls `source.clearQueue()`,
+  which also ends a pending `waitForPlayout()`; without it a cancel would keep playing
+  the queued tail for seconds. To exercise it headlessly, force LiveKit with three
+  avatars and `cpuLimited` (docs/livekit.md, "Forcing LiveKit").
+  Verified live (2026-10-15, prod wa-1.34, stub say.py tone, three headless avatars, one
+  listening on the LiveKit track): LiveKit up 0.5 s after the flag, both avatars
+  connected by 2.2 s; a 3 s utterance = 150 frames, first audio 119 ms, the listener
+  received 3.02 s at ~439 Hz (no buzz, correct pitch); a 20 s utterance cancelled after
+  2.5 s went silent at the listener 0.23 s later.
+
+Offline end-to-end (2026-10-13, stub `scripts/fake-say.mjs`, real browser peer, WEBRTC mesh):
+8 s tone = 401 RTP packets, heard as a steady tone; supersede restarts cleanly (one
+small blip at the cut-over, i.e. the old utterance ends abruptly); `wa say --cancel`
+true while speaking, no-op when idle; `wa status` during speech 91-154 ms (mostly CLI
+start-up); `wa leave` mid-sentence leaves no `say`/`ffmpeg`/`libopus` process; `wa sound
+chime` unaffected. Stub audio arrives instantly, so first-audio times (~100 ms) say
+nothing about the real cloud.
+
+Live cloud (2026-10-13, real `say.py`, WEBRTC mesh, real browser peer, container warmed by `say.py --hello`):
+cold start to the handshake line 58.5 s; warm first audio 6.1-6.7 s from `wa say`, first RTP
+0.1-0.2 s after that (the 500 ms prebuffer fills as fast as the cloud produces); a 238-char
+paragraph = 829 packets (~16.6 s) heard as a steady voice; supersede, `wa say --cancel` and
+`wa leave` mid-sentence all stop within a packet or two and leave no `say.py`/`mimi_sidecar`/
+`libopus` process. `say.py --hello` plays on the local speakers, not in the world.
+Gotcha: `wa say` right after `wa join` returns 409 until the WEBRTC peer connects (~10 s).

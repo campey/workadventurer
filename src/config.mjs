@@ -27,6 +27,8 @@ const BASE = {
   port: 8787,
   transcript: null, // WA_STT_TRANSCRIPT=<path> -> append finals as JSONL (issue #64)
   stt: false, // WA_STT=1 -> live speech-to-text on inbound peer audio (issue #23, prototype)
+  ttsPython: "python3", // WA_TTS_PYTHON -> interpreter for huggingsesame's say.py (issue #7)
+  ttsSay: path.join(os.homedir(), "Code", "huggingsesame", "src", "say.py"), // WA_TTS_SAY
 };
 
 const ENV_MAP = {
@@ -39,6 +41,8 @@ const ENV_MAP = {
   WA_DAEMON_PORT: "port",
   WA_STT: "stt",
   WA_STT_TRANSCRIPT: "transcript",
+  WA_TTS_PYTHON: "ttsPython",
+  WA_TTS_SAY: "ttsSay",
 };
 
 function fromFile() {
@@ -97,6 +101,8 @@ export function configToEnv(cfg) {
     WA_DAEMON_PORT: String(cfg.port),
     WA_STT: cfg.stt ? "1" : "0",
     ...(cfg.transcript ? { WA_STT_TRANSCRIPT: cfg.transcript } : {}),
+    WA_TTS_PYTHON: cfg.ttsPython,
+    WA_TTS_SAY: cfg.ttsSay,
     ...(cfg.version ? { WA_VERSION: cfg.version } : {}),
   };
 }

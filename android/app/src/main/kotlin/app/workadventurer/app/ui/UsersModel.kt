@@ -28,7 +28,7 @@ data class AreaEntry(val area: Area, val occupants: List<Participant>)
 
 /**
  * The Users screen's sections, top to bottom: the conversation we are in, other bubbles, meeting areas with people in them,
- * everyone else ("Is on this map", you first), and every other area. Only people the server has told us about are listed
+ * everyone else ("Elsewhere on the map", you first), and every other area. Only people the server has told us about are listed
  * (it streams those near us), so a bubble none of whose members we know is left out.
  */
 data class UsersModel(
@@ -46,7 +46,20 @@ private fun Area.key() = id ?: name
 /** An area you can talk in: a LiveKit meeting room, or a Jitsi one. */
 fun Area.isMeeting() = meetingRoom != null || "jitsiRoomProperty" in propertyTypes
 
-fun usersModel(s: SessionState): UsersModel {
+/**
+ * How the areas are ordered (#159): ones with people first, then the ones you go to most ([visits], by area key), then the
+ * nearest to where you stand, then by name. Without a known position distance doesn't decide anything.
+ */
+private fun areaOrder(s: SessionState, visits: Map<String, Int>, populated: (Area) -> Boolean): Comparator<Area> {
+    fun distance(a: Area): Double {
+        val x = s.myX ?: return 0.0
+        val y = s.myY ?: return 0.0
+        return Math.hypot(a.x + a.w / 2.0 - x, a.y + a.h / 2.0 - y)
+    }
+    return compareBy<Area>({ !populated(it) }, { -(visits[it.key()] ?: 0) }, { distance(it) }, { it.name.lowercase() })
+}
+
+fun usersModel(s: SessionState, visits: Map<String, Int> = emptyMap()): UsersModel {
     val me = Participant(s.myUserId, s.myName.ifBlank { "You" }, true, AvailabilityStatus.ONLINE, s.myTextures)
     val others = s.players.associateBy { it.userId }.mapValues { (_, p) ->
         Participant(p.userId, p.name, false, p.availabilityStatus, p.textures)
@@ -74,7 +87,7 @@ fun usersModel(s: SessionState): UsersModel {
         ConversationKey.AreaKey(a.key()), a.name, members, joined = s.inAreas.any { it.key() == a.key() },
     )
 
-    val meetings = s.areas.filter { it.isMeeting() }.sortedBy { it.name.lowercase() }.map { a -> a to occupants(a) }
+    val meetings = s.areas.filter { it.isMeeting() }.sortedWith(areaOrder(s, visits) { occupants(it).isNotEmpty() }).map { a -> a to occupants(a) }
     val populatedMeetings = meetings.filter { (_, o) -> o.isNotEmpty() }.map { (a, o) -> areaConversation(a, o) }
     val activeArea = if (activeBubble == null) populatedMeetings.firstOrNull { it.joined } else null
 
@@ -82,16 +95,18 @@ fun usersModel(s: SessionState): UsersModel {
     val bubbles = allBubbles.filter { it !== activeBubble }
     val meetingAreas = populatedMeetings.filter { it !== activeArea }
 
-    // "Is on this map": everyone not listed under a bubble or a meeting area (so you appear once).
+    // "Elsewhere on the map": everyone not listed under a bubble, a meeting area or an area (so each person appears once).
     val listed = (allBubbles + populatedMeetings).flatMap { c -> c.members.map { it.userId } }.toSet()
     val meListed = (allBubbles + populatedMeetings).any { c -> c.members.any { it.isMe } }
+    // Anyone standing in an area is listed under that area, so not here as well (#158).
+    val inAnArea = s.players.filter { p -> s.areas.any { it.contains(p.x, p.y) } }.map { it.userId }.toSet()
     val onMap = buildList {
-        if (!meListed) add(me)
-        addAll(others.values.filter { it.userId !in listed }.sortedWith(byName))
+        if (!meListed && s.inAreas.isEmpty()) add(me)
+        addAll(others.values.filter { it.userId !in listed && it.userId !in inAnArea }.sortedWith(byName))
     }
 
     val populatedKeys = populatedMeetings.map { (it.key as ConversationKey.AreaKey).key }.toSet()
-    val otherAreas = s.areas.filter { it.key() !in populatedKeys }.sortedBy { it.name.lowercase() }.map { AreaEntry(it, occupants(it)) }
+    val otherAreas = s.areas.filter { it.key() !in populatedKeys }.sortedWith(areaOrder(s, visits) { occupants(it).isNotEmpty() }).map { AreaEntry(it, occupants(it)) }
 
     return UsersModel(active, bubbles, meetingAreas, onMap, otherAreas)
 }

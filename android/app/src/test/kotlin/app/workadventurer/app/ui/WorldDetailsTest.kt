@@ -34,6 +34,20 @@ class WorldDetailsTest {
         assertEquals("C", d.name)
     }
 
+    // "Share link to room" hands the address to other apps: never with a query or fragment, which can carry a login token.
+    @Test
+    fun theSharedLinkIsTheRoomAddressWithoutAnyToken() {
+        assertEquals("https://play.workadventu.re/@/a/b/c", shareableRoomUrl("  https://play.workadventu.re/@/a/b/c?token=secret#start "))
+        assertEquals("https://play.staging.workadventu.re/@/tcm/workadventure/wa-village", shareableRoomUrl("https://play.staging.workadventu.re/@/tcm/workadventure/wa-village"))
+    }
+
+    @Test
+    fun thereIsNothingToShareWithoutARoom() {
+        assertEquals("", shareableRoomUrl(""))
+        assertEquals("", shareableRoomUrl("not a url"))
+        assertEquals("", shareableRoomUrl("https://play.workadventu.re"))
+    }
+
     @Test
     fun somethingThatIsNotAUrlStillGivesSomethingToShow() {
         assertEquals(WorldDetails("Unknown world", "", ""), worldDetails("not a url"))

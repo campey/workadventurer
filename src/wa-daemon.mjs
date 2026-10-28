@@ -16,6 +16,8 @@
 //   POST /thought-bubble {text}          -> thinking cloud over the avatar
 //   POST /clear-bubble                   -> dismiss whatever bubble is showing
 //   POST /sound          {name}          -> play a clip into the proximity voice chat
+//   POST /say            {text, voice?}  -> speak text aloud to the bubble (TTS, issue #7)
+//   POST /say-cancel                     -> stop a say in progress
 //   POST /chat           {text}          -> send a chat message to every Space we're
 //                                            currently in (proximity bubble and/or
 //                                            meeting-room area — #48, not Matrix)
@@ -39,6 +41,7 @@ import { createRegistry } from "./daemon-registry.mjs";
 import { goQuiet } from "./quiet.mjs";
 import { createReconnector } from "./reconnect.mjs";
 import { ServerRejectedError } from "./server-rejected.mjs";
+import { REFUSED_EXIT } from "./supervise.mjs";
 
 const cfg = resolveConfig();
 const PORT = cfg.port;
@@ -60,7 +63,10 @@ let deliberateShutdown = false;
 let sttLineOpen = false; // a provisional partial line is currently on the terminal, unterminated
 
 function attachAudio(client) {
-  audio = new WaAudio(client, { listen: cfg.stt });
+  audio = new WaAudio(client, {
+    listen: cfg.stt,
+    tts: { python: cfg.ttsPython, sayPath: cfg.ttsSay },
+  });
   audio.on("log", (m) => log("audio ·", m));
   audio.on("peerConnected", ({ remoteUserId }) => log("audio: peer connected", remoteUserId));
   if (cfg.stt) {
@@ -150,7 +156,10 @@ function wireClient(client) {
     log(`invite from ${sender.name} → walking over`);
     walkToPlayer(sender, 90_000).then((r) => log("invite walk:", JSON.stringify(r)));
   });
-  client.on("close", (c) => log("socket closed", c.code, c.reason || ""));
+  client.on("close", (c) => {
+    const secs = (ms) => (ms == null ? "?" : `${Math.round(ms / 1000)}s`);
+    log("socket closed", c.code, c.reason || "", `(up ${secs(c.uptimeMs)}, silent ${secs(c.idleMs)})`);
+  });
 }
 
 // Reconnect-on-close belongs to the LIVE client only. Attempt clients made by
@@ -163,7 +172,7 @@ function watchLive(client) {
     if (client !== wa) return; // a stale client's close isn't a drop of the live one
     attemptReconnect().catch((e) => {
       log("reconnect gave up:", e.message);
-      shutdown(1);
+      shutdown(e instanceof ServerRejectedError && !e.retryable ? REFUSED_EXIT : 1);
     });
   });
 }
@@ -264,6 +273,7 @@ function state() {
       pos: { x: p.x | 0, y: p.y | 0 },
       facing: ["up", "right", "down", "left"][p.direction] ?? null,
       area: wa.nav?.areaAt(p.x, p.y)?.name ?? null,
+      availabilityStatus: p.availabilityStatus ?? 0,
     })),
   };
 }
@@ -381,6 +391,33 @@ const server = http.createServer(async (req, res) => {
             .catch((e) => log(`sound "${body.name}" failed: ${e.message}`));
           return send(202, { ok: true, sound: body.name, playing: true });
         }
+        case "/say": {
+          const text = String(body.text ?? "").trim();
+          if (!text) return send(400, { ok: false, error: "need {text}" });
+          if (!audio) return send(503, { ok: false, error: "audio not ready" });
+          await audio.waitForLiveKit();
+          if (!audio.connected)
+            return send(409, { ok: false, error: "no one in the bubble to hear it" });
+          // Fire and forget: speech runs for as long as the utterance (and the
+          // cloud's cold start can add minutes before the first sound).
+          audio
+            .say(text, { voice: body.voice ? String(body.voice) : undefined })
+            .then((r) =>
+              log(
+                `say (${text.length} chars): ` +
+                  (r.played ? "done" : `NOT played (${r.reason ?? "?"})`) +
+                  ` — first audio ${r.firstAudioMs ?? "?"} ms, first RTP ${r.firstRtpMs ?? "?"} ms,` +
+                  ` ${r.packetsSent ?? 0} pkts to ${r.peers ?? 0} peer(s)` +
+                  (r.writeErrors ? `, ${r.writeErrors} write errors` : "")
+              )
+            )
+            .catch((e) => log(`say failed: ${e.message}`));
+          return send(202, { ok: true, say: text, speaking: true });
+        }
+        case "/say-cancel": {
+          const cancelled = audio ? audio.stopSay() : false;
+          return send(200, { ok: true, cancelled });
+        }
         case "/chat": {
           if (!body.text) return send(400, { ok: false, error: "need {text}" });
           const spaceNames = [...wa.spaces.keys()];
@@ -449,7 +486,7 @@ try {
   log(e instanceof ServerRejectedError && !e.retryable
     ? `${e.message} — the server refuses this client; not retrying`
     : `initial connect failed: ${e.message}`);
-  shutdown(1);
+  shutdown(e instanceof ServerRejectedError && !e.retryable ? REFUSED_EXIT : 1);
   await new Promise(() => {}); // shutdown() exits the process after cleanup
 }
 watchLive(wa);

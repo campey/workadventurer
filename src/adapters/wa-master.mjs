@@ -10,8 +10,8 @@ export default {
   id: "wa-master",
   waVersion: "master",
   stability: "tracking",
-  trackedSha: "7d628838",
-  verifiedDate: "2026-09-10",
+  trackedSha: "118dd84c",
+  verifiedDate: "2026-10-20",
   verified: {
     // `node scripts/selfcheck.mjs --target wa-master --room <staging>` with
     // WA_PUSHER_URL=https://pusher.staging.workadventu.re and a staging woka id
@@ -21,7 +21,7 @@ export default {
   },
   // Computed by scripts/vendor-proto.mjs at trackedSha. Stale once the staging
   // master sha moves — resolveAdapter warns when it detects drift.
-  apiVersionHashes: ["3fb30729"],
+  apiVersionHashes: ["d2d82672"],
   protoPath: "proto/wa-master/messages.proto",
   // Behavioural overrides go here as they are discovered — none needed yet.
 };
