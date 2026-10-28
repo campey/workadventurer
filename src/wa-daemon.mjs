@@ -265,6 +265,7 @@ function state() {
       pos: { x: p.x | 0, y: p.y | 0 },
       facing: ["up", "right", "down", "left"][p.direction] ?? null,
       area: wa.nav?.areaAt(p.x, p.y)?.name ?? null,
+      availabilityStatus: p.availabilityStatus ?? 0,
     })),
   };
 }

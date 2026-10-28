@@ -38,6 +38,7 @@ const DEFAULTS = {
 
 const DIRECTION = { UP: 0, RIGHT: 1, DOWN: 2, LEFT: 3 };
 const AVAILABILITY_ONLINE = 1;
+const AVAILABILITY_LIVEKIT = 11;
 const HEARTBEAT_INTERVAL_MS = 15_000; // transport-level ws ping, and the watchdog's tick
 const DEAD_AFTER_MS = 45_000; // no inbound frame or pong for this long => the socket is dead (#138)
 const CONNECT_TIMEOUT_MS = 15_000; // login fetch / socket join; a hung attempt must fail, not stall reconnect (#138)
@@ -75,6 +76,8 @@ export class WorkAdventureClient extends EventEmitter {
     /** @type {Map<string,{spaceUserId:string,propertiesToSync:string[]}>} */
     this.spaces = new Map(); // spaceName -> our membership
     this.groupId = null; // current proximity group, or null
+    this.availabilityStatus = AVAILABILITY_ONLINE; // what we announce; LIVEKIT while in a meeting area (#177)
+    this._meetingAreaKeys = new Set(); // livekitRoomProperty areas we are standing in
     this.spaceUserNames = new Map(); // spaceUserId -> display name, from SpaceUser
 
     // Map areas (from the room's .wam) and which ones the avatar is inside.
@@ -439,6 +442,20 @@ export class WorkAdventureClient extends EventEmitter {
     return this.adapter.areaMeetingSpaceName(this.cfg.roomUrl, prop);
   }
 
+  // A browser standing in a livekitRoomProperty area announces availabilityStatus
+  // LIVEKIT, and the server keeps such a player out of proximity bubbles. We
+  // announced ONLINE, so a second avatar arriving next to us was grouped with us
+  // and the bubble knocked us off the area's LiveKit meeting (#177). Immediate, not
+  // dwell-debounced: it is one small message, unlike a space join.
+  _announceMeetingArea(key, entering) {
+    if (entering) this._meetingAreaKeys.add(key);
+    else this._meetingAreaKeys.delete(key);
+    const want = this._meetingAreaKeys.size > 0 ? AVAILABILITY_LIVEKIT : AVAILABILITY_ONLINE;
+    if (want === this.availabilityStatus) return;
+    this.availabilityStatus = want;
+    if (this._joined) this._send({ setPlayerDetailsMessage: { availabilityStatus: want } });
+  }
+
   // On entering/leaving a `livekitRoomProperty` area, proactively join/leave its
   // space — the server never invites a headless client to an area meeting the
   // way it does for proximity bubbles.
@@ -451,6 +468,7 @@ export class WorkAdventureClient extends EventEmitter {
     const prop = (area.rawProps ?? []).find((p) => p.type === "livekitRoomProperty");
     if (!prop) return;
     const key = area.id ?? area.name;
+    this._announceMeetingArea(key, entering);
     const spaceName = this._areaSpaceName(prop);
     const DWELL_MS = 1500;
     const LINGER_MS = 2500;
@@ -555,7 +573,7 @@ export class WorkAdventureClient extends EventEmitter {
             moving: false,
           },
           viewportMessage: this._viewport(),
-          availabilityStatus: AVAILABILITY_ONLINE,
+          availabilityStatus: this.availabilityStatus,
         },
       });
       return;
@@ -626,8 +644,18 @@ export class WorkAdventureClient extends EventEmitter {
         x: u.position?.x ?? 0,
         y: u.position?.y ?? 0,
         direction: u.position?.direction ?? DIRECTION.DOWN,
+        availabilityStatus: u.availabilityStatus ?? 0,
       });
       this.emit("playerJoined", this.players.get(u.userId));
+      return;
+    }
+    if (sub.playerDetailsUpdatedMessage) {
+      // Status changes (e.g. a browser entering a meeting area) arrive here. Kept so
+      // `wa status --json` shows what a real client announces in a meeting (#177).
+      const d = sub.playerDetailsUpdatedMessage;
+      const p = this.players.get(d.userId);
+      const st = d.details?.availabilityStatus;
+      if (p && st) p.availabilityStatus = st;
       return;
     }
     if (sub.userMovedMessage) {
