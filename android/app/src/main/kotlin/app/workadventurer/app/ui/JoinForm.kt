@@ -3,8 +3,8 @@ package app.workadventurer.app.ui
 /** The last entry of the world list: clears the address and puts you in the field to type a new one. */
 const val NEW_WORLD_LABEL = "+ New world"
 
-/** What a tap on your woka preview says: customising it is planned (issue #108) but not built. */
-const val WOKA_CUSTOMISATION_MESSAGE = "Woka customisation not (yet) built (#108)"
+/** What a screen reader says for the woka tile (Offline on the Join screen, Online in a room): it opens the picker (#108). */
+fun wokaTileDescription(offline: Boolean) = "Your woka, ${if (offline) OFFLINE_LABEL else statusLabel(MY_STATUS)}. Opens the woka picker"
 
 /** Shown in the preview instead of an initial until the picture is known or has loaded. */
 const val WOKA_PREVIEW_PLACEHOLDER = "…"

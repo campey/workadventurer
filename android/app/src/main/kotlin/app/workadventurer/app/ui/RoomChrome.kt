@@ -126,6 +126,8 @@ fun WorldPanel(
     details: WorldDetails, onShareLink: () -> Unit, onShareLogs: () -> Unit, onLeave: () -> Unit,
     /** You, as the room sees you: change the name (or, soon, the woka) and rejoin to apply it. */
     myName: String = "", myTextures: List<Texture> = emptyList(), connected: Boolean = true,
+    /** The woka you picked but are not wearing yet: shown in place of [myTextures], and it makes Rejoin live. */
+    pendingWoka: Texture? = null,
     onWoka: () -> Unit = {}, onRejoin: (name: String) -> Unit = {},
 ) {
     ModalDrawerSheet(
@@ -151,15 +153,15 @@ fun WorldPanel(
                     label = { Text("Your name in the room") }, modifier = Modifier.weight(1f),
                 )
                 WokaTile(
-                    myTextures, typed, onClick = onWoka,
-                    description = "Your woka, ${statusLabel(MY_STATUS)}. Choosing another is not built yet", offline = false,
+                    pendingWoka?.let { listOf(it) } ?: myTextures, typed, onClick = onWoka,
+                    description = wokaTileDescription(offline = false), offline = false,
                 )
             }
             Spacer(Modifier.height(16.dp))
             PrimaryAction(
                 label = rejoinLabel(typed), explainer = REJOIN_EXPLAINER, onClick = { onRejoin(typed.trim()) },
                 description = "${rejoinLabel(typed)}. $REJOIN_EXPLAINER",
-                enabled = canRejoin(current = myName, typed = typed, wokaChanged = false, connected = connected), quiet = true,
+                enabled = canRejoin(current = myName, typed = typed, wokaChanged = pendingWoka != null, connected = connected), quiet = true,
             )
             Spacer(Modifier.height(16.dp))
         }
