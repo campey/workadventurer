@@ -18,7 +18,7 @@ const registry = createRegistry();
 
 const USAGE = `wa — WorkAdventure presence control
 
-  wa join [<room-url>] [--detach] [--keep-alive] [--name N] [--port P] [--stt]
+  wa join [<room-url>] [--detach] [--keep-alive] [--name N] [--port P] [--stt [--transcript <file>]]
                               --keep-alive restarts the daemon if it is killed (OOM, SIGKILL);
                               a failed first connect or a server refusal still exits
   wa leave
@@ -49,6 +49,7 @@ try {
     json: { type: "boolean", default: false },
     "if-running": { type: "boolean", default: false },
     detach: { type: "boolean", default: false },
+    transcript: { type: "string" }, // JSONL file for --stt finals (#64)
     "keep-alive": { type: "boolean", default: false },
     stt: { type: "boolean" }, // undefined unless passed, so it never overrides WA_STT/config.json
     port: { type: "string" },
@@ -77,8 +78,10 @@ if (!cmd || flags.help) {
   process.exit(cmd ? 0 : 2);
 }
 
-const cfg = resolveConfig({ port: flags.port, roomUrl: flags.room, name: flags.name, stt: flags.stt });
+// Resolved against the CLI's cwd: the daemon (often detached) runs elsewhere.
+const cfg = resolveConfig({ port: flags.port, roomUrl: flags.room, name: flags.name, stt: flags.stt, transcript: flags.transcript ? path.resolve(flags.transcript) : undefined });
 const die = (msg, code = 1) => { process.stderr.write(`wa: ${msg}\n`); process.exit(code); };
+if (flags.transcript && !cfg.stt) die("--transcript needs --stt (it records what the listener hears)", 2);
 const note = (msg) => { if (!flags.json) process.stderr.write(`wa: ${msg}\n`); };
 
 // Which daemon a command addresses (#65): an explicit port (--port,

@@ -8,6 +8,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`wa join --stt --transcript <file>` (issue #64).** Appends one JSONL line
+  (`ts`, `speaker`, `text`) per finalized utterance to a file, so a call leaves a
+  transcript without grepping the daemon log. Finals only, empty ones skipped; also
+  `WA_STT_TRANSCRIPT`. Logic in `src/stt-transcript.mjs`.
 - **STT hallucination mitigation + quality corpus (issue #61).** The worker decodes
   greedily (`temperature=0`, repeatable), drops filler-only finals on faint audio
   (`STT_FILLER_MAX_RMS`, default 0.06), collapses no-space loops and strips `U+FFFD`
