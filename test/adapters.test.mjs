@@ -148,10 +148,9 @@ test("adapters: the allowlisted prod host resolves to the newest released adapte
   assert.equal(r.adapter.id, newest, "when prod bumps, bump the allowlist with the new adapter");
 });
 
-test("only wa-1.34 reports LIVEKIT availability in a meeting area (probe meeting-availability)", async () => {
+test("wa-1.34 keeps the wa-1.33 meeting strategy names; the area LIVEKIT/ONLINE status is client-wide (#177)", async () => {
   const w133 = (await import("../src/adapters/wa-1.33.mjs")).default;
   const w134 = (await import("../src/adapters/wa-1.34.mjs")).default;
-  assert.equal(w134.meeting.areaAvailabilityStatus, 11);
   assert.equal(w134.meeting.webrtcStrategyName, w133.meeting.webrtcStrategyName);
-  assert.equal(w133.meeting.areaAvailabilityStatus, undefined, "the 1.33 baseline is frozen");
+  assert.equal(w134.meeting.areaAvailabilityStatus, undefined);
 });

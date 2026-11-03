@@ -43,6 +43,8 @@ import app.workadventurer.app.session.SessionState
  */
 @Composable
 fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpenConversation: (ConversationKey) -> Unit, onCommand: (Command) -> Unit) {
+    // You are not in the players list: your own picture, name and place come from the session.
+    val isMe = state.myUserId != null && userId == state.myUserId
     val player = state.players.firstOrNull { it.userId == userId }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -50,7 +52,7 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
                 Icon(WaIcons.ArrowBack, contentDescription = null)
             }
         }
-        if (player == null) {
+        if (!isMe && player == null) {
             // They left (or went out of view) while this was open.
             Column(Modifier.weight(1f).fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Text("This person is no longer here", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
@@ -58,17 +60,19 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
             return@Column
         }
 
-        val where = whereIs(userId, state)
-        val name = playerLabel(player)
+        val where = if (isMe) whereAmI(state) else whereIs(userId, state)
+        val name = if (isMe) state.myName.ifBlank { "You" } else playerLabel(player!!)
+        val textures = if (isMe) state.myTextures else player!!.textures
+        val status = if (isMe) MY_STATUS else player!!.availabilityStatus
         val canMove = state.connection is Connection.Connected
-        val walking = (state.activity as? Activity.WalkingTo)?.label == name
+        val walking = !isMe && (state.activity as? Activity.WalkingTo)?.label == name
 
         Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            WokaAvatar(player.textures, player.name, 128.dp)
-            Text(name, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(top = 20.dp, bottom = 6.dp))
+            WokaAvatar(textures, name, 128.dp)
+            Text(if (isMe) "$name (You)" else name, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(top = 20.dp, bottom = 6.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.size(10.dp).clip(CircleShape).background(Color(statusColor(player.availabilityStatus))))
-                Text(statusLabel(player.availabilityStatus), style = MaterialTheme.typography.bodyLarge)
+                Box(Modifier.size(10.dp).clip(CircleShape).background(Color(statusColor(status))))
+                Text(statusLabel(status), style = MaterialTheme.typography.bodyLarge)
             }
             val conversation = where.conversation()
             Row(
@@ -86,7 +90,7 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
                 }
                 Column(Modifier.weight(1f)) {
                     Text("Right now", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(whereText(where), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                    Text(if (isMe) whereTextForMe(where) else whereText(where), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                 }
                 if (conversation != null) Icon(WaIcons.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -95,13 +99,13 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
             }
         }
 
-        val explainer = walkExplainer(where)
+        val explainer = if (isMe) null else walkExplainer(where)
         if (explainer == null) {
-            // Together already: nothing to walk to or invite them to; the one action opens the conversation.
+            // Together already (or it is you): nothing to walk to or invite them to; the one action opens the conversation.
             val conversation = where.conversation()
             if (conversation != null) PrimaryAction(
-                label = "Open the conversation", explainer = togetherNote(where) ?: "", onClick = { onOpenConversation(conversation) },
-                description = "Open the conversation you are in with $name", quiet = true,
+                label = "Open the conversation", explainer = if (isMe) "" else togetherNote(where) ?: "", onClick = { onOpenConversation(conversation) },
+                description = if (isMe) "Open the conversation you are in" else "Open the conversation you are in with $name", quiet = true,
             )
         } else {
             Column(Modifier.padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

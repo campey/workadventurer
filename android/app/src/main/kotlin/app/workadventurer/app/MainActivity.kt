@@ -47,6 +47,8 @@ class MainActivity : ComponentActivity() {
                 val state by session.state.collectAsStateWithLifecycle()
                 val audioRouter = (application as WaApp).audioRouter
                 val audio by audioRouter.route.collectAsStateWithLifecycle()
+                val netHub = (application as WaApp).netHub
+                val net by netHub.snapshot.collectAsStateWithLifecycle()
                 AppRoot(
                     state = state,
                     micWanted = micWanted.value,
@@ -65,6 +67,10 @@ class MainActivity : ComponentActivity() {
                     onMicChoice = ::chooseMic,
                     audio = audio,
                     onAudioPick = audioRouter::pick,
+                    net = net,
+                    // While the sheet is open the call links are read every second; opening also refreshes straight away.
+                    onNetworkWatching = { open -> netHub.wanted = open; if (open) netHub.tick() },
+                    onNetworkReset = netHub::resetAllTime,
                     // Movement goes straight to the session; only Join/Leave go through the foreground service.
                     onCommand = { session.dispatch(it) },
                 )

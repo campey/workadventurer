@@ -165,6 +165,36 @@ internal class WebRtcPeerLink(
             "dir=$dirs mic=${if (localTrack.enabled()) "on" else "off"}"
     }
 
+    /**
+     * The Network sheet's numbers: bytes both ways (the transport's, so they include the control traffic), the audio packets
+     * received and lost, the worst jitter, and the round trip of the candidate pair in use. Never ids, addresses or SDP.
+     */
+    override suspend fun linkStats(): LinkStats? {
+        val out = CompletableDeferred<LinkStats?>()
+        val state = pc.connectionState().toString().lowercase()
+        pc.getStats { report ->
+            val all = report.statsMap
+            fun Map<String, Any?>.num(key: String) = (this[key] as? Number)
+            val transport = all.values.firstOrNull { it.type == "transport" }
+            val pair = (transport?.members?.get("selectedCandidatePairId") as? String)?.let { all[it] }
+                ?: all.values.firstOrNull { it.type == "candidate-pair" && it.members["state"] == "succeeded" && it.members["nominated"] == true }
+            val inbound = all.values.filter { it.type == "inbound-rtp" }
+            val outbound = all.values.filter { it.type == "outbound-rtp" }
+            val sent = transport?.members?.num("bytesSent")?.toLong() ?: outbound.sumOf { it.members.num("bytesSent")?.toLong() ?: 0L }
+            val received = transport?.members?.num("bytesReceived")?.toLong() ?: inbound.sumOf { it.members.num("bytesReceived")?.toLong() ?: 0L }
+            out.complete(
+                LinkStats(
+                    state = state, bytesSent = sent, bytesReceived = received,
+                    packetsReceived = inbound.sumOf { it.members.num("packetsReceived")?.toLong() ?: 0L },
+                    packetsLost = inbound.sumOf { it.members.num("packetsLost")?.toLong() ?: 0L },
+                    jitterSeconds = inbound.mapNotNull { it.members.num("jitter")?.toDouble() }.maxOrNull(),
+                    rttSeconds = pair?.members?.num("currentRoundTripTime")?.toDouble(),
+                ),
+            )
+        }
+        return withTimeoutOrNull(3_000) { out.await() }
+    }
+
     /** A field of the transport stats (for example `dtlsState`): ICE can be connected while the encrypted media layer is not. */
     private suspend fun transportState(key: String): String {
         val out = CompletableDeferred<String>()

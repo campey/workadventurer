@@ -1,4 +1,9 @@
 package app.workadventurer.app.ui
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -107,4 +112,15 @@ fun WorldInfo(details: WorldDetails, plain: Boolean = false, modifier: Modifier 
             }
         }
     }
+}
+
+/** Your woka in a tile like the world's: same border, corners and background, the picture just inside it. Tapping it chooses another. */
+@Composable
+fun WokaTile(layers: List<app.workadventurer.protocol.Texture>, name: String, onClick: () -> Unit, description: String, offline: Boolean) {
+    Box(
+        Modifier.size(56.dp).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface).clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) { WokaAvatar(layers, name.ifBlank { "?" }, 48.dp, offline = offline, plain = true, placeholder = WOKA_PREVIEW_PLACEHOLDER) }
 }

@@ -32,4 +32,27 @@ class JoinFormTest {
     fun theNewWorldEntryHasItsOwnLabel() {
         assertEquals("+ New world", NEW_WORLD_LABEL)
     }
+
+    // The world panel's "You" section: the name and woka are fixed for a connection, so changing either means rejoining.
+    @Test
+    fun rejoiningIsOfferedOnlyOnceTheNameOrWokaHasChanged() {
+        assertEquals(false, canRejoin(current = "Ada", typed = "Ada", wokaChanged = false, connected = true)) // nothing to apply
+        assertEquals(false, canRejoin(current = "Ada", typed = " Ada ", wokaChanged = false, connected = true)) // spaces are not a change
+        assertEquals(true, canRejoin(current = "Ada", typed = "Bo", wokaChanged = false, connected = true))
+        assertEquals(true, canRejoin(current = "Ada", typed = "Ada", wokaChanged = true, connected = true))
+    }
+
+    @Test
+    fun rejoiningNeedsANameAndAConnectionToRejoinFrom() {
+        assertEquals(false, canRejoin(current = "Ada", typed = "", wokaChanged = true, connected = true))
+        assertEquals(false, canRejoin(current = "Ada", typed = "   ", wokaChanged = false, connected = true))
+        assertEquals(false, canRejoin(current = "Ada", typed = "Bo", wokaChanged = false, connected = false)) // mid-reconnect
+    }
+
+    @Test
+    fun theRejoinButtonAndItsLineSaySoPlainly() {
+        assertEquals("Rejoin as Bo", rejoinLabel("  Bo "))
+        assertEquals("Rejoin as you", rejoinLabel(""))
+        assertEquals("Leaves and joins again with your new name or woka", REJOIN_EXPLAINER)
+    }
 }

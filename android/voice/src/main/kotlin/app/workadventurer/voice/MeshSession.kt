@@ -26,7 +26,27 @@ interface PeerLink {
 
     /** One short line of counts and states for logs (never SDP, ids or addresses); empty if there is nothing to say. */
     suspend fun statsSummary(): String = ""
+
+    /** The numbers behind the Network sheet, or null if this link can't say. Like [statsSummary], only call it on the mesh coroutine. */
+    suspend fun linkStats(): LinkStats? = null
 }
+
+/**
+ * One link's running counters and measurements. The byte and packet counts only ever grow (rates come from two readings);
+ * the times are in seconds, as WebRTC reports them, and null until measured.
+ */
+data class LinkStats(
+    val state: String,
+    val bytesSent: Long,
+    val bytesReceived: Long,
+    val packetsReceived: Long,
+    val packetsLost: Long,
+    val jitterSeconds: Double?,
+    val rttSeconds: Double?,
+)
+
+/** A [LinkStats] and who it is to: the space and the peer's space user id (the app maps it to a name). */
+data class PeerStats(val spaceName: String, val peer: String, val stats: LinkStats)
 
 fun interface PeerLinkFactory { suspend fun create(connectionId: String): PeerLink }
 fun interface SignalSink { fun send(spaceName: String, peerSpaceUserId: String, connectionId: String, signal: String) }
@@ -57,12 +77,21 @@ class MeshSession(
      * [statsEveryMs] > 0 reports [statsSummary] lines to [onStats] on this same coroutine, between events: libwebrtc objects
      * must never be read from another thread while a negotiation or a teardown may be using or disposing them.
      */
-    suspend fun run(events: Flow<VoiceEvent>, statsEveryMs: Long = 0, onStats: (String) -> Unit = {}) {
-        val ticks = if (statsEveryMs > 0) flow<VoiceEvent?> { while (true) { delay(statsEveryMs); emit(null) } } else emptyFlow()
+    suspend fun run(
+        events: Flow<VoiceEvent>, statsEveryMs: Long = 0, onStats: (String) -> Unit = {},
+        /** Every [linkStatsEveryMs] while [wantLinkStats] says someone is looking, [onLinkStats] gets each live link's numbers (the Network sheet). */
+        linkStatsEveryMs: Long = 0, wantLinkStats: () -> Boolean = { false }, onLinkStats: (List<PeerStats>) -> Unit = {},
+    ) {
+        val ticks = if (statsEveryMs > 0) flow<Any?> { while (true) { delay(statsEveryMs); emit(null) } } else emptyFlow()
+        val linkTicks = if (linkStatsEveryMs > 0) flow<Any?> { while (true) { delay(linkStatsEveryMs); emit(LinkTick) } } else emptyFlow()
         try {
-            merge(events, ticks).collect { e ->
+            merge<Any?>(events, ticks, linkTicks).collect { e ->
                 try {
-                    if (e == null) statsSummary().forEach(onStats) else handle(e)
+                    when (e) {
+                        null -> statsSummary().forEach(onStats)
+                        LinkTick -> if (wantLinkStats()) onLinkStats(peerStats())
+                        is VoiceEvent -> handle(e)
+                    }
                 } catch (c: CancellationException) { throw c } catch (t: Throwable) { log("voice event failed: ${t.message}") }
             }
         } finally {
@@ -176,6 +205,17 @@ class MeshSession(
         val live = synchronized(active) { active.map { (id, e) -> id to e.link } }
         return live.map { (id, link) -> "[$id] ${try { link.statsSummary() } catch (t: Throwable) { "stats failed: ${t.message}" }}" }
     }
+
+    /** The numbers of each live link, with who it is to; a link that can't say (or throws) is left out. */
+    suspend fun peerStats(): List<PeerStats> {
+        val live = synchronized(active) { active.values.toList() }
+        return live.mapNotNull { e ->
+            val st = try { e.link.linkStats() } catch (c: CancellationException) { throw c } catch (t: Throwable) { null }
+            st?.let { PeerStats(e.spaceName, e.peer, it) }
+        }
+    }
+
+    private object LinkTick
 
     fun closeAll() { synchronized(active) { active.keys.toList() }.forEach { drop(it) } }
 }

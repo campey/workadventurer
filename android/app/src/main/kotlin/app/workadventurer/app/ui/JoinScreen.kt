@@ -107,13 +107,10 @@ fun JoinScreen(
                     label = { Text("Your name in the room") }, modifier = Modifier.weight(1f),
                 )
                 val layers = remember(room) { texturesFor(room) }
-                // A tile like the world's: same border, corners and background, the picture just inside it.
-                Box(
-                    Modifier.size(56.dp).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
-                        .clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface).clickable(role = Role.Button) { onMessage(WOKA_CUSTOMISATION_MESSAGE) }
-                        .semantics { contentDescription = "Your woka, $OFFLINE_LABEL. Customising it is not built yet" },
-                    contentAlignment = Alignment.Center,
-                ) { WokaAvatar(layers, name.ifBlank { "?" }, 48.dp, offline = true, plain = true, placeholder = WOKA_PREVIEW_PLACEHOLDER) }
+                WokaTile(
+                    layers, name, onClick = { onMessage(WOKA_CUSTOMISATION_MESSAGE) },
+                    description = "Your woka, $OFFLINE_LABEL. Customising it is not built yet", offline = true,
+                )
             }
             if (connection is Connection.Failed) {
                 Text("Couldn't join: ${connection.message}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)

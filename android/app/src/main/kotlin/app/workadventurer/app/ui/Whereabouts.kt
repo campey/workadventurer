@@ -31,7 +31,8 @@ sealed interface Whereabouts {
 fun togetherNote(w: Whereabouts): String? = when {
     !w.isTogether() -> null
     w is Whereabouts.InBubble -> "You are already in this bubble together"
-    else -> "You are already in this area together"
+    w is Whereabouts.InArea -> "You are already in ${w.areaName} together"
+    else -> null
 }
 
 /** Where [userId] is, or null for somebody we don't know about. A bubble beats a meeting area, which beats a plain area. */
@@ -61,6 +62,26 @@ fun whereIsOrNull(userId: Int, s: SessionState): Whereabouts? {
 
 fun whereIs(userId: Int, s: SessionState): Whereabouts = whereIsOrNull(userId, s) ?: Whereabouts.OnTheMap
 
+/** Where you are, for your own screen: the bubble you are in, else the area you are in (a meeting one first), else the open map. */
+fun whereAmI(s: SessionState): Whereabouts {
+    val me = s.myUserId
+    val bubble = s.groups.firstOrNull { it.groupId == s.myGroupId }
+    if (bubble != null) {
+        val names = s.players.associate { it.userId to it.name }
+        val others = bubble.userIds.filter { it != me }.mapNotNull { names[it] }.sortedBy { it.lowercase() }
+        return Whereabouts.InBubble(ConversationKey.Bubble(bubble.groupId), others, withYou = true)
+    }
+    val areas = s.inAreas.sortedBy { it.name.lowercase() }
+    val area = areas.firstOrNull { it.isMeeting() } ?: areas.firstOrNull()
+    if (area != null) {
+        val others = s.players.filter { area.contains(it.x, it.y) }.map { it.name }.sortedBy { it.lowercase() }
+        return Whereabouts.InArea(
+            ConversationKey.AreaKey(area.id ?: area.name), area.name, area.isMeeting(), others, withYou = true, jitsi = area.isJitsi(),
+        )
+    }
+    return Whereabouts.OnTheMap
+}
+
 /** "A", "A and B", "A, B and C". */
 private fun naturalList(items: List<String>): String = when (items.size) {
     0 -> ""
@@ -77,7 +98,7 @@ fun whereText(w: Whereabouts): String = when (w) {
     }
     is Whereabouts.InArea -> when {
         w.jitsi -> "In ${w.areaName} (Jitsi meeting)"
-        w.meeting && w.withYou -> "In this area with " + naturalList(listOf("you") + w.others)
+        w.meeting && w.withYou -> "In ${w.areaName} with " + naturalList(listOf("you") + w.others)
         w.meeting -> if (w.others.isEmpty()) "In ${w.areaName}" else "In ${w.areaName} with " + naturalList(w.others)
         else -> {
             val company = (if (w.withYou) listOf("you") else emptyList()) + w.others
@@ -85,6 +106,18 @@ fun whereText(w: Whereabouts): String = when (w) {
         }
     }
     Whereabouts.OnTheMap -> "On the map, on their own"
+}
+
+/** The "Right now" line on your own screen: [whereAmI] in your words. */
+fun whereTextForMe(w: Whereabouts): String = when (w) {
+    is Whereabouts.InBubble -> if (w.others.isEmpty()) "In a bubble" else "In a bubble with " + naturalList(w.others)
+    is Whereabouts.InArea -> when {
+        w.jitsi -> "In ${w.areaName} (Jitsi meeting)"
+        w.others.isNotEmpty() -> "In ${w.areaName} with " + naturalList(w.others)
+        w.meeting -> "In ${w.areaName}"
+        else -> "In ${w.areaName}, on your own"
+    }
+    Whereabouts.OnTheMap -> "On the map, on your own"
 }
 
 /** What walking over to them does, under the Walk over button; null when you are already together. */

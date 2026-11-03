@@ -384,8 +384,16 @@ open class PusherConnection(
     }
 
     private fun send(m: ClientToServerMessage) {
-        ws?.send(Envelope.wrap(seq.getAndIncrement(), ClientToServerMessage.ADAPTER.encode(m)).toByteString())
+        val frame = Envelope.wrap(seq.getAndIncrement(), ClientToServerMessage.ADAPTER.encode(m)).toByteString()
+        if (ws?.send(frame) == true) sent.addAndGet(frame.size.toLong())
     }
+
+    private val sent = AtomicLong(0)
+    private val received = AtomicLong(0)
+
+    /** What the socket has carried so far, frame sizes as sent and received (the Network sheet's server row). */
+    val bytesOut: Long get() = sent.get()
+    val bytesIn: Long get() = received.get()
 
     private fun viewport(): ViewportMessage {
         val (x, y) = state.myPosition()
@@ -410,6 +418,7 @@ open class PusherConnection(
         }
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+            received.addAndGet(bytes.size.toLong())
             val payloads = try { Envelope.unwrap(bytes.toByteArray()) } catch (e: Exception) {
                 _log.tryEmit("unwrap error: ${e.message}"); return
             }

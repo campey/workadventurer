@@ -131,6 +131,28 @@ class PusherConnectionTest {
         }
     }
 
+    // The Network sheet counts what the socket carries, both ways: the size of every frame, not a guess.
+    @Test
+    fun theSocketCountsTheBytesItSendsAndReceives() = runBlocking {
+        val connected = s2c(ServerToClientMessage(roomConnectedMessage = RoomConnectedMessage()))
+        val joined = s2c(ServerToClientMessage(roomJoinedMessage = RoomJoinedMessage(currentUserId = 7)))
+        val fake = Fake(
+            onOpen = { ws -> ws.send(connected) },
+            onFrame = { ws, msg -> if (msg.joinRoomFrontMessage != null) ws.send(joined) },
+        )
+        server(fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            assertEquals(0L, conn.bytesIn); assertEquals(0L, conn.bytesOut)
+            withTimeout(5_000) { conn.connect() }
+            assertTrue(conn.bytesIn >= connected.size + joined.size, "in: ${conn.bytesIn}")
+            val before = conn.bytesOut
+            assertTrue(before > 0, "the join message is out: $before")
+            conn.move(10.0, 10.0, Facing.DOWN, moving = true)
+            assertTrue(conn.bytesOut > before, "a move is more bytes out")
+            conn.close()
+        }
+    }
+
     @Test
     // Measured on prod (afrolabs, 2026-10-09): from spawn, +-1920x1080 saw 0-2 players and no far bubble; +-6000x4000 and
     // +-10000x8000 saw the far bubble too. So we ask for a whole map's worth (the biggest maps are ~6400x3840 px).

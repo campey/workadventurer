@@ -13,6 +13,8 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import app.workadventurer.app.net.NetSnapshot
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +34,7 @@ import androidx.navigation.compose.rememberNavController
 import app.workadventurer.app.session.Command
 import app.workadventurer.app.audio.AudioDevice
 import app.workadventurer.app.audio.AudioRoute
+import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.SessionState
 import app.workadventurer.protocol.Texture
 import kotlinx.coroutines.launch
@@ -64,14 +67,22 @@ fun AppRoot(
     /** Which devices there are and which one a call uses (#164); the speaker button opens the sheet where you pick one. */
     audio: AudioRoute = AudioRoute(),
     onAudioPick: (AudioDevice) -> Unit = {},
+    /** The Network sheet's numbers (#171); [onNetworkWatching] tells when the sheet is open, so the call links are only read then. */
+    net: NetSnapshot = NetSnapshot(),
+    onNetworkWatching: (Boolean) -> Unit = {},
+    onNetworkReset: () -> Unit = {},
 ) {
     val nav = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showAvSheet by remember { mutableStateOf(false) }
-    var showMeSheet by remember { mutableStateOf(false) }
+    var showNetwork by remember { mutableStateOf(false) }
+    val networkSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    DisposableEffect(showNetwork) {
+        onNetworkWatching(showNetwork)
+        onDispose { onNetworkWatching(false) }
+    }
     val avSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val meSheetState = rememberModalBottomSheetState()
     val drawer = rememberDrawerState(DrawerValue.Closed)
 
     // This Material version's drawer doesn't take Back itself: without this, Back with the panel open leaves the app.
@@ -109,6 +120,9 @@ fun AppRoot(
                     onShareLink = { onShareLink(shareableRoomUrl(state.roomName)); scope.launch { drawer.close() } },
                     onShareLogs = onShareLogs,
                     onLeave = onLeave,
+                    myName = state.myName, myTextures = state.myTextures, connected = state.connection is Connection.Connected,
+                    onWoka = { scope.launch { snackbar.showSnackbar(WOKA_CUSTOMISATION_MESSAGE) } },
+                    onRejoin = { name -> scope.launch { drawer.close() }; onJoin(name, state.roomName) },
                 )
             },
         ) {
@@ -120,8 +134,7 @@ fun AppRoot(
                     if (inRoom) {
                         RoomTopBar(
                             worldName = details.name, myName = state.myName, myTextures = state.myTextures,
-                            onWorld = { scope.launch { drawer.open() } },
-                            onMe = { showMeSheet = true },
+                            onOpen = { scope.launch { drawer.open() } },
                         )
                     }
                 },
@@ -130,9 +143,9 @@ fun AppRoot(
                         state = bar,
                         onToggleMic = { onMicChoice(!muted) },
                         onCamera = { scope.launch { snackbar.showSnackbar(bar.cameraMessage) } },
-                        onMore = { showAvSheet = true },
                         audioDevice = audio.active,
                         onAudio = { showAvSheet = true },
+                        onNetwork = { showNetwork = true },
                     )
                 },
             ) { padding ->
@@ -181,11 +194,11 @@ fun AppRoot(
             }
         }
 
+        if (showNetwork) NetworkSheet(net, onDismiss = { showNetwork = false }, sheetState = networkSheetState, onReset = onNetworkReset)
         if (showAvSheet) AvSheet(
-            muted = muted, onDismiss = { showAvSheet = false }, sheetState = avSheetState, onToggleMic = { onMicChoice(!muted) },
+            onDismiss = { showAvSheet = false }, sheetState = avSheetState,
             devices = audio.devices, active = audio.active, onPick = onAudioPick,
         )
-        if (showMeSheet && inRoom) MeSheet(state.myName, state.myTextures, onDismiss = { showMeSheet = false }, sheetState = meSheetState)
     }
 }
 

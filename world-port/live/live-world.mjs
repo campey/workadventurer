@@ -166,7 +166,7 @@ export class LiveWorld extends EventEmitter {
 
   /** LIVEKIT while the client has joined an area meeting (the status it sent), else ONLINE. */
   availability() {
-    return this.client._areaMeetingsJoined?.size ? "LIVEKIT" : "ONLINE";
+    return this.client.availabilityStatus === 11 ? "LIVEKIT" : "ONLINE";
   }
 
   players() {

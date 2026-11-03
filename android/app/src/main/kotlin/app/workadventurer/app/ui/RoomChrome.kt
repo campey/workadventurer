@@ -1,4 +1,12 @@
 package app.workadventurer.app.ui
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -49,40 +57,30 @@ import app.workadventurer.protocol.Texture
 val MY_STATUS = AvailabilityStatus.ONLINE
 
 /**
- * The bar across the top of every screen once you are in a world: the world's icon and name on the left (opens the world
- * panel), your own woka picture with your status dot on the right (opens your sheet).
+ * The bar across the top of every screen once you are in a world: the world's icon and name, and your own woka picture with
+ * your status dot on the right. The whole bar is one button that opens the world panel (the world, and you).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RoomTopBar(worldName: String, myName: String, myTextures: List<Texture>, onWorld: () -> Unit, onMe: () -> Unit) {
+fun RoomTopBar(worldName: String, myName: String, myTextures: List<Texture>, onOpen: () -> Unit) {
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
         ),
+        modifier = Modifier.clickable(role = Role.Button, onClick = onOpen)
+            .semantics(mergeDescendants = true) { contentDescription = "Open the world panel for $worldName. You are $myName, ${statusLabel(MY_STATUS)}" },
         navigationIcon = {
             Box(
-                Modifier.padding(start = 16.dp).size(36.dp)
-                    .border(2.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(10.dp))
-                    .clickable(role = Role.Button, onClick = onWorld)
-                    .semantics { contentDescription = "Open the world panel for $worldName" },
+                Modifier.padding(start = 16.dp).size(36.dp).border(2.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(10.dp)),
                 contentAlignment = Alignment.Center,
             ) { Icon(WaIcons.WorldDefault, contentDescription = null, modifier = Modifier.size(20.dp)) }
         },
-        title = {
-            Text(
-                worldName, maxLines = 1,
-                modifier = Modifier.padding(start = 4.dp).clickable(role = Role.Button, onClick = onWorld)
-                    .semantics { contentDescription = "Open the world panel for $worldName" },
-            )
-        },
+        title = { Text(worldName, maxLines = 1, modifier = Modifier.padding(start = 4.dp)) },
         actions = {
-            Box(
-                Modifier.padding(end = 12.dp).size(48.dp)
-                    .clickable(role = Role.Button, onClick = onMe)
-                    .semantics { contentDescription = "You, ${statusLabel(MY_STATUS)}. Open your sheet" },
-                contentAlignment = Alignment.Center,
-            ) { WokaAvatar(myTextures, myName, 36.dp, status = MY_STATUS) }
+            Box(Modifier.padding(end = 12.dp).size(48.dp), contentAlignment = Alignment.Center) {
+                WokaAvatar(myTextures, myName, 36.dp, status = MY_STATUS)
+            }
         },
     )
 }
@@ -124,12 +122,17 @@ private val LeaveIcon: ImageVector by lazy {
  * shares the debug logs. Only what exists today is here; world options are added as they come.
  */
 @Composable
-fun WorldPanel(details: WorldDetails, onShareLink: () -> Unit, onShareLogs: () -> Unit, onLeave: () -> Unit) {
+fun WorldPanel(
+    details: WorldDetails, onShareLink: () -> Unit, onShareLogs: () -> Unit, onLeave: () -> Unit,
+    /** You, as the room sees you: change the name (or, soon, the woka) and rejoin to apply it. */
+    myName: String = "", myTextures: List<Texture> = emptyList(), connected: Boolean = true,
+    onWoka: () -> Unit = {}, onRejoin: (name: String) -> Unit = {},
+) {
     ModalDrawerSheet(
         drawerContainerColor = MaterialTheme.colorScheme.surface,
         drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 28.dp).padding(top = 28.dp)) {
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp).padding(top = 28.dp)) {
             WorldInfo(details, plain = true)
             TextButton(
                 onClick = onShareLink,
@@ -139,8 +142,27 @@ fun WorldPanel(details: WorldDetails, onShareLink: () -> Unit, onShareLogs: () -
                 Spacer(Modifier.width(14.dp))
                 Text("Share link to room", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             }
+            // You, like on the Join screen. The name and woka are fixed for a connection, so changing them needs a rejoin.
+            HorizontalDivider(Modifier.padding(top = 12.dp, bottom = 16.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+            var typed by rememberSaveable(myName) { mutableStateOf(myName) }
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = typed, onValueChange = { typed = it }, singleLine = true,
+                    label = { Text("Your name in the room") }, modifier = Modifier.weight(1f),
+                )
+                WokaTile(
+                    myTextures, typed, onClick = onWoka,
+                    description = "Your woka, ${statusLabel(MY_STATUS)}. Choosing another is not built yet", offline = false,
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            PrimaryAction(
+                label = rejoinLabel(typed), explainer = REJOIN_EXPLAINER, onClick = { onRejoin(typed.trim()) },
+                description = "${rejoinLabel(typed)}. $REJOIN_EXPLAINER",
+                enabled = canRejoin(current = myName, typed = typed, wokaChanged = false, connected = connected), quiet = true,
+            )
+            Spacer(Modifier.height(16.dp))
         }
-        Spacer(Modifier.weight(1f))
         HorizontalDivider(Modifier.padding(horizontal = 28.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 16.dp).navigationBarsPadding(),
@@ -161,26 +183,6 @@ fun WorldPanel(details: WorldDetails, onShareLink: () -> Unit, onShareLogs: () -
                 onClick = onShareLogs,
                 modifier = Modifier.size(56.dp).semantics { contentDescription = "Share debug logs" },
             ) { Icon(BugIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
-        }
-    }
-}
-
-/** Your own sheet from the top-right picture: who you are as the room sees you. Only what exists today. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun MeSheet(name: String, textures: List<Texture>, onDismiss: () -> Unit, sheetState: SheetState) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = MaterialTheme.colorScheme.surface) {
-        Column(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            WokaAvatar(textures, name, 96.dp)
-            Text(name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 16.dp))
-            Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(10.dp).background(Color(statusColor(MY_STATUS)), CircleShape))
-                Spacer(Modifier.width(8.dp))
-                Text(statusLabel(MY_STATUS), style = MaterialTheme.typography.bodyLarge)
-            }
         }
     }
 }

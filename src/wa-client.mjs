@@ -38,6 +38,7 @@ const DEFAULTS = {
 
 const DIRECTION = { UP: 0, RIGHT: 1, DOWN: 2, LEFT: 3 };
 const AVAILABILITY_ONLINE = 1;
+const AVAILABILITY_LIVEKIT = 11;
 const HEARTBEAT_INTERVAL_MS = 15_000; // transport-level ws ping, and the watchdog's tick
 const DEAD_AFTER_MS = 45_000; // no inbound frame or pong for this long => the socket is dead (#138)
 const CONNECT_TIMEOUT_MS = 15_000; // login fetch / socket join; a hung attempt must fail, not stall reconnect (#138)
@@ -81,6 +82,8 @@ export class WorkAdventureClient extends EventEmitter {
     /** @type {Map<string,{spaceUserId:string,propertiesToSync:string[]}>} */
     this.spaces = new Map(); // spaceName -> our membership
     this.groupId = null; // current proximity group, or null
+    this.availabilityStatus = AVAILABILITY_ONLINE; // what we announce; LIVEKIT while in a meeting area (#177)
+    this._meetingAreaSpaces = new Map(); // livekitRoomProperty areas we are standing in -> their space name
     this.spaceUserNames = new Map(); // spaceUserId -> display name, from SpaceUser
 
     // Map areas (from the room's .wam) and which ones the avatar is inside.
@@ -439,19 +442,43 @@ export class WorkAdventureClient extends EventEmitter {
     this.query("leaveSpaceQuery", { spaceName }).catch(() => {});
     this.emit("log", `left space ${spaceName}`);
     this.emit("spaceLeft", { spaceName });
-    if (this._areaMeetingsJoined?.delete(spaceName) && this._areaMeetingsJoined.size === 0) {
-      try {
-        this._send({ setPlayerDetailsMessage: { availabilityStatus: AVAILABILITY_ONLINE } });
-      } catch (e) {
-        this.emit("log", `could not report ONLINE: ${e.message}`);
-      }
-    }
   }
 
   // The space name of a map-area meeting, derived the same way the WA front does
   // (AreasPropertiesListener.handleLivekitRoomPropertyOnEnter).
   _areaSpaceName(prop) {
     return this.adapter.areaMeetingSpaceName(this.cfg.roomUrl, prop);
+  }
+
+  // A browser standing in a livekitRoomProperty area announces availabilityStatus
+  // LIVEKIT, and the server keeps such a player out of proximity bubbles. We
+  // announced ONLINE, so a second avatar arriving next to us was grouped with us
+  // and the bubble knocked us off the area's LiveKit meeting (#177). Immediate, not
+  // dwell-debounced: it is one small message, unlike a space join.
+  //
+  // A meeting area is also modal (#179): while in one we hold no proximity space.
+  // Entering ejects any we were in; _handle refuses new ones. Without this a bubble
+  // moves us from the area's LiveKit to P2P, and nothing brings us back.
+  _announceMeetingArea(key, spaceName, entering) {
+    if (entering) this._meetingAreaSpaces.set(key, spaceName);
+    else this._meetingAreaSpaces.delete(key);
+    if (entering) this._ejectProximitySpaces();
+    const want = this._meetingAreaSpaces.size > 0 ? AVAILABILITY_LIVEKIT : AVAILABILITY_ONLINE;
+    if (want === this.availabilityStatus) return;
+    this.availabilityStatus = want;
+    if (this._joined) this._send({ setPlayerDetailsMessage: { availabilityStatus: want } });
+  }
+
+  _isAreaSpace(spaceName) {
+    return [...this._meetingAreaSpaces.values()].includes(spaceName);
+  }
+
+  _ejectProximitySpaces() {
+    for (const name of [...this.spaces.keys()]) {
+      if (this._isAreaSpace(name)) continue;
+      this.emit("log", `entered a meeting area → leaving proximity space ${name}`);
+      this._leaveSpace(name);
+    }
   }
 
   // On entering/leaving a `livekitRoomProperty` area, proactively join/leave its
@@ -468,6 +495,7 @@ export class WorkAdventureClient extends EventEmitter {
     if (!prop) return;
     const key = area.id ?? area.name;
     const spaceName = this._areaSpaceName(prop);
+    this._announceMeetingArea(key, spaceName, entering); // LIVEKIT/ONLINE at the instant of entry/exit (#177)
     // Adapter data. wa-1.33 keeps the debounce (1500 / 2500); wa-1.34 sets 0 / 0 because a real browser
     // joins and leaves at once (probe observe-humans, 2026-10-11). 0 means no timer at all.
     const DWELL_MS = this.adapter.meeting?.areaDwellMs ?? 1500;
@@ -490,7 +518,6 @@ export class WorkAdventureClient extends EventEmitter {
           // Left the area while joinSpaceQuery was in flight: no linger is armed (t.join was
           // already null, the space not ours yet), so leave now instead of announcing LIVEKIT.
           if (!this.currentAreas.has(key)) return this.spaces.has(spaceName) ? this._leaveSpace(spaceName) : undefined;
-          this._areaMeetingJoined(spaceName);
         },
         (e) => { t.joining = false; this.emit("log", `area meeting join failed: ${e.message}`); }
       );
@@ -526,20 +553,6 @@ export class WorkAdventureClient extends EventEmitter {
         this._leaveSpace(spaceName);
       }, LINGER_MS);
     }
-  }
-
-  /**
-   * A browser client reports availabilityStatus LIVEKIT while it is in a meeting area and ONLINE
-   * when it leaves (probe meeting-availability, 2026-10-10); the server uses it to let the area
-   * meeting take over from a proximity bubble. Only for adapters that define the value
-   * (`meeting.areaAvailabilityStatus`). The matching ONLINE is sent from `_leaveSpace`, whatever
-   * caused the leave, once no area meeting remains.
-   */
-  _areaMeetingJoined(spaceName) {
-    const status = this.adapter?.meeting?.areaAvailabilityStatus;
-    if (status == null) return;
-    (this._areaMeetingsJoined ??= new Set()).add(spaceName);
-    this._send({ setPlayerDetailsMessage: { availabilityStatus: status } });
   }
 
   /** Tell the other Space members whether our mic is live. */
@@ -617,7 +630,7 @@ export class WorkAdventureClient extends EventEmitter {
             moving: false,
           },
           viewportMessage: this._viewport(),
-          availabilityStatus: AVAILABILITY_ONLINE,
+          availabilityStatus: this.availabilityStatus,
         },
       });
       return;
@@ -642,6 +655,10 @@ export class WorkAdventureClient extends EventEmitter {
     if (obj.answerMessage) { this._resolveQuery(obj.answerMessage); return; }
     if (obj.joinSpaceRequestMessage) {
       const { spaceName, propertiesToSync } = obj.joinSpaceRequestMessage;
+      if (this._meetingAreaSpaces.size > 0 && !this._isAreaSpace(spaceName)) {
+        this.emit("log", `in a meeting area → refusing proximity space ${spaceName}`);
+        return;
+      }
       if (!this.spaces.has(spaceName)) {
         this._joinSpace(spaceName, propertiesToSync).catch((e) =>
           this.emit("log", `joinSpace failed: ${e.message}`)
@@ -704,8 +721,18 @@ export class WorkAdventureClient extends EventEmitter {
         x: u.position?.x ?? 0,
         y: u.position?.y ?? 0,
         direction: u.position?.direction ?? DIRECTION.DOWN,
+        availabilityStatus: u.availabilityStatus ?? 0,
       });
       this.emit("playerJoined", this.players.get(u.userId));
+      return;
+    }
+    if (sub.playerDetailsUpdatedMessage) {
+      // Status changes (e.g. a browser entering a meeting area) arrive here. Kept so
+      // `wa status --json` shows what a real client announces in a meeting (#177).
+      const d = sub.playerDetailsUpdatedMessage;
+      const p = this.players.get(d.userId);
+      const st = d.details?.availabilityStatus;
+      if (p && st) p.availabilityStatus = st;
       return;
     }
     if (sub.userMovedMessage) {

@@ -39,6 +39,41 @@ an open follow-up.
 
 ---
 
+## `#177` — an avatar in a meeting area must not be grouped into a proximity bubble
+
+**Symptom:** two bots sent to the same human (`wa to`) both stand in a
+`livekitRoomProperty` area. The second one's arrival makes the server form a
+proximity bubble from the two bots (`joinSpaceRequestMessage` for a `…#NNNN#…`
+space). The first bot is told `meeting strategy → WEBRTC; leaving LiveKit`, the
+second gets the area's LiveKit invitation and switches, and the first is left on
+a P2P link to a peer that has gone: `wa status` says `audio.connected:false,
+peers:0, inMeeting:true`, peers see a red mic, `wa sound` reaches nobody.
+
+**Cause:** a real browser in a meeting area announces `availabilityStatus =
+LIVEKIT` (11), and the server keeps such a player out of proximity groups. We
+announced `ONLINE` (1) for the whole session. [live: humans in the area read 11,
+our bots read 1; a human ~35px from a bot was never grouped, the two bots were.
+That the server skips LIVEKIT players is inferred from this and borne out by the
+fix below.]
+
+**Fix:** `WorkAdventureClient._announceMeetingArea` sends
+`setPlayerDetailsMessage{availabilityStatus: LIVEKIT}` on entering a meeting
+area (immediately, not dwell-debounced: one small message) and `ONLINE` when the
+last one is left; the join message uses the stored status. [live: two bots to
+the same human stayed on the area's LiveKit with no proximity space for 100 s.]
+Other players' status is now kept (`wa status --json` → `players[].availabilityStatus`).
+
+**A meeting area is modal (#179).** The status is not the only guard: while we
+stand in a `livekitRoomProperty` area `_handle` refuses any `joinSpaceRequestMessage`
+for a space that isn't one of our area-meeting spaces, and entering an area leaves
+any proximity space we were already in (`_ejectProximitySpaces`). Recovering after
+the fact (re-joining the area's LiveKit when a bubble ends) was the alternative; it
+isn't needed because we never hold the bubble. [live, prod: a bot in a bubble with
+another walked into the area: `entered a meeting area → leaving proximity space`,
+then the server tried a new bubble and got `in a meeting area → refusing proximity
+space`; both ended on the area's LiveKit with 4 peers.] Leaving the area restores
+normal proximity behaviour.
+
 ## `#10` — the red mic, mic-state propagation
 
 **Symptom:** a peer renders our mic red ("microphone is on, but I'm receiving
