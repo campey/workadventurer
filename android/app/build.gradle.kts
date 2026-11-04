@@ -14,8 +14,9 @@ android {
         applicationId = "app.workadventurer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        // The release workflow passes the tag (android-v0.2.0 -> 0.2.0) and the run number; local builds keep 1 / 0.1.0.
+        versionCode = (System.getenv("ANDROID_VERSION_CODE") ?: "1").toInt()
+        versionName = System.getenv("ANDROID_VERSION_NAME") ?: "0.1.0"
     }
 
     // One debug key for everyone (this Mac, the cloud container, any session), so a debug APK built anywhere installs over
@@ -27,6 +28,12 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+    }
+
+    // Releases are signed with the same shared debug key for now (see above), so a release APK installs over a debug
+    // build and the other way round. A real release key (from CI secrets) replaces this when the app goes to a store.
+    buildTypes {
+        getByName("release") { signingConfig = signingConfigs.getByName("debug") }
     }
 
     buildFeatures { compose = true }

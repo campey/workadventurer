@@ -7,6 +7,7 @@
 import { WorkAdventureClient } from "../src/wa-client.mjs";
 import { resolveConfig } from "../src/config.mjs";
 import { isVersionRejection } from "../src/server-rejected.mjs";
+import { DefaultWebSocket } from "../world-port/live/proxied-ws.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name) => {
@@ -26,6 +27,7 @@ const line = (status, step, detail = "") => {
 };
 
 const client = new WorkAdventureClient({
+  WebSocketImpl: DefaultWebSocket, // goes through HTTPS_PROXY when set
   name: "selfcheck",
   roomUrl: cfg.roomUrl,
   pusherUrl: cfg.pusherUrl,

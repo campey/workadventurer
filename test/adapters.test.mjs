@@ -1,3 +1,4 @@
+import waMaster from "../src/adapters/wa-master.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -145,4 +146,11 @@ test("adapters: the allowlisted prod host resolves to the newest released adapte
   const released = Object.values(ADAPTERS).filter((a) => a.stability !== "tracking");
   const newest = released.map((a) => a.id).sort().at(-1);
   assert.equal(r.adapter.id, newest, "when prod bumps, bump the allowlist with the new adapter");
+});
+
+test("wa-1.34 keeps the wa-1.33 meeting strategy names; the area LIVEKIT/ONLINE status is client-wide (#177)", async () => {
+  const w133 = (await import("../src/adapters/wa-1.33.mjs")).default;
+  const w134 = (await import("../src/adapters/wa-1.34.mjs")).default;
+  assert.equal(w134.meeting.webrtcStrategyName, w133.meeting.webrtcStrategyName);
+  assert.equal(w134.meeting.areaAvailabilityStatus, undefined);
 });

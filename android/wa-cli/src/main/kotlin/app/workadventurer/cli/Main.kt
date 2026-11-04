@@ -5,6 +5,7 @@ import app.workadventurer.nav.NavGrid
 import app.workadventurer.nav.Navigator
 import app.workadventurer.nav.Pt
 import app.workadventurer.nav.snapToFree
+import app.workadventurer.nav.snapToReachable
 import app.workadventurer.protocol.PusherConnection
 import app.workadventurer.protocol.RoomConfig
 import app.workadventurer.protocol.Wa133
@@ -91,7 +92,7 @@ fun main(args: Array<String>): Unit = runBlocking<Unit> {
                     ?: run { println("no area matching '$needle'"); return@launch }
                 val c = Pt(a.x + a.w / 2.0, a.y + a.h / 2.0)
                 println("· walking to ${a.name}")
-                println("· walk ended: ${nav.navTo(conn.grid.value?.snapToFree(c.x, c.y) ?: c, stopWithin = 24.0)}")
+                println("· walk ended: ${nav.navTo(conn.grid.value?.snapToReachable(conn.position(), c.x, c.y) ?: c, stopWithin = 24.0)}")
             }
         }
         else -> null

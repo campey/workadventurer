@@ -14,6 +14,10 @@ Project-specific rules for Claude Code sessions working in this repo.
   WEBRTC codec negotiation against real browser peers, the subscribe path's
   known gotcha for whoever builds it next.
 
+- `docs/fakes-with-probes.md` — how we use fakes with probes for ports & adapters
+  (#124/#125): the probe → recorder → scenario → fake → gap loop, `npm run scenarios`,
+  `WORLD=live`, `RECORD=1`, `world-port/probes/run.mjs`, the `confirmedBy` rule.
+
 - `android/docs/field-notes.md` — the Android client's gate-by-gate findings, led by a
   "Protocol and behaviour reference" (spaces, roles, mic state and mute, libwebrtc
   quirks, maps, server versions) with each fact tagged live / code / guess.
@@ -45,6 +49,20 @@ Status: Todo / In Progress / Done).
   board's built-in "pull request linked → In Progress" rule fires on any new
   link, so retro-linking a PR to an already-closed issue flips it from Done
   to In Progress. Reset it afterwards: `scripts/board-status.sh <n> done`.)
+
+## Claude Code cloud containers
+
+Sessions run in a container whose only route out is an HTTP proxy, with an allow list the owner edits
+(environment network settings). What a session needs and what it can't have:
+
+- **Allow `*.workadventu.re`** for anything live (`selfcheck`, `WORLD=live`, probes). Run Node with `NODE_USE_ENV_PROXY=1`.
+- **Allow `dl.google.com`** for the Android build (Gradle plugins, SDK). Setup is in `android/CLAUDE.md`.
+- Default-allowed and fine: GitHub clone/fetch, Maven Central (sometimes 429: rerun), the Gradle plugin portal, apt, npm.
+- **No UDP, no STUN/TURN**: WebRTC and LiveKit audio cannot connect to real clients from the container
+  (signalling works, media doesn't), so audio-join timing must be measured from a normal network
+  (handover in `world-port/probes/README.md`). Allow-listing hosts doesn't change this.
+- GitHub's GraphQL/Projects API is blocked by the proxy: the board can't be updated from a session.
+- Before building an APK, merge `origin/main` into the branch: a branch cut before the UI work shipped an old UI.
 
 ## Multi-session / worktree hygiene
 

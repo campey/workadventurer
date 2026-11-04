@@ -81,6 +81,29 @@ class SteeringTest {
         assertNull(NavGrid(2, 2, 32, BooleanArray(4) { true }).snapToFree(10.0, 10.0))
     }
 
+    @Test
+    fun snapToReachableNeverPicksAWalledOffPocket() {
+        // The centre tile (3,3) is free but closed in by a ring of walls; we stand outside at (0,0).
+        val g = gridOf(
+            ".......",
+            ".......",
+            "..###..",
+            "..#.#..",
+            "..###..",
+            ".......",
+            ".......",
+        )
+        val pocket = g.tileCenterPx(3, 3)
+        val p = g.snapToReachable(g.tileCenterPx(0, 0), pocket.x, pocket.y)!!
+        assertTrue(g.findPath(g.tileCenterPx(0, 0), p) != null, "unreachable spot $p")
+        assertTrue(!g.isPxBlocked(p.x, p.y))
+        // A reachable free point stays exactly where it is.
+        assertEquals(Pt(10.0, 10.0), g.snapToReachable(g.tileCenterPx(0, 0), 10.0, 10.0))
+        // From inside the pocket, the pocket itself is the reachable region.
+        val inside = g.snapToReachable(pocket, pocket.x, pocket.y)!!
+        assertEquals(pocket, inside)
+    }
+
     // Leaving a bubble or area has no message in the protocol: it is done by walking out.
     @Test
     fun nearestFreeOutsideFindsTheClosestWayOutOfARegion() {
@@ -99,5 +122,20 @@ class SteeringTest {
         val walled = NavGrid(40, 40, 32, BooleanArray(1600) { i -> (i % 40) < 20 }) // left half blocked
         val out = walled.nearestFreeOutside(Pt(700.0, 600.0)) { p -> p.x in 650.0..750.0 }!!
         assertTrue(!walled.isPxBlocked(out.x, out.y) && out.x !in 650.0..750.0)
+    }
+
+    // "Leave area" used to take the first free point on a growing ring around us, which could be on the far side of a
+    // wall: the walk then had no route. The way out must be somewhere we can walk to, nearest by walking distance.
+    @Test
+    fun nearestFreeOutsideNeverPicksTheFarSideOfAWall() {
+        // 40x40 tiles of 32 px; a solid wall down tile column 19 (px 608..640) splits the map. We stand just inside
+        // the region's right edge, so the closest free point outside the region by straight line is across the wall.
+        val g = NavGrid(40, 40, 32, BooleanArray(1600) { i -> i % 40 == 19 })
+        val region = { p: Pt -> p.x in 400.0..600.0 && p.y in 400.0..600.0 }
+        val me = Pt(590.0, 500.0)
+        val out = g.nearestFreeOutside(me, region)!!
+        assertTrue(!region(out), "still inside: $out")
+        assertTrue(g.findPath(me, out) != null, "no route to $out")
+        assertTrue(out.x < 608.0, "picked the far side of the wall: $out")
     }
 }
