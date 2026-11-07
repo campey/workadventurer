@@ -35,6 +35,15 @@ class RoomConfigTest {
         assertEquals(true, RoomConfig.forRoom("Ada", "https://play.staging.workadventu.re/@/a/b/c", micOn = true).micOn)
     }
 
+    // #108: a woka the player chose replaces the server's default, on prod and on staging alike; none chosen keeps the default.
+    @Test
+    fun aChosenWokaReplacesTheDefault() {
+        assertEquals("mine", RoomConfig.forRoom("Ada", "https://play.workadventu.re/@/a/b/c", wokaId = "mine").wokaId)
+        assertEquals("mine", RoomConfig.forRoom("Ada", "https://play.staging.workadventu.re/@/a/b/c", wokaId = "mine").wokaId)
+        assertEquals(Wa133.DEFAULT_WOKA, RoomConfig.forRoom("Ada", "https://play.workadventu.re/@/a/b/c", wokaId = null).wokaId)
+        assertEquals(Wa133.DEFAULT_WOKA, RoomConfig.forRoom("Ada", "https://play.workadventu.re/@/a/b/c", wokaId = " ").wokaId)
+    }
+
     @Test
     fun anUnknownOrMalformedHostFallsBackToProd() {
         assertEquals(Wa133.DEFAULT_PUSHER, RoomConfig.forRoom("Ada", "not a url").pusherUrl)

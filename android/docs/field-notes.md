@@ -124,6 +124,22 @@ per-gate sections below have the measurements; this section is the summary to st
 - **World icon**: every room we know shows the default WorkAdventure coffee cup. A custom icon can only come from the
   server's `metatags.favIcons` (admin API); none of our rooms sets one, so it isn't read yet.
 
+### Choosing a woka (#108)
+- **The catalogue** [live, code]: `GET {pusher}/woka/list?roomUrl=<urlencoded room>` with the login token bare in `Authorization`
+  (no "Bearer"; the token is the `anonymLogin` one, so a login comes first). Returns `{woka, body, eyes, hair, clothes, hat,
+  accessory}`, each `{collections: [{name, textures: [{id, name, url}]}]}`. On prod for the Afrolabs room: 2 woka collections
+  (Default 24, Legacy 24) and hundreds of layers (hair alone 310). The catalogue is per room and differs between prod and staging.
+  A texture `url` can be relative; the web client puts the pusher's address in front (`WokaSelectScene.svelte`).
+- **The `woka` part is whole characters**: the web client's picker sends a single id (`saveAndContinue([selectedWokaTextureId["woka"]])`).
+  Composing from body/eyes/hair/clothes/hat/accessory is a separate screen that sends several ids (not built yet).
+- **Sending it** [code]: the WS `characterTextureIds` query parameter, repeated once per id (a lone one is also accepted).
+  The pusher checks the ids against the catalogue and answers an unknown one with `invalidCharacterTextureMessage`, which our client
+  reports as "invalid character texture"; the app drops a remembered choice on that (`wokaWasRefused`) so the next Join works.
+- **Per server, not per room**: the choice is remembered per server like the layers (`ChosenWoka`); the catalogue itself is read
+  per room. A woka picked in a room whose catalogue the other rooms on that server lack is the case the refusal handling is for.
+- **Live check, 2026-10-27**: Join screen tile → picker → Katherine → Join: the server accepted it and the top bar, your row and your
+  screen all showed her; from the world panel, picking Oliver made Rejoin live and the rejoin showed Oliver.
+
 ### Maps (the campus map)
 - **Spawn**: the `.wam` start area if there is one; otherwise a tile of the map's Tiled `start` layer; the old fixed corner put
   the avatar where it saw nobody. [live, #90]

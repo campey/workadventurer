@@ -21,11 +21,16 @@ class JoinFormTest {
         assertEquals("Enter this world as Ada", joinExplainer("  Ada ", "https://play.workadventu.re/@/a/b/c"))
     }
 
-    // The preview beside the name is tappable already, so it says why nothing happens (issue #108 builds the real thing).
     @Test
-    fun tappingTheWokaPreviewExplainsItIsNotBuiltYet() {
-        assertEquals("Woka customisation not (yet) built (#108)", WOKA_CUSTOMISATION_MESSAGE)
+    fun theWokaPreviewShowsAnEllipsisUntilThePictureIsKnown() {
         assertEquals("…", WOKA_PREVIEW_PLACEHOLDER)
+    }
+
+    // The tile beside the name opens the picker, and says so to a screen reader (#108).
+    @Test
+    fun theWokaTileOpensThePicker() {
+        assertEquals("Your woka, Offline. Opens the woka picker", wokaTileDescription(offline = true))
+        assertEquals("Your woka, Online. Opens the woka picker", wokaTileDescription(offline = false))
     }
 
     @Test

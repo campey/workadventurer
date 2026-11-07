@@ -46,13 +46,41 @@ class LastTextures(private val store: KeyValueStore) {
         if (clean.isNotEmpty()) store.put(key(roomUrl), clean.joinToString("\n") { "${it.id}\t${it.url}" })
     }
 
-    private fun key(roomUrl: String): String {
-        val host = runCatching { java.net.URI(roomUrl.trim()).host }.getOrNull()
-        return "last_textures_${if (host == WaStaging.HOST) "staging" else "prod"}"
-    }
+    private fun key(roomUrl: String) = "last_textures_${serverOf(roomUrl)}"
 
     private companion object { const val MAX_LAYERS = 12 }
 }
+
+/** Which server's catalogue a room uses: staging has its own, everything else is prod. */
+private fun serverOf(roomUrl: String): String {
+    val host = runCatching { java.net.URI(roomUrl.trim()).host }.getOrNull()
+    return if (host == WaStaging.HOST) "staging" else "prod"
+}
+
+/**
+ * The woka you picked (#108), per server, as its id (what a join sends) and picture (so the Join screen can show it before you are
+ * in). None means the server's default. Only a plain https picture is read back, and an id or address with a tab or newline is never
+ * stored, so nothing odd in the store can reach a join.
+ */
+class ChosenWoka(private val store: KeyValueStore) {
+    fun get(roomUrl: String): Texture? {
+        val parts = store.get(key(roomUrl)).orEmpty().split('\t')
+        return if (parts.size == 2 && parts[0].isNotBlank() && parts[1].startsWith("https://")) Texture(parts[0], parts[1]) else null
+    }
+
+    fun choose(roomUrl: String, woka: Texture) {
+        val clean = woka.id.isNotBlank() && listOf(woka.id, woka.url).none { '\t' in it || '\n' in it }
+        if (clean) store.put(key(roomUrl), "${woka.id}\t${woka.url}")
+    }
+
+    /** Back to the server's default. */
+    fun forget(roomUrl: String) { store.put(key(roomUrl), "") }
+
+    private fun key(roomUrl: String) = "chosen_woka_${serverOf(roomUrl)}"
+}
+
+/** Whether a failed join's reason is the server refusing our woka (its catalogue no longer has it), so the choice should be dropped. */
+fun wokaWasRefused(failure: String) = "invalid character texture" in failure
 
 /** The name last joined with, so the join screen starts with it filled in. Room history is the fuller version (issue #93). */
 class LastName(private val store: KeyValueStore) {
