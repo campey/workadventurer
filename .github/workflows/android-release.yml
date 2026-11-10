@@ -2,6 +2,7 @@
 #
 #   git tag android-v0.2.0 && git push origin android-v0.2.0     -> signed release APK attached to a new release
 #   Actions tab -> "Android release" -> Run workflow             -> builds and uploads the APK as a run artifact only
+#   ... with "publish" ticked and a version (e.g. 0.2.0)         -> also creates the tag android-v0.2.0 and the release
 #
 # Signing: the shared debug key in android/debug.keystore (public in the repo), so every build installs over every other.
 # Swap in a real release key from repo secrets when the app goes to a store.
@@ -11,6 +12,16 @@ on:
   push:
     tags: ["android-v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for a manual run, e.g. 0.2.0 (the release tag becomes android-v<version>)"
+        required: false
+        type: string
+      publish:
+        description: "Create the tag and the GitHub release (otherwise the APK is only a run artifact)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # create the release and attach the APK
@@ -40,6 +51,8 @@ jobs:
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             name="${GITHUB_REF_NAME#android-v}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            name="${{ inputs.version }}"
           else
             name="0.0.0-dev.${GITHUB_RUN_NUMBER}"
           fi
@@ -78,11 +91,12 @@ jobs:
             ${{ steps.out.outputs.file }}.sha256
 
       - name: Publish the release
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish && inputs.version != '')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then tag="${GITHUB_REF_NAME}"; else tag="android-v${{ inputs.version }}"; fi
+          gh release create "${tag}" --target "${GITHUB_SHA}" \
             "${{ steps.out.outputs.file }}" "${{ steps.out.outputs.file }}.sha256" \
             --title "Android ${{ steps.ver.outputs.name }}" \
             --generate-notes \
