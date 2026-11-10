@@ -189,6 +189,40 @@ client fail to connect or walk oddly. Protection: only `main` of this repo is th
 gate, the index carries each file's sha256, and clients reject anything outside the schema or the sane bounds.
 Signing adds nothing against the realistic risk (a bad merge to `main`) and is left for if adapters ever carry code.
 
+## Backtest: when would a data-only adapter have been insufficient? [2026-11-10]
+
+`node scripts/adapter-backtest.mjs --from v1.20.0` compares every upstream release (131 tags, v1.20.0 to v1.34.5) and
+the `master` branch with the one before it, on the two things a hash-only change cannot absorb: protocol messages our
+clients use (`proto-diff` for the Node client, a message-plus-field name search in the Kotlin sources for Android)
+and the `/ws/room` handshake contract (the server's `queryValidator`: which query parameters are required).
+
+| | count |
+|---|---|
+| releases compared | 131 (v1.20.0 to v1.34.5) |
+| proto changed | 34, of which 14 purely additive |
+| **would have needed more than a hash** | **6 refs in 4 episodes** |
+
+The episodes: **v1.21.0** (handshake gained required `chatID`, `roomName`); **v1.26.11 to v1.26.15** (`cameraState` and
+`microphoneState` became required, then optional again at 1.26.12, then required again at **v1.27.0**; the same refactor
+removed `SubMessage.groupUsersUpdateMessage` and reshaped the space filter types); **v1.31.0** (`tabId` became required).
+**None in the 36 releases since v1.31.1**, which covers everything our clients were written against: v1.33.6, .7 and
+v1.34.0 changed the proto with wire-breaking items, but none that either client touches.
+
+**The upcoming release (`master`, last commit Nov 10; `develop` is stale since Oct 21): a data adapter is
+sufficient as far as the wire shows.** Against v1.34.5 the proto has 0 wire-breaking and 29 additive items, the
+handshake is unchanged, and the shared JSON changes are analytics files plus one optional new field
+(`cameraBackgrounds`) in the `/map` response (`MapDetailsData`). The hash will change; nothing else a client needs does.
+
+**What the backtest cannot see**, and what the gate must therefore catch: behaviour behind an unchanged message shape
+(for example the server grouping us into a proximity bubble unless we announce LIVEKIT, found by probing, #177), the
+other HTTP endpoints and their shapes (`/anonymLogin`, the `/map` fields we read), and the error screens. These are
+what the live scenarios and `selfcheck` are for. Android's check is a name search, so it can miss a rename.
+
+**Finding: four of the six flagged refs were handshake-only changes**, constant query parameters a client simply has to
+send (`chatID=""`, `roomName=""`, `cameraState=false`, `tabId=<id>`). That is data, not code. If the adapter carries
+the handshake's query parameters (below), only the two space-message refactors (v1.26.12, v1.26.15) would have needed
+code. Recommended addition to the adapter schema, decided with the user: see "Open: handshake parameters as data".
+
 ## What is left to the builder
 
 - The exact JSON schema and bounds, within the shape above.
