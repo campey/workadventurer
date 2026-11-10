@@ -143,12 +143,15 @@ Steps of a run:
    `--adapter-file` (also `WA_ADAPTER_FILE`) on `selfcheck`, the scenario runner and the CLI; the Android `wa-cli`
    already has `--api-version`, which is enough because the app applies only the hash. The candidate's hash comes from
    `vendor-proto --check <tag>` using the Actions token.
-4. Pass: add the adapter and the index entry to `catalog/` on `main`. The gate above *is* the check: this repo has no
-   other pull-request checks, and a PR opened with the default Actions token does not start other workflows, so
-   "open a PR and auto-merge" would either merge unchecked or never merge. Pushing straight to `main`, touching only
-   `catalog/`, is the plan **if the Actions bot is allowed to push to `main`** (open question below). If not, the
-   fallback is one PR per hash (branch `adapter/<hash>`) that the watcher merges itself with a token that can.
-5. Fail: commit a placeholder entry the same way, and open or update **one GitHub issue per server hash**
+4. Pass: open a pull request that adds the adapter and the index entry (branch `adapter/<hash>`, touching only
+   `catalog/`) and merge it from the workflow. `main` is protected and requires a PR with 0 approvals [campey], so
+   this is the route; no person is in the loop. The gate above *is* the check, and the PR needs no other workflow
+   to pass: a PR opened with the default Actions token does not start other workflows, so the watcher must not
+   depend on any required status check. Two things the builder must confirm with a dry run on a throwaway hash:
+   the repo setting "Allow GitHub Actions to create and approve pull requests" (Settings, Actions, General) has to
+   be ticked, and `main`'s rules must not require status checks (a required check would never report on a bot PR).
+   If either does not hold, the fix is a repo setting or a small token secret, not a design change.
+5. Fail: put a placeholder entry through the same pull request route, and open or update **one GitHub issue per server hash**
    ("Server v1.34.5 needs attention"), labelled, with what failed, the run link, and the candidate. A later passing
    run replaces the placeholder with the real entry and closes the issue itself.
 6. Do not open a new issue each hour: the issue is found by a label plus the hash in its title. A hash already marked
