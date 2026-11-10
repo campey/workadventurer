@@ -14,6 +14,9 @@ sealed interface Route {
     data object Join : Route { override val path = "join" }
     data object Users : Route { override val path = "users" }
 
+    /** The woka picker (#108), opened from the Join screen's woka tile or the world panel's. */
+    data object Woka : Route { override val path = "woka" }
+
     /** A bubble (by group id) or a map area (by `id ?: name`, as `WalkToArea`) with its people. */
     data class Conversation(val key: ConversationKey) : Route {
         override val path = when (key) {
@@ -39,6 +42,7 @@ fun parseRoute(path: String): Route? {
     return when {
         path == "join" -> Route.Join
         path == "users" -> Route.Users
+        path == "woka" -> Route.Woka
         parts.size == 2 && parts[0] == "user" -> parts[1].toIntOrNull()?.let { Route.User(it) }
         parts.size == 3 && parts[0] == "conversation" -> when (parts[1]) {
             "bubble" -> parts[2].toIntOrNull()?.let { Route.Conversation(ConversationKey.Bubble(it)) }

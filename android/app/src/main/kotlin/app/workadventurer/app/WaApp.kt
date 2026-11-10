@@ -28,6 +28,24 @@ class WaApp : Application() {
     /** Your own woka layers as last seen per server, so the Join screen can preview you before connecting. */
     val lastTextures by lazy { LastTextures(PrefsStore(this)) }
 
+    /** The woka you picked, per server (#108); none means the server's default. */
+    val chosenWoka by lazy { ChosenWoka(PrefsStore(this)) }
+
+    private val wokaCatalogues = java.util.concurrent.ConcurrentHashMap<String, app.workadventurer.protocol.WokaCatalogue>()
+
+    /**
+     * The wokas [roomUrl]'s server offers (#108): a login, then the room's catalogue. Kept for the rest of the run, since the picker
+     * is opened more than once and the list is big; a failure is returned, never cached.
+     */
+    suspend fun wokaCatalogue(roomUrl: String): Result<app.workadventurer.protocol.WokaCatalogue> {
+        wokaCatalogues[roomUrl]?.let { return Result.success(it) }
+        return runCatching {
+            val cfg = app.workadventurer.protocol.RoomConfig.forRoom("", roomUrl)
+            val login = app.workadventurer.protocol.anonymLogin(http, cfg)
+            app.workadventurer.protocol.fetchWokaCatalogue(http, cfg, login.authToken).also { wokaCatalogues[roomUrl] = it }
+        }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
+    }
+
     /** The audio devices and which one a call uses (#164); tracks devices from the start so the bar can show them. */
     val audioRouter: app.workadventurer.app.audio.AudioRouter by lazy { app.workadventurer.app.audio.AudioRouter(this, callLog).also { it.start() } }
 

@@ -9,7 +9,7 @@ class RoutesTest {
     @Test
     fun everyRouteRoundTripsThroughItsPath() {
         val all = listOf(
-            Route.Join, Route.Users, Route.User(42),
+            Route.Join, Route.Users, Route.Woka, Route.User(42),
             Route.Conversation(ConversationKey.Bubble(17)),
             Route.Conversation(ConversationKey.AreaKey("coffee-table-1")),
         )
@@ -30,6 +30,7 @@ class RoutesTest {
     fun theStaticPathsAreWhatTheNavHostRegisters() {
         assertEquals("join", Route.Join.path)
         assertEquals("users", Route.Users.path)
+        assertEquals("woka", Route.Woka.path)
         assertEquals("user/{userId}", Route.User.PATTERN)
         assertEquals("conversation/{kind}/{id}", Route.Conversation.PATTERN)
     }

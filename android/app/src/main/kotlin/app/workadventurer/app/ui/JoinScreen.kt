@@ -55,7 +55,10 @@ fun JoinScreen(
     connection: Connection,
     initialName: String,
     texturesFor: (roomUrl: String) -> List<Texture>,
-    onMessage: (String) -> Unit,
+    /** The woka you picked for a room's server, if any (shown instead of the one the server last gave you); [wokaPicks] changes when you pick. */
+    chosenFor: (roomUrl: String) -> Texture? = { null },
+    wokaPicks: Int = 0,
+    onWoka: (roomUrl: String) -> Unit = {},
     onJoin: (name: String, room: String) -> Unit,
 ) {
     var name by rememberSaveable { mutableStateOf(initialName) }
@@ -106,11 +109,8 @@ fun JoinScreen(
                     value = name, onValueChange = { name = it }, enabled = !joining, singleLine = true,
                     label = { Text("Your name in the room") }, modifier = Modifier.weight(1f),
                 )
-                val layers = remember(room) { texturesFor(room) }
-                WokaTile(
-                    layers, name, onClick = { onMessage(WOKA_CUSTOMISATION_MESSAGE) },
-                    description = "Your woka, $OFFLINE_LABEL. Customising it is not built yet", offline = true,
-                )
+                val layers = remember(room, wokaPicks) { chosenFor(room)?.let { listOf(it) } ?: texturesFor(room) }
+                WokaTile(layers, name, onClick = { onWoka(room.trim()) }, description = wokaTileDescription(offline = true), offline = true)
             }
             if (connection is Connection.Failed) {
                 Text("Couldn't join: ${connection.message}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)

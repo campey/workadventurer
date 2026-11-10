@@ -52,16 +52,21 @@ class PresenceService : Service() {
                 ServiceCompat.startForeground(
                     this, NOTIF_ID, notification("Connecting…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
                 )
+                val roomUrl = intent.getStringExtra(EXTRA_ROOM) ?: Wa133.DEFAULT_ROOM
+                val chosenWoka = (application as WaApp).chosenWoka
                 val cfg = RoomConfig.forRoom(
                     name = intent.getStringExtra(EXTRA_NAME).orEmpty(),
-                    roomUrl = intent.getStringExtra(EXTRA_ROOM) ?: Wa133.DEFAULT_ROOM,
+                    roomUrl = roomUrl,
                     micOn = intent.getBooleanExtra(EXTRA_MIC_ON, false), // the mic choice from the Join screen
+                    wokaId = chosenWoka.get(roomUrl)?.id, // the woka picked on the Join screen or world panel, else the server's default
                 )
                 session.dispatch(Command.Join(cfg))
                 observer?.cancel()
                 observer = scope.launch {
                     session.state.collect { s ->
                         if (s.connection is Connection.Failed) {
+                            // The server no longer offers the woka we picked: drop it, so the next Join uses the default instead of failing again.
+                            if (wokaWasRefused(s.connection.message)) chosenWoka.forget(roomUrl)
                             // A join that failed for good isn't "presence": stop the foreground service (and its
                             // microphone-type notification) now. The reason stays visible in the app's status line.
                             deactivate()

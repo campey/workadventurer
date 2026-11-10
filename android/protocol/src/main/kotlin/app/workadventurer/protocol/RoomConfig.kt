@@ -29,16 +29,17 @@ data class RoomConfig(
     val viewportHalfHeight: Int = 6000,
 ) {
     companion object {
-        /** The config for [roomUrl]: staging rooms get the staging pusher and woka, everything else is prod. */
-        fun forRoom(name: String, roomUrl: String, micOn: Boolean = false): RoomConfig {
+        /** The config for [roomUrl]: staging rooms get the staging pusher and woka, everything else is prod. A chosen [wokaId] replaces the default. */
+        fun forRoom(name: String, roomUrl: String, micOn: Boolean = false, wokaId: String? = null): RoomConfig {
             val host = runCatching { java.net.URI(roomUrl.trim()).host }.getOrNull()
+            val chosen = wokaId?.takeIf { it.isNotBlank() }
             return if (host == WaStaging.HOST) {
                 RoomConfig(
-                    roomUrl = roomUrl, name = name, micOn = micOn, pusherUrl = WaStaging.PUSHER, wokaId = WaStaging.DEFAULT_WOKA,
+                    roomUrl = roomUrl, name = name, micOn = micOn, pusherUrl = WaStaging.PUSHER, wokaId = chosen ?: WaStaging.DEFAULT_WOKA,
                     apiVersionHash = WaStaging.API_VERSION_HASH,
                 )
             } else {
-                RoomConfig(roomUrl = roomUrl, name = name, micOn = micOn)
+                RoomConfig(roomUrl = roomUrl, name = name, micOn = micOn, wokaId = chosen ?: Wa133.DEFAULT_WOKA)
             }
         }
     }
