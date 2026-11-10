@@ -20,6 +20,11 @@ When the server's version moves, the CLI and the Android app recover on their ow
 the matching **adapter** from a catalog, and the catalog only ever contains adapters that a machine has proven
 sufficient. Nobody ships a new APK or CLI for a routine bump.
 
+**Staging is tracked too** [campey, 2026-11-10], from the start. Staging runs `master`, so its hash changes with
+nearly every upstream change to the protocol or the shared JSON files, far more often than production's, and today it is
+already ahead of what we ship (its home page says `master@10b19f83`, hash `69f76fed`; our built-in staging adapter is at
+`d2d82672`; the Android app hardcodes a staging hash as well).
+
 Success: the next ordinary prod bump is absorbed with no human edit and no new APK, and a bump that is *not* ordinary
 shows up as an issue, with the app telling its user plainly that this server version isn't supported yet.
 
@@ -27,7 +32,6 @@ shows up as an issue, with the app telling its user plainly that this server ver
 
 - Downloaded **code**. Adapters are data (decided [campey]; see "Decided").
 - Changing the compiled-in protocol of the Android app. A catalog entry cannot add or reshape messages.
-- Staging / `master` tracking. Production first [campey]; staging can use the same machinery later.
 - Signing adapters. The catalog is a folder in this repo; see the trust note below.
 - Better discovery than "read the server's own hash from its home page" [campey: improve later].
 
@@ -54,11 +58,12 @@ shows up as an issue, with the app telling its user plainly that this server ver
 5. **When something needs attention you hear about it through a GitHub issue** (one per server version) plus the
    placeholder in the catalog [campey: "1 plus placeholder"].
 
-## Discovery [verified 2026-11-10]
+## Discovery [verified 2026-11-10, production and staging]
 
 The server's home page names its own API hash: `<meta name="wa-api-version" content="f4cfe455">`, and shows the release
 string (`v1.34.4`). So the client never has to guess or try hashes. It reads the page, takes the hash, and looks it up
-in the catalog index by that hash. (The Android constants already cite this tag. The CLI's `probeVersion` already reads
+in the catalog index by that hash. Staging (`play.staging.workadventu.re`) serves the same tag and shows `master@<sha>`
+where production shows a release string. (The Android constants already cite this tag. The CLI's `probeVersion` already reads
 the release string from the same page.) Self-hosted servers that do not serve the tag are out of scope: the client
 behaves as it does today.
 
@@ -66,10 +71,10 @@ behaves as it does today.
 
 ### 1. The catalog (`catalog/`)
 
-- `catalog/index.json`: `{ "schema": 1, "updated": "<ISO time>", "entries": { "<apiVersionHash>": { "status": "ok" | "needs-attention", "version": "1.34.4", "file": "adapters/<hash>.json", "sha256": "<of the file>", "gate": {...}, "issue": <number|null> } } }`
+- `catalog/index.json`: `{ "schema": 1, "updated": "<ISO time>", "entries": { "<apiVersionHash>": { "status": "ok" | "needs-attention", "server": "production" | "staging", "version": "1.34.4" or "master@10b19f83", "file": "adapters/<hash>.json", "sha256": "<of the file>", "gate": {...}, "issue": <number|null> } } }`
 - `catalog/adapters/<hash>.json`: the adapter data, shaped like today's `wa-1.34` adapter minus code and proto path:
   `{ "schema": 1, "id", "waVersion", "apiVersionHash": "<one hash, equal to its index key>", "protoFamily": "wa-1.34", "meeting": {...}, "movement": {...} }`.
-  `protoFamily` names a built-in adapter the Node client starts from (wa-1.33 or wa-1.34 today); the catalog file only
+  `protoFamily` names a built-in adapter the Node client starts from (wa-1.33, wa-1.34, or wa-master for staging); the catalog file only
   overrides the whitelisted fields (below) on top of it, so it cannot carry functions or message plumbing.
   **The Android app compiles in only the wa-1.33 proto** (`android/protocol/build.gradle.kts`), which still decodes
   1.34.x because every change since has been additive. So an entry is usable by Android only if it is wire-compatible
@@ -83,7 +88,8 @@ behaves as it does today.
 - A **placeholder** is an index entry with `status: "needs-attention"`, no `file`, and `gate` holding the failure summary.
 - URL: `https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json` (my call; a client setting
   `WA_CATALOG_URL` / an app setting overrides it, which the gate and tests use).
-- Seeded with the hashes we already know and have verified (v1.34.0, .1, .2, .4; v1.34.3 is left out because it was never seen live). Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
+- Seeded with the hashes we already know and have verified (production v1.34.0, .1, .2, .4; staging `d2d82672`; v1.34.3 is left out because it was never seen live). Staging is already past its seed entry: the watcher's first run produces the current one.
+- **Staging entries are pruned**: the catalog keeps the newest five staging entries, because staging produces a new hash every few days and old ones are never asked for again. Production entries are kept forever. Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
 
 ### 2. Client side (CLI and Android)
 
@@ -128,9 +134,9 @@ A GitHub Action named `adapter-watch`, triggered three ways:
   it re-reads the server's own home page and recomputes the hash itself, so a wrong or forged payload can at worst cause
   an extra run. Until that hook exists, nothing depends on it.
 
-Steps of a run:
+Steps of a run, **for each of production and staging**:
 
-1. Read the production hash and version from the home page (or the hook's version for a not-yet-live release). If the
+1. Read the server's hash and version from its home page (or the hook's version for a not-yet-live release). If the
    hash is already in the catalog as `ok`, stop.
 2. Build a candidate: find the upstream release or commit for that version, compute the hash from it, run `proto-diff`
    against the protocol family in use, take the newest `ok` entry as the base for behaviour numbers.
@@ -142,7 +148,11 @@ Steps of a run:
    For (b) to (d) the clients need to take a candidate from a file or flag without it being in the catalog:
    `--adapter-file` (also `WA_ADAPTER_FILE`) on `selfcheck`, the scenario runner and the CLI; the Android `wa-cli`
    already has `--api-version`, which is enough because the app applies only the hash. The candidate's hash comes from
-   `vendor-proto --check <tag>` using the Actions token.
+   `vendor-proto --check <tag>` using the Actions token (for staging, the `master` commit the page names).
+   **Staging gate** (my call): the same checks, but against staging with the staging pusher, woka and room the
+   Android app and `scripts/selfcheck.mjs --target wa-master` already know. The live scenario suite (c) is
+   production-only for now, because the scenarios' world facts are production worlds; staging relies on `selfcheck`
+   and the Kotlin smoke until a staging world has facts.
 4. Pass: open a pull request that adds the adapter and the index entry (branch `adapter/<hash>`, touching only
    `catalog/`) and merge it from the workflow. `main` is protected and requires a PR with 0 approvals [campey], so
    this is the route; no person is in the loop. The gate above *is* the check, and the PR needs no other workflow
@@ -154,7 +164,9 @@ Steps of a run:
 5. Fail: put a placeholder entry through the same pull request route, and open or update **one GitHub issue per server hash**
    ("Server v1.34.5 needs attention"), labelled, with what failed, the run link, and the candidate. A later passing
    run replaces the placeholder with the real entry and closes the issue itself.
-6. Do not open a new issue each hour: the issue is found by a label plus the hash in its title. A hash already marked
+6. Do not open a new issue each hour: the issue is found by a label plus the hash in its title. **Staging gets one
+   open issue, not one per hash** (my call): "Staging needs attention" is updated to name the newest failing hash and
+   closed when a staging hash passes, because staging's hash churns and per-hash issues would flood. A hash already marked
    `needs-attention` is **not** re-tested every hour (it would put live avatars on production each time for the same
    answer): it is re-run only on a manual run, or when `main` has changed since the placeholder recorded its commit,
    or when the server's version string changes (my call).
