@@ -68,13 +68,22 @@ behaves as it does today.
 
 - `catalog/index.json`: `{ "schema": 1, "updated": "<ISO time>", "entries": { "<apiVersionHash>": { "status": "ok" | "needs-attention", "version": "1.34.4", "file": "adapters/<hash>.json", "sha256": "<of the file>", "gate": {...}, "issue": <number|null> } } }`
 - `catalog/adapters/<hash>.json`: the adapter data, shaped like today's `wa-1.34` adapter minus code and proto path:
-  `{ "schema": 1, "id", "waVersion", "apiVersionHashes": [...], "protoFamily": "wa-1.34", "meeting": {...}, "movement": {...} }`.
-  `protoFamily` names a protocol the client already has built in (wa-1.33 / wa-1.34 today). The Node client reads its
-  proto from the repo; the Android app has it compiled in, which is why a catalog entry cannot change messages.
+  `{ "schema": 1, "id", "waVersion", "apiVersionHash": "<one hash, equal to its index key>", "protoFamily": "wa-1.34", "meeting": {...}, "movement": {...} }`.
+  `protoFamily` names a built-in adapter the Node client starts from (wa-1.33 or wa-1.34 today); the catalog file only
+  overrides the whitelisted fields (below) on top of it, so it cannot carry functions or message plumbing.
+  **The Android app compiles in only the wa-1.33 proto** (`android/protocol/build.gradle.kts`), which still decodes
+  1.34.x because every change since has been additive. So an entry is usable by Android only if it is wire-compatible
+  with the 1.33 proto, and the gate checks that separately from the Node check (see the gate).
+- **Whitelisted fields and bounds** (my call): `meeting.areaDwellMs` and `areaLingerMs` 0 to 10000 ms,
+  `movement.walkPxPerS` and `runPxPerS` 50 to 1000, `apiVersionHash` must match `^[0-9a-f]{8}$`. Anything else in the
+  file is ignored.
+- **The Android app applies only the hash for now** (my call): its meeting timing and walking are native and hardcoded
+  (dwell 1500 / linger 2500, no walk/run), so it ignores the behaviour numbers. This keeps a first download from
+  changing how the app behaves. Applying them is a later change to the app, not to the catalog.
 - A **placeholder** is an index entry with `status: "needs-attention"`, no `file`, and `gate` holding the failure summary.
 - URL: `https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json` (my call; a client setting
   `WA_CATALOG_URL` / an app setting overrides it, which the gate and tests use).
-- Seeded with the hashes we already know (v1.34.0, .1, .2, .4) so day one needs no download.
+- Seeded with the hashes we already know and have verified (v1.34.0, .1, .2, .4; v1.34.3 is left out because it was never seen live). Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
 
 ### 2. Client side (CLI and Android)
 
@@ -82,17 +91,27 @@ On the server's "new version" refusal (CLI: `isVersionRejection`; Android: the e
 join... please refresh"):
 
 1. Read the server's hash and release string from its home page. If that fails, behave as today (report the refusal).
+   Two pieces do not exist yet and are part of the work: the Node `probeVersion` only parses the release string (it
+   must also read the `wa-api-version` tag), and the Android app turns the error screen into a plain message and drops
+   its `code` (`PusherConnection.kt`), so it must keep a typed "new version" refusal. Reading the home page and the small
+   index is not "downloading an adapter": consent covers fetching and applying the adapter file (my call).
 2. Fetch `index.json`. No entry for the hash: say "no adapter for this server version yet" and stop (no retry storm).
 3. Entry `needs-attention`: say "this server version isn't supported yet, it needs attention" and stop.
 4. Entry `ok`: if the user's saved choice is "auto", go on. Otherwise ask. CLI: a y / N / always prompt when attached to
    a terminal; in the daemon (no terminal) the refusal is reported with the exact command or flag to allow it. Android:
-   a dialog with Download and "Don't ask again".
-5. Download the adapter file, verify its sha256 against the index, validate it strictly (schema 1, known fields only,
-   numbers inside sane bounds, `protoFamily` one we have built in), save it to the app's own cache, reconnect with it.
+   a dialog with Download and "Don't ask again". The connecting happens in the detached daemon, so `wa join` (which is
+   attached to the terminal) learns of the refusal from the daemon and does the prompt and the retry itself; under
+   `--keep-alive` a bump mid-session with the choice "ask" exits with the existing refusal code rather than waiting, and
+   with "auto" the daemon applies the adapter by itself (my call).
+5. Download the adapter file, verify its sha256 against the index and that its hash equals the index key, validate it
+   strictly (schema 1, whitelisted fields only, numbers inside the bounds above, `protoFamily` one we have built in),
+   save it to the client's own cache, reconnect with it. A catalog fetch that fails, times out or 404s counts as "no
+   adapter": the original refusal is reported (my call). The raw GitHub host may cache for a few minutes: accepted.
 6. Next start: cached adapters for the server's hash are used without asking again. Built-in adapters stay as the
    fallback when offline.
 
-The user's choice is stored per client (CLI: its config file; Android: app preferences) and can be reset.
+The user's choice is stored per client and can be reset: CLI `adapterUpdates: ask|auto|never` in its config file (also
+`WA_ADAPTER_UPDATES`), cache in `~/.workadventurer/adapters/<hash>.json`; Android in app preferences (my call).
 
 ### 3. The gate and the watcher (#127)
 
@@ -115,17 +134,30 @@ Steps of a run:
    hash is already in the catalog as `ok`, stop.
 2. Build a candidate: find the upstream release or commit for that version, compute the hash from it, run `proto-diff`
    against the protocol family in use, take the newest `ok` entry as the base for behaviour numbers.
-3. **Gate**, all must pass: (a) the proto diff has no wire change the clients use (additive only); (b) the CLI
+3. **Gate**, all must pass: (a) the proto diff has no wire change the clients use: `proto-diff` today scans only
+   `src/`, so it must also scan `android/` and be run against both the proto family the Node client uses and the
+   wa-1.33 proto the Android app has built in (additive changes only); (b) the CLI
    `selfcheck` against production with the candidate (join, move, bubble, area meeting); (c) the live scenario suite
    (`WORLD=live`) with the candidate; (d) a Kotlin smoke with the candidate's hash (`wa-cli`: join and walk to an area).
-   For (b) to (d) the clients need to take a candidate from a file or flag without it being in the catalog
-   (`--adapter-file` / `WA_ADAPTER_FILE` for the CLI; the Android CLI already has `--api-version`).
-4. Pass: commit the adapter and the index entry on a branch and open a PR with auto-merge, so it lands on `main` once
-   checks are green and shows as a reviewable diff.
+   For (b) to (d) the clients need to take a candidate from a file or flag without it being in the catalog:
+   `--adapter-file` (also `WA_ADAPTER_FILE`) on `selfcheck`, the scenario runner and the CLI; the Android `wa-cli`
+   already has `--api-version`, which is enough because the app applies only the hash. The candidate's hash comes from
+   `vendor-proto --check <tag>` using the Actions token.
+4. Pass: add the adapter and the index entry to `catalog/` on `main`. The gate above *is* the check: this repo has no
+   other pull-request checks, and a PR opened with the default Actions token does not start other workflows, so
+   "open a PR and auto-merge" would either merge unchecked or never merge. Pushing straight to `main`, touching only
+   `catalog/`, is the plan **if the Actions bot is allowed to push to `main`** (open question below). If not, the
+   fallback is one PR per hash (branch `adapter/<hash>`) that the watcher merges itself with a token that can.
 5. Fail: commit a placeholder entry the same way, and open or update **one GitHub issue per server hash**
    ("Server v1.34.5 needs attention"), labelled, with what failed, the run link, and the candidate. A later passing
    run replaces the placeholder with the real entry and closes the issue itself.
-6. Do not open a new issue each hour: the issue is found by its hash.
+6. Do not open a new issue each hour: the issue is found by a label plus the hash in its title. A hash already marked
+   `needs-attention` is **not** re-tested every hour (it would put live avatars on production each time for the same
+   answer): it is re-run only on a manual run, or when `main` has changed since the placeholder recorded its commit,
+   or when the server's version string changes (my call).
+7. A release that is not live yet (the hook case) is **not** gated: the gate needs production to accept the hash, and
+   staging runs `master`, not the release. The hook only makes us notice sooner; the gate runs once production switches.
+   Gating ahead of the switch against staging is a possible later extension (my call).
 
 The same machinery later extends to staging.
 
