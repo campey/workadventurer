@@ -16,7 +16,11 @@
 - Catalog index URL default: `https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json`; override with `WA_CATALOG_URL`.
 - Adapter file shape: `{ "schema": 1, "id", "waVersion", "apiVersionHash": "<8 hex>", "server": "production"|"staging", "protoFamily": "wa-1.33"|"wa-1.34"|"wa-master", "meeting": {...}, "movement": {...} }`. One hash per file, equal to its index key. Hash regex `^[0-9a-f]{8}$`.
 - A catalog adapter file also carries `"server"` (`"production"` or `"staging"`), validated as one of those two; it is informational for the client (the index and the watcher use it).
-- Whitelisted overrides and bounds: `meeting.areaDwellMs`, `meeting.areaLingerMs`: integers 0 to 10000; `movement.walkPxPerS`, `movement.runPxPerS`: numbers 50 to 1000. Any other field is dropped.
+- **Handshake parameters** (optional `"handshake": { "query": { "<name>": "<value>" } }`): at most 12 names, each matching
+  `^[A-Za-z][A-Za-z0-9]{0,31}$`; values are strings of at most 64 characters from `[A-Za-z0-9._:{}-]`; the only
+  placeholders are `{tabId}` and `{uuid}`; the names `roomId`, `version`, `characterTextureIds`, `token` are forbidden (a
+  file naming them is rejected as invalid, not trimmed); an extra parameter never overrides one the client already sets.
+- Whitelisted overrides and bounds: `meeting.areaDwellMs`, `meeting.areaLingerMs`: integers 0 to 10000; `movement.walkPxPerS`, `movement.runPxPerS`: numbers 50 to 1000, plus the handshake rules above. Any other field is dropped.
 - Index shape: `{ "schema": 1, "updated": "<ISO>", "entries": { "<hash>": { "status": "ok"|"needs-attention", "server": "production"|"staging", "version", "file", "sha256", "gate", "issue" } } }`. A placeholder has `status: "needs-attention"` and no `file`. Staging servers (which show `master@<sha>`) work exactly like production: the hash is the key; `version` is the release (`v1.34.4`) or `master@<sha>`.
 - Built-in hashes always win over the catalog; a built-in or cached hash never triggers a prompt.
 - Consent covers downloading and applying the adapter file. Reading the server home page and the index needs no consent.
@@ -36,6 +40,7 @@ Failure modes the spec implies that no single task's happy path exercises (each 
 3. Catalog unreachable, slow, or 404 while the server's hash is unknown. `wa join` must proceed as it does today within seconds (Tasks 4, 7).
 4. `ask` mode with no terminal (cron, daemon, CI). Must not hang; must print how to allow it (Tasks 5, 7).
 5. A server home page with no `wa-api-version` tag (self-hosted). Must not prompt or block (Tasks 3, 7).
+6. A catalog adapter trying to steer the connection: `handshake` naming `roomId`/`version`/`token`, or an unbounded or odd-valued parameter. Must be rejected as a whole file, never trimmed and used (Tasks 1, 10).
 
 ---
 
@@ -50,9 +55,9 @@ Failure modes the spec implies that no single task's happy path exercises (each 
 - Produces:
   - `export const HASH_RE`, `export const BOUNDS = { dwellMs: [0, 10000], lingerMs: [0, 10000], speed: [50, 1000] }`.
   - `export function validateAdapterFile(file: unknown, builtins: Record<string, object>): { ok: true, file: AdapterFile } | { ok: false, reason: string }` where `AdapterFile` is the normalised file with only whitelisted fields.
-  - `export function buildAdapter(file: AdapterFile, builtins): object`: a full adapter: the `builtins[file.protoFamily]` object with `id`, `waVersion` from the file, `stability: "catalog"`, `apiVersionHashes: [file.apiVersionHash, ...base hashes without it]`, `meeting` and `movement` merged over the base's.
+  - `export function buildAdapter(file: AdapterFile, builtins): object` (the built adapter also gets `handshake: { query }` when the file has one): a full adapter: the `builtins[file.protoFamily]` object with `id`, `waVersion` from the file, `stability: "catalog"`, `apiVersionHashes: [file.apiVersionHash, ...base hashes without it]`, `meeting` and `movement` merged over the base's.
 
-- [ ] **Step 1: Write the failing tests** in `test/catalog-schema.test.mjs`: a good file passes and normalises; each rejection has its own test with a `reason` that names the field: non-object, `schema !== 1`, bad hash (`"XYZ"`, 9 chars), unknown `protoFamily` (while `wa-master` is valid), `server: "elsewhere"`, `areaDwellMs: 99999`, `areaLingerMs: -1`, `walkPxPerS: "fast"`, `runPxPerS: 5000`; an extra field (`"code": "..."`, `meeting.evil`) is dropped from the normalised file; `buildAdapter` puts the file's hash first, keeps the base's other hashes once each, overrides only the given numbers, and leaves the built-in object unmutated (`builtins["wa-1.34"].meeting` unchanged after the call).
+- [ ] **Step 1: Write the failing tests** in `test/catalog-schema.test.mjs`: a good file passes and normalises; each rejection has its own test with a `reason` that names the field: non-object, `schema !== 1`, bad hash (`"XYZ"`, 9 chars), unknown `protoFamily` (while `wa-master` is valid), `server: "elsewhere"`, `areaDwellMs: 99999`, `areaLingerMs: -1`, `walkPxPerS: "fast"`, `runPxPerS: 5000`; an extra field (`"code": "..."`, `meeting.evil`) is dropped from the normalised file; each handshake rule has a rejection test (13 parameters, a name `bad name`, a 65-character value, a value with a space or `&`, an unknown placeholder `{x}`, and each forbidden name `roomId`, `version`, `characterTextureIds`, `token`) and a good file with `handshake.query` of `{ "chatID": "", "tabId2": "{tabId}", "cid": "{uuid}" }` normalises and builds with `adapter.handshake.query` equal to it; `buildAdapter` puts the file's hash first, keeps the base's other hashes once each, overrides only the given numbers, and leaves the built-in object unmutated (`builtins["wa-1.34"].meeting` unchanged after the call).
 - [ ] **Step 2: Run** `node --test test/catalog-schema.test.mjs`. Expected: FAIL (module missing).
 - [ ] **Step 3: Implement** `validateAdapterFile` and `buildAdapter` in `src/catalog/schema.mjs` per the signatures above. Plain checks, no schema library.
 - [ ] **Step 4: Run the test again.** Expected: PASS.
@@ -212,7 +217,23 @@ Failure modes the spec implies that no single task's happy path exercises (each 
 - [ ] **Step 4: Run `npm test`.** Expected: PASS.
 - [ ] **Step 5: Commit** (`feat(catalog): seed the catalog with the known prod hashes (#126)`).
 
-### Task 10: Docs
+### Task 10: Apply handshake parameters to the websocket URL
+
+**Files:**
+- Modify: `src/wa-client.mjs` (`_wsUrl()`, ~line 162)
+- Test: `test/wa-handshake-params.test.mjs`
+
+**Interfaces:**
+- Consumes: `adapter.handshake?.query` (`Record<string, string>`), produced by `buildAdapter` (Task 1).
+- Produces: `_wsUrl()` returns the same URL as today, plus one query parameter per `adapter.handshake.query` entry whose name the client does not already set, with `{tabId}` replaced by this connection's `tabId` value and `{uuid}` by a fresh `randomUUID()`. Built-in adapters have no `handshake`, so their URL is unchanged.
+
+- [ ] **Step 1: Write the failing tests:** with a client whose adapter has `handshake.query = { chatID: "x", newRequired: "v", viaTab: "{tabId}", cid: "{uuid}", roomId: "evil" }`: `newRequired=v` is present; `viaTab` equals the URL's own `tabId`; `cid` matches a UUID and differs between two `_wsUrl()` calls; `chatID` keeps its built-in value (not `x`); `roomId` is the room, not `evil`; with no `handshake` the parameter set equals today's (`roomId, characterTextureIds, version, roomName, cameraState, microphoneState, screenSharingState, chatID, tabId`).
+- [ ] **Step 2: Run** `node --test test/wa-handshake-params.test.mjs`. Expected: FAIL.
+- [ ] **Step 3: Implement** the loop at the end of `_wsUrl()`, skipping names already present with `u.searchParams.has(name)`.
+- [ ] **Step 4: Run `npm test`.** Expected: PASS.
+- [ ] **Step 5: Commit** (`feat(adapters): a catalog adapter can add constant handshake parameters (#126)`).
+
+### Task 11: Docs
 
 **Files:**
 - Modify: `docs/field-notes.md` ("When prod bumps" gets a short "With the catalog" paragraph above the manual procedure), `CLAUDE.md` (one line under Docs pointing at the design and this flow), `README.md` only if it documents `wa join` options.
@@ -226,5 +247,6 @@ Failure modes the spec implies that no single task's happy path exercises (each 
 ## Self-review
 
 - **Spec coverage (CLI half):** catalog format and seed (Tasks 1, 4, 9); reading the hash and release from the home page (3); consent, `ask`/`auto`/`never`, "always" persisting, no-terminal behaviour (5, 7); download, sha256, strict validation, cache, cached use next start (2, 4, 6); "no adapter yet" and "needs attention" messages (7); daemon `auto` path including mid-session (8); offline and failure behaviour (4, 7). **Not in this plan, by design:** Android flow, the watcher workflow and gate, `--adapter-file`, David's hook.
+- **Handshake parameters (added 2026-11-12):** schema and rules in Task 1, application in Task 10; the Android half and the candidate builder's derivation of them belong to the other two plans.
 - **Type consistency:** `validateAdapterFile`/`buildAdapter` (1) are consumed unchanged by 2, 4, 9; `loadCached(hash, { dir, builtins })` (2) is the `cachedFor` source in 6; `recoverAdapter` (7) is the one entry used by `bin/wa.mjs` and the daemon (8); `Outcome.status` values are the same strings in 7 and 8.
 - **Proportion:** ten tasks, one new directory, no new dependency; tests carry the assertions, code bodies are left to the implementer.

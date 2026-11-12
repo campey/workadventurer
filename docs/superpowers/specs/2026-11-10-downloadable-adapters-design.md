@@ -57,6 +57,9 @@ shows up as an issue, with the app telling its user plainly that this server ver
    needs attention.
 5. **When something needs attention you hear about it through a GitHub issue** (one per server version) plus the
    placeholder in the catalog [campey: "1 plus placeholder"].
+6. **The adapter also carries the connection handshake's constant query parameters** [campey: "yes add that now", 2026-11-12],
+   because the backtest showed four of the six historical breaks were exactly that (a new required parameter). See
+   "Handshake parameters" below.
 
 ## Discovery [verified 2026-11-10, production and staging]
 
@@ -73,7 +76,8 @@ behaves as it does today.
 
 - `catalog/index.json`: `{ "schema": 1, "updated": "<ISO time>", "entries": { "<apiVersionHash>": { "status": "ok" | "needs-attention", "server": "production" | "staging", "version": "1.34.4" or "master@10b19f83", "file": "adapters/<hash>.json", "sha256": "<of the file>", "gate": {...}, "issue": <number|null> } } }`
 - `catalog/adapters/<hash>.json`: the adapter data, shaped like today's `wa-1.34` adapter minus code and proto path:
-  `{ "schema": 1, "id", "waVersion", "apiVersionHash": "<one hash, equal to its index key>", "protoFamily": "wa-1.34", "meeting": {...}, "movement": {...} }`.
+  `{ "schema": 1, "id", "waVersion", "apiVersionHash": "<one hash, equal to its index key>", "protoFamily": "wa-1.34", "meeting": {...}, "movement": {...}, "handshake": { "query": { "<name>": "<value>" } } }`
+  (`handshake` is optional).
   `protoFamily` names a built-in adapter the Node client starts from (wa-1.33, wa-1.34, or wa-master for staging); the catalog file only
   overrides the whitelisted fields (below) on top of it, so it cannot carry functions or message plumbing.
   **The Android app compiles in only the wa-1.33 proto** (`android/protocol/build.gradle.kts`), which still decodes
@@ -90,6 +94,25 @@ behaves as it does today.
   `WA_CATALOG_URL` / an app setting overrides it, which the gate and tests use).
 - Seeded with the hashes we already know and have verified (production v1.34.0, .1, .2, .4; staging `d2d82672`; v1.34.3 is left out because it was never seen live). Staging is already past its seed entry: the watcher's first run produces the current one.
 - **Staging entries are pruned**: the catalog keeps the newest five staging entries, because staging produces a new hash every few days and old ones are never asked for again. Production entries are kept forever. Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
+
+### Handshake parameters
+
+`handshake.query` is a map of extra query parameters the client adds to the `/ws/room` upgrade URL, for the case where a
+server release starts requiring a parameter the built-in client does not send. Constant data only; the rules (my call,
+the safe minimum):
+
+- At most 12 parameters. Names match `^[A-Za-z][A-Za-z0-9]{0,31}$`; values are strings of at most 64 characters from
+  `[A-Za-z0-9._:{}-]`.
+- Two placeholders, for values that must differ per connection: `{tabId}` (the connection's own tab id, which the client
+  already generates) and `{uuid}` (a fresh random UUID).
+- A catalog entry **cannot set or change** `roomId`, `version`, `characterTextureIds` or `token` (a bad entry must not be
+  able to redirect a client to another room or identity), and an extra parameter never overrides one the client already
+  sends. Such a file is rejected as invalid.
+- Both clients apply it: the Node client in `_wsUrl()`, the Android app in `wsUrl()`.
+- The watcher's candidate builder derives it: it reads the server's `queryValidator` (the backtest's parser) and for each
+  *new required* parameter the built-in client does not send, adds a guess by the validator's type (`z.string()` → `""`,
+  a `.min(1)` string → `{uuid}`, the `"true"`-transform booleans → `"false"`, numbers → `"0"`). A wrong guess is caught by
+  the gate (the connection fails) and becomes a placeholder.
 
 ### 2. Client side (CLI and Android)
 
@@ -221,7 +244,7 @@ what the live scenarios and `selfcheck` are for. Android's check is a name searc
 **Finding: four of the six flagged refs were handshake-only changes**, constant query parameters a client simply has to
 send (`chatID=""`, `roomName=""`, `cameraState=false`, `tabId=<id>`). That is data, not code. If the adapter carries
 the handshake's query parameters (below), only the two space-message refactors (v1.26.12, v1.26.15) would have needed
-code. Recommended addition to the adapter schema, decided with the user: see "Open: handshake parameters as data".
+code. Decided: the adapter carries them, see "Handshake parameters".
 
 ## What is left to the builder
 
