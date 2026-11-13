@@ -29,6 +29,7 @@ const BASE = {
   stt: false, // WA_STT=1 -> live speech-to-text on inbound peer audio (issue #23, prototype)
   ttsPython: "python3", // WA_TTS_PYTHON -> interpreter for huggingsesame's say.py (issue #7)
   ttsSay: path.join(os.homedir(), "Code", "huggingsesame", "src", "say.py"), // WA_TTS_SAY
+  adapterUpdates: "ask", // WA_ADAPTER_UPDATES: ask | auto | never — downloading adapters (#126)
 };
 
 const ENV_MAP = {
@@ -43,11 +44,14 @@ const ENV_MAP = {
   WA_STT_TRANSCRIPT: "transcript",
   WA_TTS_PYTHON: "ttsPython",
   WA_TTS_SAY: "ttsSay",
+  WA_ADAPTER_UPDATES: "adapterUpdates",
 };
 
-function fromFile() {
+const ADAPTER_UPDATES = ["ask", "auto", "never"];
+
+function fromFile(configPath = CONFIG_PATH) {
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    return JSON.parse(fs.readFileSync(configPath, "utf8"));
   } catch {
     return {};
   }
@@ -66,14 +70,29 @@ function fromEnv(env = process.env) {
  *                        keys are ignored.
  * @returns {{roomUrl,name,pusherUrl,version,wokaId,port}}
  */
-export function resolveConfig(flags = {}) {
+export function resolveConfig(flags = {}, configPath = CONFIG_PATH) {
   const cleanFlags = Object.fromEntries(
     Object.entries(flags).filter(([, v]) => v !== undefined && v !== null)
   );
-  const merged = { ...BASE, ...fromFile(), ...fromEnv(), ...cleanFlags };
+  const merged = { ...BASE, ...fromFile(configPath), ...fromEnv(), ...cleanFlags };
   merged.port = Number(merged.port) || BASE.port;
   merged.stt = merged.stt === true || merged.stt === "1" || merged.stt === "true";
+  if (!ADAPTER_UPDATES.includes(merged.adapterUpdates)) merged.adapterUpdates = BASE.adapterUpdates;
   return merged;
+}
+
+/**
+ * Persist one field into the config file, keeping the others. Creates the
+ * directory and file if missing; writes a temp file then renames so a crash
+ * never leaves a half-written config.
+ */
+export function writeConfigField(field, value, configPath = CONFIG_PATH) {
+  const current = fromFile(configPath);
+  const next = { ...(current && typeof current === "object" ? current : {}), [field]: value };
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const tmp = `${configPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
+  fs.renameSync(tmp, configPath);
 }
 
 /**
@@ -103,6 +122,7 @@ export function configToEnv(cfg) {
     ...(cfg.transcript ? { WA_STT_TRANSCRIPT: cfg.transcript } : {}),
     WA_TTS_PYTHON: cfg.ttsPython,
     WA_TTS_SAY: cfg.ttsSay,
+    WA_ADAPTER_UPDATES: cfg.adapterUpdates,
     ...(cfg.version ? { WA_VERSION: cfg.version } : {}),
   };
 }
