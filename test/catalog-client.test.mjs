@@ -213,3 +213,25 @@ test("adapter file: an oversized body is cut off at the cap, not buffered", asyn
   assert.ok(state.sent < 4 * 1024 * 1024, `server pushed ${state.sent} bytes`);
   assert.equal(state.closed, true);
 });
+
+test("index: a needs-attention placeholder is kept with its gate; file and sha256 are stripped", async () => {
+  const text = adapterText();
+  serve("/i/placeholder", indexText({
+    "55555555": { status: "needs-attention", server: "staging", version: "master@abc", gate: "movement drifted", issue: 7 },
+    "66666666": entryFor(text, { status: "needs-attention", gate: "g" }),
+    "77777777": entryFor(text, { status: "ok", file: undefined }),
+    "88888888": entryFor(text, { status: "garbage" }),
+    [HASH]: entryFor(text),
+  }));
+  const r = await fetchIndex({ url: `${base}/i/placeholder` });
+  assert.equal(r.ok, true);
+  assert.deepEqual(Object.keys(r.index.entries).sort(), ["55555555", "66666666", HASH].sort());
+  assert.equal(r.index.entries["55555555"].gate, "movement drifted");
+  assert.equal(r.index.entries["55555555"].issue, 7);
+  // Chosen: a needs-attention entry never carries a usable file, even if the index gave one.
+  assert.equal("file" in r.index.entries["66666666"], false);
+  assert.equal("sha256" in r.index.entries["66666666"], false);
+  assert.equal(r.index.entries["66666666"].gate, "g");
+  const f = await fetchAdapterFile({ indexUrl: r.url, hash: "66666666", entry: r.index.entries["66666666"], builtins });
+  assert.equal(f.ok, false);
+});

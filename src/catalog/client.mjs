@@ -73,12 +73,18 @@ export async function fetchIndex({ url = catalogUrl(), fetch, timeoutMs } = {}) 
   const raw = parsed.value;
   if (!isObj(raw) || raw.schema !== 1) return bad("index: schema must be 1");
   if (!isObj(raw.entries)) return bad("index: entries must be an object");
-  // Keep only entries we could trust: a hash key, a file path and a real sha256.
+  // Keep only entries we could trust. "ok" needs a file path and a real sha256;
+  // "needs-attention" is a placeholder with no usable file (any file/sha256 it carries
+  // is stripped, so it can never be fetched as an adapter); other statuses are dropped.
   const entries = {};
   for (const [hash, e] of Object.entries(raw.entries)) {
     if (!HASH_RE.test(hash) || !isObj(e)) continue;
-    if (typeof e.file !== "string" || typeof e.sha256 !== "string" || !SHA256_RE.test(e.sha256)) continue;
-    entries[hash] = e;
+    if (e.status === "needs-attention") {
+      const { file, sha256, ...rest } = e;
+      entries[hash] = rest;
+    } else if (e.status === "ok" && typeof e.file === "string" && typeof e.sha256 === "string" && SHA256_RE.test(e.sha256)) {
+      entries[hash] = e;
+    }
   }
   return { ok: true, url, index: { ...raw, entries } };
 }
