@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveConfig, configToEnv, explicitPort, writeConfigField } from "../src/config.mjs";
 import { ADAPTERS, matchVersion } from "../src/adapters/index.mjs";
-import { recoverAdapter, refusalMessage } from "../src/catalog/recover.mjs";
+import { recoverAdapter, refusalMessage, alwaysHandler } from "../src/catalog/recover.mjs";
 import { askYesNoAlways } from "../src/catalog/prompt.mjs";
 import { REFUSED_EXIT } from "../src/supervise.mjs";
 import { createRegistry, AmbiguousDaemonError } from "../src/daemon-registry.mjs";
@@ -219,7 +219,7 @@ switch (cmd) {
     if (!cfg.version && cfg.target === "auto") {
       const outcome = await recoverAdapter({
         roomUrl: roomUrl ?? cfg.roomUrl, mode: cfg.adapterUpdates, ask: askYesNoAlways,
-        onAlways: () => { writeConfigField("adapterUpdates", "auto"); },
+        onAlways: alwaysHandler(cfg, writeConfigField), timeoutMs: 3000, // pre-flight: a black-holed page must not stall every join
         builtins: ADAPTERS, matchRelease: matchVersion, log: note,
       });
       if (outcome.status === "applied") note(`using adapter ${outcome.adapter.id} (${outcome.hash})`);

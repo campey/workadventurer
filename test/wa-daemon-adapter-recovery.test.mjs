@@ -23,14 +23,14 @@ const adapterText = JSON.stringify({
   schema: 1, id: "wa-test", waVersion: "9.9", apiVersionHash: NEW_HASH, server: "production", protoFamily: "wa-1.34",
 });
 
-async function startCatalog() {
+async function startCatalog({ entries = true } = {}) {
   const sha256 = createHash("sha256").update(adapterText).digest("hex");
   const server = http.createServer((req, res) => {
     res.setHeader("content-type", "application/json");
     if (req.url === "/catalog/index.json") {
       return res.end(JSON.stringify({
         schema: 1, updated: "x",
-        entries: { [NEW_HASH]: { status: "ok", server: "production", version: "9.9", file: `adapters/${NEW_HASH}.json`, sha256 } },
+        entries: !entries ? {} : { [NEW_HASH]: { status: "ok", server: "production", version: "9.9", file: `adapters/${NEW_HASH}.json`, sha256 } },
       }));
     }
     if (req.url === `/catalog/adapters/${NEW_HASH}.json`) return res.end(adapterText);
@@ -52,9 +52,9 @@ async function freePort() {
   return port;
 }
 
-async function withSetup(mode, body) {
+async function withSetup(mode, body, { entries = true } = {}) {
   const pusher = await startFakePusher({ acceptHashes: [NEW_HASH] });
-  const catalog = await startCatalog();
+  const catalog = await startCatalog({ entries });
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "wa-daemon-recovery-"));
   const port = await freePort();
   const child = spawn(process.execPath, [DAEMON], {
@@ -106,5 +106,14 @@ test("ask: the daemon cannot prompt, exits REFUSED_EXIT and writes no cache", as
     const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r("timeout"), 15000))]);
     assert.equal(code, REFUSED_EXIT, output());
     assert.equal(fs.existsSync(path.join(home, ".workadventurer", "adapters")), false);
+    assert.match(output(), /run `wa join` again to check the catalog for an adapter, or set WA_ADAPTER_UPDATES=auto/);
   });
+});
+
+test("auto: a catalog with no entry for the hash logs why and exits REFUSED_EXIT", async () => {
+  await withSetup("auto", async ({ exited, output }) => {
+    const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r("timeout"), 15000))]);
+    assert.equal(code, REFUSED_EXIT, output());
+    assert.match(output(), /no adapter for this server version yet/);
+  }, { entries: false });
 });

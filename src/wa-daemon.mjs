@@ -33,7 +33,7 @@ import fs from "node:fs";
 import { WorkAdventureClient } from "./wa-client.mjs";
 import { ADAPTERS, matchVersion } from "./adapters/index.mjs";
 import { loadCached } from "./catalog/store.mjs";
-import { recoverAdapter } from "./catalog/recover.mjs";
+import { recoverAdapter, refusalMessage } from "./catalog/recover.mjs";
 import { catalogUrl } from "./catalog/client.mjs";
 import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
@@ -311,12 +311,18 @@ const newClient = () =>
 // terminal, so ask/never never get here; `wa join` is where those prompt. A true
 // result means the next newClient() resolves the adapter from the cache.
 async function tryAdapterRecovery() {
-  if (cfg.adapterUpdates !== "auto" || cfg.version || cfg.target !== "auto") return false;
+  if (cfg.version || cfg.target !== "auto") return false;
+  if (cfg.adapterUpdates !== "auto") {
+    log("the server's version is newer than any adapter here: run `wa join` again to check the catalog for an adapter, or set WA_ADAPTER_UPDATES=auto so the daemon does it itself");
+    return false;
+  }
   const outcome = await recoverAdapter({
     roomUrl: cfg.roomUrl, mode: "auto", indexUrl: catalogUrl(),
     builtins: ADAPTERS, matchRelease: matchVersion, log,
   });
   log(`adapter recovery: ${outcome.status}${outcome.adapter ? ` (${outcome.adapter.id}, ${outcome.hash})` : ""}`);
+  const refusal = refusalMessage(outcome);
+  if (refusal) log(refusal);
   return outcome.status === "applied";
 }
 

@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { ADAPTERS, matchVersion } from "../src/adapters/index.mjs";
-import { recoverAdapter, refusalMessage } from "../src/catalog/recover.mjs";
+import { recoverAdapter, refusalMessage, alwaysHandler } from "../src/catalog/recover.mjs";
 import { cachedHashes, loadCached } from "../src/catalog/store.mjs";
 import { REFUSED_EXIT } from "../src/supervise.mjs";
 
@@ -121,6 +121,17 @@ test("refusalMessage wording depends on never vs declined", () => {
   const declined = refusalMessage({ status: "declined", hash: HASH });
   assert.match(declined, /answer y/);
   assert.match(declined, /WA_ADAPTER_UPDATES=auto/);
+});
+
+test("alwaysHandler sets the session config first, even when the write throws", () => {
+  const cfg = { adapterUpdates: "ask" };
+  const writes = [];
+  alwaysHandler(cfg, (f, v) => writes.push([f, v]))();
+  assert.equal(cfg.adapterUpdates, "auto");
+  assert.deepEqual(writes, [["adapterUpdates", "auto"]]);
+  const cfg2 = { adapterUpdates: "ask" };
+  assert.throws(() => alwaysHandler(cfg2, () => { throw new Error("refused"); })(), /refused/);
+  assert.equal(cfg2.adapterUpdates, "auto");
 });
 
 test("unsupported/no-entry", async () => {

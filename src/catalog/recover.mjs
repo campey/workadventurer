@@ -67,6 +67,18 @@ export async function recoverAdapter({
   }
 }
 
+/**
+ * The onAlways callback for `wa join`: the session switches to auto first (the daemon
+ * it starts gets WA_ADAPTER_UPDATES from cfg), then the choice is written to the config
+ * file; a refused write throws and recoverAdapter logs it.
+ */
+export function alwaysHandler(cfg, write) {
+  return () => {
+    cfg.adapterUpdates = "auto";
+    write("adapterUpdates", "auto");
+  };
+}
+
 const HOW_TO_ALLOW =
   "to allow the download, run `wa join` again and answer y, or set adapterUpdates to auto (WA_ADAPTER_UPDATES=auto)";
 const HOW_TO_ALLOW_NEVER =
