@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "wa-master-118dd84c",
+  "waVersion": "master-118dd84c",
+  "apiVersionHash": "d2d82672",
+  "server": "staging",
+  "protoFamily": "wa-master",
+  "meeting": {
+    "areaDwellMs": 1500,
+    "areaLingerMs": 2500
+  }
+}
