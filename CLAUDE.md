@@ -17,6 +17,8 @@ Project-specific rules for Claude Code sessions working in this repo.
 - `docs/fakes-with-probes.md` — how we use fakes with probes for ports & adapters
   (#124/#125): the probe → recorder → scenario → fake → gap loop, `npm run scenarios`,
   `WORLD=live`, `RECORD=1`, `world-port/probes/run.mjs`, the `confirmedBy` rule.
+- `docs/superpowers/specs/2026-11-10-downloadable-adapters-design.md` — downloadable adapters (#126);
+  the CLI side is summarised in `docs/field-notes.md` "When prod bumps" ("With the catalog").
 
 - `android/docs/field-notes.md` — the Android client's gate-by-gate findings, led by a
   "Protocol and behaviour reference" (spaces, roles, mic state and mute, libwebrtc

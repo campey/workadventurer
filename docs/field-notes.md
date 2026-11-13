@@ -673,6 +673,42 @@ A route's waypoints are tile **centres**, so it ends up to about 22 px from the 
 
 ### When prod bumps
 
+**With the catalog (#126).** `wa join` no longer just fails on a server hash it
+doesn't know. Unless `--version` or a non-`auto` `--target` pins the adapter, it
+reads the hash from the server home page's `<meta name="wa-api-version">`; if no
+built-in adapter or cached catalog file has it, it looks the hash up in the
+catalog (`catalog/index.json` in this repo, fetched from raw.githubusercontent.com)
+and acts on `adapterUpdates`: `ask` (the default) prompts `[y/N/always]` (with no
+terminal the answer is no, never a silent download), `auto` downloads, `never`
+doesn't. `always` downloads and also writes `"adapterUpdates": "auto"` into the
+config file; it refuses (and says so) to touch a config file it cannot parse. The
+setting is `adapterUpdates` in the config file or `WA_ADAPTER_UPDATES`. Outcomes:
+`using adapter <id> (<hash>)` and the join goes ahead; or `wa join` exits **4** with
+`no adapter for this server version yet (<hash>)` (no catalog entry),
+`this server version isn't supported yet, it needs attention (<hash>)` (a
+placeholder entry), or `an adapter for this server version (<hash>) is available but
+was not downloaded; ...` (declined, or `never`). If the page or the catalog can't
+be read, `wa join` carries on as before. A downloaded file is checked against the
+index's sha256 and a strict schema, then cached at
+`~/.workadventurer/adapters/<hash>.json`; later starts use the cache with no
+network. `WA_CATALOG_URL` replaces the index URL. Any HTTP redirect counts as a
+failure, the adapter file URL must be on the index's origin, and the size caps are
+1 MiB for the index and 64 KiB for an adapter file. The daemon recovers by itself
+only in `auto` mode, after a `NEW_VERSION` refusal (once per give-up); in `ask` or
+`never` it exits as before and `wa join` is where the prompt happens. Catalog
+adapters are data only: the hash, `meeting.areaDwellMs`/`areaLingerMs` (0 to 10000
+ms), `movement.walkPxPerS`/`runPxPerS` (50 to 1000) and optional extra handshake
+query parameters (at most 12, constant values or `{tabId}`/`{uuid}`, never
+`roomId`, `version`, `characterTextureIds` or `token`), laid over a built-in
+adapter family (`protoFamily`: `wa-1.33`, `wa-1.34` or `wa-master`). Built-in
+hashes always win; the cache and catalog are only consulted for a hash no built-in
+knows. `scripts/catalog-index.mjs` rebuilds the index from `catalog/adapters/*.json`
+and shows an adapter file's `waVersion` `1.34.4` as `v1.34.4` and
+`master-<sha>` as `master@<sha>`. **Not built yet:** the version-watcher that would
+produce catalog entries (the hourly gate, placeholders, issues). Until it exists the
+manual procedure below is still how a new hash gets added, and the seeded catalog
+only holds hashes that are already built in.
+
 Prod moved from `v1.33.8` to `v1.34.0` without notice (2026-10-05) and every
 client stopped connecting: the server answers a stale `apiVersionHash` with
 `errorScreen NEW_VERSION` (the daemon now exits 1 saying exactly that, and
