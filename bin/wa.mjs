@@ -9,7 +9,11 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
-import { resolveConfig, configToEnv, explicitPort } from "../src/config.mjs";
+import { resolveConfig, configToEnv, explicitPort, writeConfigField } from "../src/config.mjs";
+import { ADAPTERS, matchVersion } from "../src/adapters/index.mjs";
+import { recoverAdapter, refusalMessage } from "../src/catalog/recover.mjs";
+import { askYesNoAlways } from "../src/catalog/prompt.mjs";
+import { REFUSED_EXIT } from "../src/supervise.mjs";
 import { createRegistry, AmbiguousDaemonError } from "../src/daemon-registry.mjs";
 
 const DAEMON = fileURLToPath(new URL("../src/wa-daemon.mjs", import.meta.url));
@@ -210,6 +214,17 @@ switch (cmd) {
     if (await daemonReachable()) {
       note("already joined");
       process.exit(0);
+    }
+    // Unknown server hash? Offer the catalog's adapter before the daemon starts (#126).
+    if (!cfg.version && cfg.target === "auto") {
+      const outcome = await recoverAdapter({
+        roomUrl: roomUrl ?? cfg.roomUrl, mode: cfg.adapterUpdates, ask: askYesNoAlways,
+        onAlways: () => { writeConfigField("adapterUpdates", "auto"); },
+        builtins: ADAPTERS, matchRelease: matchVersion, log: note,
+      });
+      if (outcome.status === "applied") note(`using adapter ${outcome.adapter.id} (${outcome.hash})`);
+      const refusal = refusalMessage(outcome);
+      if (refusal) die(refusal, REFUSED_EXIT);
     }
     if (flags.detach) {
       spawnDaemon({ detached: true, roomUrl, keepAlive: flags["keep-alive"] });
