@@ -5,6 +5,7 @@
 import wa133 from "./wa-1.33.mjs";
 import wa134 from "./wa-1.34.mjs";
 import waMaster from "./wa-master.mjs";
+import { matchApiHash } from "../catalog/server-version.mjs";
 
 export const ADAPTERS = {
   "wa-1.33": wa133,
@@ -40,7 +41,11 @@ export async function probeVersion(roomUrl) {
   try {
     const res = await fetch(origin + "/", { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
-    return matchVersion(await res.text());
+    const html = await res.text();
+    const version = matchVersion(html);
+    const hash = matchApiHash(html);
+    if (!hash) return version;
+    return { ...(version ?? {}), hash };
   } catch {
     return null;
   }

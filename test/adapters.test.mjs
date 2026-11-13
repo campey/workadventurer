@@ -154,3 +154,18 @@ test("wa-1.34 keeps the wa-1.33 meeting strategy names; the area LIVEKIT/ONLINE 
   assert.equal(w134.meeting.webrtcStrategyName, w133.meeting.webrtcStrategyName);
   assert.equal(w134.meeting.areaAvailabilityStatus, undefined);
 });
+
+test("probeVersion adds the wa-api-version hash when the page has the tag", async () => {
+  const http = await import("node:http");
+  const { probeVersion } = await import("../src/adapters/index.mjs");
+  const srv = http.createServer((q, r) =>
+    r.end('<meta name="wa-api-version" content="f4cfe455"> v1.34.4')
+  );
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+  try {
+    const p = await probeVersion(`http://127.0.0.1:${srv.address().port}/_/x/y`);
+    assert.deepEqual(p, { kind: "release", minor: "1.34", raw: "v1.34.4", hash: "f4cfe455" });
+  } finally {
+    srv.close();
+  }
+});
