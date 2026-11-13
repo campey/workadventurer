@@ -31,6 +31,8 @@
 import http from "node:http";
 import fs from "node:fs";
 import { WorkAdventureClient } from "./wa-client.mjs";
+import { ADAPTERS } from "./adapters/index.mjs";
+import { loadCached } from "./catalog/store.mjs";
 import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
 import { resolveClip } from "./resolve-clip.mjs";
@@ -286,6 +288,8 @@ const newClient = () =>
     target: cfg.target,
     version: cfg.version,
     wokaId: cfg.wokaId,
+    // Catalog adapters downloaded earlier (#126); the client itself never reads the cache.
+    cachedFor: (h) => loadCached(h, { builtins: ADAPTERS }),
     // A listen-mode ("scribe") instance doesn't publish audio by default —
     // client.micOn is the single source of truth every mic-announce path
     // respects (#10). See wa-audio.mjs for the rest of that invariant.
