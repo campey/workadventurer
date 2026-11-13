@@ -80,3 +80,44 @@ test("writeConfigField keeps the other fields", () => {
   });
   fs.rmSync(dir, { recursive: true });
 });
+
+test("writeConfigField refuses an invalid-JSON file and leaves its bytes alone", () => {
+  const { dir, file } = tmpConfig();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const bad = '{ "name": "bob", "port": 9000,, }';
+  fs.writeFileSync(file, bad);
+  assert.throws(
+    () => writeConfigField("adapterUpdates", "auto", file),
+    (e) => e.message.includes(file) && e.message.includes("untouched") && e.message.includes("WA_ADAPTER_UPDATES=auto")
+  );
+  assert.equal(fs.readFileSync(file, "utf8"), bad);
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), ["config.json"]);
+  fs.rmSync(dir, { recursive: true });
+});
+
+test("writeConfigField refuses a non-object JSON file (array, null) and leaves it alone", () => {
+  for (const body of ["[1,2]", "null", '"str"']) {
+    const { dir, file } = tmpConfig();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, body);
+    assert.throws(() => writeConfigField("adapterUpdates", "auto", file), /not a JSON object/);
+    assert.equal(fs.readFileSync(file, "utf8"), body);
+    fs.rmSync(dir, { recursive: true });
+  }
+});
+
+test("writeConfigField refuses an unreadable path (a directory) rather than overwriting", () => {
+  const { dir, file } = tmpConfig();
+  fs.mkdirSync(file, { recursive: true }); // config.json is a directory: read fails with EISDIR
+  assert.throws(() => writeConfigField("adapterUpdates", "auto", file), /cannot read it/);
+  assert.ok(fs.statSync(file).isDirectory());
+  fs.rmSync(dir, { recursive: true });
+});
+
+test("resolveConfig still reads a broken file leniently", () => {
+  const { dir, file } = tmpConfig();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, "{ nope");
+  assert.equal(resolveConfig({}, file).adapterUpdates, "ask");
+  fs.rmSync(dir, { recursive: true });
+});
