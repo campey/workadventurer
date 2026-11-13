@@ -44,7 +44,8 @@ export async function recoverAdapter({
     if (mode === "ask") {
       // No way to ask means no consent: never download silently.
       const answer = ask ? await ask(`This server has a new world adapter for ${version.release ?? hash}. Download it?`) : "no";
-      if (answer === "no") return { status: "declined", hash };
+      // Fail closed: only an exact "yes" or "always" is consent.
+      if (answer !== "yes" && answer !== "always") return { status: "declined", hash };
       if (answer === "always") {
         try { onAlways?.(); } catch (e) { log(`could not remember your choice: ${e.message}`); }
       }

@@ -145,6 +145,28 @@ test("ask mode with no ask function counts as no", async () => {
   assert.equal((await cachedHashes({ dir })).size, 0);
 });
 
+test("ask: any unexpected answer fails closed, nothing cached, onAlways not called", async () => {
+  for (const answer of [undefined, null, "y", "maybe", "YES", true]) {
+    setup({ entry: okEntry() });
+    const dir = tmp();
+    let n = 0;
+    const o = await run({ mode: "ask", dir, ask: async () => answer, onAlways: () => { n++; } });
+    assert.equal(o.status, "declined", String(answer));
+    assert.equal(n, 0);
+    assert.equal((await cachedHashes({ dir })).size, 0);
+    assert.equal(seen.some((u) => u.includes("/adapters/")), false);
+  }
+});
+
+test("ask: a throwing ask gives unavailable, nothing downloaded or cached", async () => {
+  setup({ entry: okEntry() });
+  const dir = tmp();
+  const o = await run({ mode: "ask", dir, ask: boom });
+  assert.equal(o.status, "unavailable");
+  assert.equal((await cachedHashes({ dir })).size, 0);
+  assert.equal(seen.some((u) => u.includes("/adapters/")), false);
+});
+
 test("a throwing onAlways does not stop the recovery", async () => {
   setup({ entry: okEntry() });
   const o = await run({ mode: "ask", ask: async () => "always", onAlways: () => { throw new Error("config untrustworthy"); } });
