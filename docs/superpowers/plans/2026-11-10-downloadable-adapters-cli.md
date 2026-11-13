@@ -146,16 +146,17 @@ Failure modes the spec implies that no single task's happy path exercises (each 
 
 **Files:**
 - Modify: `src/adapters/index.mjs` (`resolveAdapter`)
-- Modify: `src/wa-client.mjs:255` (pass the cache lookup)
+- Modify: `src/wa-client.mjs` (`constructor` option `cachedFor`, passed on in `connect()` at ~line 255; the client itself imports nothing from `src/catalog/`)
+- Modify: `src/wa-daemon.mjs` (`newClient()`: the outer layer supplies `cachedFor`)
 - Test: extend `test/adapters.test.mjs`
 
 **Interfaces:**
-- Consumes: `loadCached` (Task 2); the `hash` field `probeVersion` now returns (Task 3).
+- Consumes: `loadCached` (Task 2), used **only** by the daemon wiring; the `hash` field `probeVersion` now returns (Task 3).
 - Produces: `resolveAdapter({ roomUrl, override, probeFn, cachedFor })` where `cachedFor?: (hash: string) => Promise<object | null>`. New precedence: explicit override > **cached catalog adapter for the probed hash** > the existing probe, allowlist, default steps. The cached step applies only when the probe has a `hash` that is **not** in any built-in adapter's `apiVersionHashes` and `cachedFor(hash)` returns an adapter; the result is `{ adapter, why: "catalog adapter <id> (<hash>) from the local cache" }`. `WorkAdventureClient.connect()` passes `cachedFor: (h) => loadCached(h, { builtins: ADAPTERS })`.
 
 - [ ] **Step 1: Write the failing tests** with an injected `probeFn` returning `{ kind: "release", minor: "1.34", raw: "v1.34.9", hash: "deadbeef" }` and an injected `cachedFor`: cached adapter wins over the probe's default; a hash that is built in never consults `cachedFor` (assert it is not called); an explicit `override` still wins; `cachedFor` returning `null` or throwing falls through to today's result (a throw must not break connecting).
 - [ ] **Step 2: Run** `node --test test/adapters.test.mjs`. Expected: FAIL on the new tests.
-- [ ] **Step 3: Implement** the precedence change and the `connect()` wiring; the `catch` around `cachedFor` logs nothing and falls through.
+- [ ] **Step 3: Implement** the precedence change; add an optional `cachedFor` client option (default none) that `connect()` hands to `resolveAdapter`, so the core client never touches the filesystem cache; in `src/wa-daemon.mjs` `newClient()` pass `cachedFor: (h) => loadCached(h, { builtins: ADAPTERS })`. The `catch` around `cachedFor` logs nothing and falls through. Add a client test: with no `cachedFor` option, `connect()` behaves exactly as today (no catalog module is imported by `src/wa-client.mjs`: assert with a grep-style test on the file's import lines).
 - [ ] **Step 4: Run `npm test`.** Expected: PASS.
 - [ ] **Step 5: Commit** (`feat(adapters): resolve a cached catalog adapter by the server's hash (#126)`).
 
