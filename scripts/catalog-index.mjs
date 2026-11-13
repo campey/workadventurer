@@ -25,10 +25,24 @@ export function displayVersion(waVersion) {
 export function rebuildIndex(dir = DEFAULT_DIR, { now = new Date() } = {}) {
   const indexPath = path.join(dir, "index.json");
   let previous = {};
+  let raw = null;
   try {
-    previous = JSON.parse(fs.readFileSync(indexPath, "utf8")).entries ?? {};
-  } catch {
-    // no index yet
+    raw = fs.readFileSync(indexPath, "utf8");
+  } catch (e) {
+    if (e.code !== "ENOENT") throw new Error(`${indexPath}: existing index could not be read (${e.message}); nothing was written. Fix or delete the file and rerun.`);
+  }
+  if (raw !== null) {
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      throw new Error(`${indexPath}: existing index could not be read (${e.message}); nothing was written. Fix or delete the file and rerun.`);
+    }
+    const plain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+    if (!plain(parsed) || !plain(parsed.entries)) {
+      throw new Error(`${indexPath}: existing index could not be read (no "entries" object); nothing was written. Fix or delete the file and rerun.`);
+    }
+    previous = parsed.entries;
   }
   const entries = {};
   for (const [hash, e] of Object.entries(previous)) {

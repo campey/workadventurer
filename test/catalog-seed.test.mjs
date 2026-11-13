@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { rebuildIndex } from "../scripts/catalog-index.mjs";
 import { fileURLToPath } from "node:url";
 import { ADAPTERS } from "../src/adapters/index.mjs";
 import { validateAdapterFile } from "../src/catalog/schema.mjs";
@@ -117,4 +118,44 @@ test("catalog-index fails loudly on a bad file or a misnamed file", () => {
   fs.rmSync(path.join(tmp, "adapters", "11111111.json"));
   fs.writeFileSync(path.join(tmp, "adapters", "f4cfe455.json"), JSON.stringify({ ...good, server: "nope" }));
   assert.throws(() => execFileSync("node", [script, tmp], { stdio: "pipe" }), /f4cfe455/);
+});
+
+const tempCatalog = () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-seed-"));
+  after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  fs.cpSync(catalogDir, tmp, { recursive: true });
+  return tmp;
+};
+
+test("rebuildIndex refuses a corrupt or non-index index.json and leaves it untouched", () => {
+  for (const bad of ['{"schema": 1, "entries": {"0badc0', "[]", '{"schema":1}', '{"schema":1,"entries":[]}']) {
+    const tmp = tempCatalog();
+    const p = path.join(tmp, "index.json");
+    fs.writeFileSync(p, bad);
+    assert.throws(() => rebuildIndex(tmp), /index\.json.*could not be read.*nothing was written/s);
+    assert.equal(fs.readFileSync(p, "utf8"), bad);
+  }
+  const tmp = tempCatalog();
+  fs.writeFileSync(path.join(tmp, "index.json"), "{");
+  assert.throws(() => execFileSync("node", [script, tmp], { stdio: "pipe" }), /could not be read/);
+});
+
+test("rebuildIndex builds a fresh index when index.json is missing", () => {
+  const tmp = tempCatalog();
+  fs.rmSync(path.join(tmp, "index.json"));
+  const index = rebuildIndex(tmp);
+  assert.equal(Object.keys(index.entries).length, files.length);
+  assert.ok(fs.existsSync(path.join(tmp, "index.json")));
+});
+
+test("an ok entry replaces a needs-attention placeholder for the same hash", () => {
+  const tmp = tempCatalog();
+  const p = path.join(tmp, "index.json");
+  const seeded = readJson(p);
+  seeded.entries.f4cfe455 = { status: "needs-attention", server: "production", version: "v1.34.9", gate: "selfcheck", issue: 5 };
+  fs.writeFileSync(p, JSON.stringify(seeded));
+  const index = rebuildIndex(tmp);
+  assert.equal(index.entries.f4cfe455.status, "ok");
+  assert.equal(index.entries.f4cfe455.file, "adapters/f4cfe455.json");
+  assert.equal(index.entries.f4cfe455.issue, null);
 });
