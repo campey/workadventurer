@@ -11,7 +11,7 @@ const SERVERS = ["production", "staging"];
 const NAME_RE = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
 const VALUE_RE = /^[A-Za-z0-9._:{}-]{0,64}$/;
 const PLACEHOLDERS = new Set(["{tabId}", "{uuid}"]);
-const FORBIDDEN = new Set(["roomId", "version", "characterTextureIds", "token"]);
+const FORBIDDEN = new Set(["roomid", "version", "charactertextureids", "token"]);
 const MAX_PARAMS = 12;
 const LABEL_RE = /^[A-Za-z0-9._-]{1,32}$/;
 
@@ -25,7 +25,7 @@ function checkHandshake(h) {
   if (names.length > MAX_PARAMS) return { reason: `handshake.query has more than ${MAX_PARAMS} parameters` };
   const query = {};
   for (const name of names) {
-    if (FORBIDDEN.has(name)) return { reason: `handshake.query.${name} is forbidden` };
+    if (FORBIDDEN.has(name.toLowerCase())) return { reason: `handshake.query.${name} is forbidden` };
     if (!NAME_RE.test(name)) return { reason: `handshake.query name "${name}" is invalid` };
     const value = h.query[name];
     if (typeof value !== "string" || !VALUE_RE.test(value)) {

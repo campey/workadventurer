@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { ADAPTERS, matchVersion } from "../src/adapters/index.mjs";
 import { recoverAdapter, refusalMessage } from "../src/catalog/recover.mjs";
-import { cachedHashes } from "../src/catalog/store.mjs";
+import { cachedHashes, loadCached } from "../src/catalog/store.mjs";
 import { REFUSED_EXIT } from "../src/supervise.mjs";
 
 const WA = fileURLToPath(new URL("../bin/wa.mjs", import.meta.url));
@@ -77,6 +77,52 @@ test("known: an already-cached hash", async () => {
   assert.equal(seen.some((u) => u.startsWith("/catalog")), false);
 });
 
+test("a garbage or BOM'd cached file for an unknown hash is not known: it re-downloads and then loads", async () => {
+  for (const junk of ["", "{not json", "\uFEFF" + text]) {
+    setup({ entry: okEntry() });
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, `${HASH}.json`), junk);
+    const o = await run({ dir });
+    assert.equal(o.status, "applied", JSON.stringify(junk));
+    assert.ok(await loadCached(HASH, { dir, builtins }));
+    seen.length = 0;
+    assert.deepEqual(await run({ dir }), { status: "known", hash: HASH });
+  }
+});
+
+test("unavailable: a silent home page gives up at timeoutMs", async () => {
+  setup({ entry: okEntry() });
+  handlers.set("/room", () => {}); // never answers
+  handlers.set("/", () => {});
+  const t = Date.now();
+  const o = await run({ timeoutMs: 200 });
+  assert.equal(o.status, "unavailable");
+  assert.ok(Date.now() - t < 2000);
+});
+
+test("gate text: ANSI and newlines are stripped, long text and big objects are capped", async () => {
+  setup({ entry: { status: "needs-attention", gate: "bad \x1b[31mred\x1b]0;title\x07\nline2\r\x9b" } });
+  let o = await run();
+  assert.doesNotMatch(o.detail, /[\x00-\x1f\x7f-\x9f]/);
+  assert.match(o.detail, /red/);
+  setup({ entry: { status: "needs-attention", gate: "x".repeat(5000) } });
+  o = await run();
+  assert.ok(o.detail.length <= 201, o.detail.length);
+  setup({ entry: { status: "needs-attention", gate: { log: "y".repeat(100000) } } });
+  o = await run();
+  assert.ok(o.detail.length <= 201, o.detail.length);
+});
+
+test("refusalMessage wording depends on never vs declined", () => {
+  const never = refusalMessage({ status: "never", hash: HASH });
+  assert.match(never, /adapterUpdates/);
+  assert.match(never, /WA_ADAPTER_UPDATES=ask/);
+  assert.doesNotMatch(never, /answer y/);
+  const declined = refusalMessage({ status: "declined", hash: HASH });
+  assert.match(declined, /answer y/);
+  assert.match(declined, /WA_ADAPTER_UPDATES=auto/);
+});
+
 test("unsupported/no-entry", async () => {
   setup({});
   const o = await run();
@@ -106,7 +152,7 @@ test("never: mode never with an available adapter", async () => {
   const dir = tmp();
   const o = await run({ mode: "never", dir, ask: boom });
   assert.deepEqual(o, { status: "never", hash: HASH });
-  assert.match(refusalMessage(o), /WA_ADAPTER_UPDATES=auto/);
+  assert.match(refusalMessage(o), /WA_ADAPTER_UPDATES=ask/);
   assert.equal((await cachedHashes({ dir })).size, 0);
 });
 

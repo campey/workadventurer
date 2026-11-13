@@ -9,7 +9,8 @@ import readline from "node:readline";
  * @returns {Promise<"yes"|"no"|"always">}
  */
 export async function askYesNoAlways(question, { input = process.stdin, output = process.stderr } = {}) {
-  if (!input.isTTY) return "no";
+  // No terminal on either side (stdin or a redirected stderr) means no visible prompt: answer no.
+  if (!input.isTTY || !output.isTTY) return "no";
   const rl = readline.createInterface({ input, output, terminal: false });
   try {
     return await new Promise((resolve) => {

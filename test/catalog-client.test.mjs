@@ -167,6 +167,16 @@ test("adapter file: non-JSON with a matching sha256 fails", async () => {
   assert.equal(r.ok, false);
 });
 
+test("adapter file: a BOM-prefixed body returns text without the BOM", async () => {
+  const body = "\uFEFF" + adapterText();
+  handlers.clear();
+  serve(`/adapters/${HASH}.json`, Buffer.from(body, "utf8"));
+  const r = await fetchAdapterFile({ indexUrl: `${base}/index.json`, hash: HASH, entry: entryFor(body, { file: `adapters/${HASH}.json` }), builtins });
+  assert.equal(r.ok, true, r.reason);
+  assert.notEqual(r.text.charCodeAt(0), 0xfeff);
+  assert.doesNotThrow(() => JSON.parse(r.text));
+});
+
 test("adapter file: 404 and a hanging server fail", async () => {
   const text = adapterText();
   const r = await fetchAdapterFile({ indexUrl: `${base}/none/index.json`, hash: HASH, entry: entryFor(text), builtins });

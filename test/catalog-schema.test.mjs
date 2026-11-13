@@ -92,6 +92,9 @@ test("handshake: unknown placeholder", () => reject(withHs({ a: "{x}" }), "hands
 test("handshake: forbidden names", () => {
   for (const n of ["roomId", "version", "characterTextureIds", "token"]) reject(withHs({ [n]: "a" }), n);
 });
+test("handshake: forbidden names are matched case-insensitively", () => {
+  for (const n of ["RoomId", "VERSION", "Token", "CharacterTextureIds", "ROOMID"]) reject(withHs({ [n]: "a" }), n);
+});
 test("handshake: not an object", () => {
   reject({ ...good(), handshake: "x" }, "handshake");
   reject({ ...good(), handshake: { query: [] } }, "handshake");

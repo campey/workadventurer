@@ -109,5 +109,5 @@ export async function fetchAdapterFile({ indexUrl, hash, entry, builtins, fetch,
   const checked = validateAdapterFile(parsed.value, builtins);
   if (!checked.ok) return bad(`adapter ${hash}: ${checked.reason}`);
   if (checked.file.apiVersionHash !== hash) return bad(`adapter ${hash}: file's apiVersionHash is ${checked.file.apiVersionHash}`);
-  return { ok: true, text: got.bytes.toString("utf8"), file: checked.file };
+  return { ok: true, text: new TextDecoder().decode(got.bytes), file: checked.file };
 }

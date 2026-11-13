@@ -8,16 +8,22 @@
 
 import { readServerVersion } from "./server-version.mjs";
 import { fetchIndex, fetchAdapterFile, catalogUrl } from "./client.mjs";
-import { saveCached, cachedHashes } from "./store.mjs";
+import { saveCached, loadCached } from "./store.mjs";
 import { buildAdapter } from "./schema.mjs";
 
 const unavailable = (reason) => ({ status: "unavailable", reason });
 
 /** One line out of a needs-attention placeholder's `gate` (a string or an object summary). */
+// The text is untrusted and ends up on the terminal: control characters become
+// spaces and the length is capped.
+const MAX_DETAIL = 200;
 function gateDetail(gate) {
   if (gate == null) return undefined;
-  if (typeof gate === "string") return gate;
-  try { return JSON.stringify(gate); } catch { return String(gate); }
+  let text;
+  if (typeof gate === "string") text = gate;
+  else { try { text = JSON.stringify(gate); } catch { text = String(gate); } }
+  text = String(text ?? "").replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
+  return text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL)}…` : text;
 }
 
 export async function recoverAdapter({
@@ -29,7 +35,8 @@ export async function recoverAdapter({
     if (!hash) return unavailable("could not read the server's version hash");
 
     if (Object.values(builtins).some((a) => a.apiVersionHashes?.includes(hash))) return { status: "known", hash };
-    if ((await cachedHashes({ dir })).has(hash)) return { status: "known", hash };
+    // Known only if the cache file actually loads; a bad file is overwritten below.
+    if (await loadCached(hash, { dir, builtins })) return { status: "known", hash };
 
     const idx = await fetchIndex({ url: indexUrl, fetch, timeoutMs });
     if (!idx.ok) return unavailable(idx.reason);
@@ -62,6 +69,8 @@ export async function recoverAdapter({
 
 const HOW_TO_ALLOW =
   "to allow the download, run `wa join` again and answer y, or set adapterUpdates to auto (WA_ADAPTER_UPDATES=auto)";
+const HOW_TO_ALLOW_NEVER =
+  "to allow the download, set adapterUpdates to ask or auto (config file key, or WA_ADAPTER_UPDATES=ask)";
 
 /** The message `wa join` prints before exiting for a refusing outcome; null for the others. */
 export function refusalMessage(o) {
@@ -72,7 +81,7 @@ export function refusalMessage(o) {
     return `this server version isn't supported yet, it needs attention (${o.hash})${o.detail ? `: ${o.detail}` : ""}`;
   }
   if (o.status === "declined" || o.status === "never") {
-    return `an adapter for this server version (${o.hash}) is available but was not downloaded; ${HOW_TO_ALLOW}`;
+    return `an adapter for this server version (${o.hash}) is available but was not downloaded; ${o.status === "never" ? HOW_TO_ALLOW_NEVER : HOW_TO_ALLOW}`;
   }
   return null;
 }

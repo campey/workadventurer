@@ -7,6 +7,7 @@ function tty() {
   const input = new PassThrough();
   input.isTTY = true;
   const output = new PassThrough();
+  output.isTTY = true;
   let written = "";
   output.on("data", (d) => (written += d));
   return { input, output, written: () => written };
@@ -40,6 +41,21 @@ test("askYesNoAlways: closed stdin with no answer is no", async () => {
 test("askYesNoAlways: non-TTY input resolves no at once, without reading or writing", async () => {
   const input = new PassThrough(); // isTTY undefined
   const output = new PassThrough();
+  let written = "";
+  output.on("data", (d) => (written += d));
+  const result = await Promise.race([
+    askYesNoAlways("q", { input, output }),
+    new Promise((r) => setTimeout(() => r("timeout"), 50)),
+  ]);
+  assert.equal(result, "no");
+  assert.equal(written, "");
+  assert.equal(input.listenerCount("data"), 0);
+});
+
+test("askYesNoAlways: TTY input with a non-TTY output resolves no at once, nothing read", async () => {
+  const input = new PassThrough();
+  input.isTTY = true;
+  const output = new PassThrough(); // stderr redirected: isTTY undefined
   let written = "";
   output.on("data", (d) => (written += d));
   const result = await Promise.race([
