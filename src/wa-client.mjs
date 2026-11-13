@@ -46,6 +46,8 @@ const CONNECT_TIMEOUT_MS = 15_000; // login fetch / socket join; a hung attempt 
 // A start region smaller than this counts as a pocket we may be wrongly sealed in; see _navTo's no-route.
 const NO_ROUTE_MIN_OPEN_TILES = 50;
 
+const HANDSHAKE_FORBIDDEN = new Set(["roomid", "version", "charactertextureids", "token"]);
+
 export class WorkAdventureClient extends EventEmitter {
   constructor(opts = {}) {
     super();
@@ -173,7 +175,19 @@ export class WorkAdventureClient extends EventEmitter {
     u.searchParams.set("microphoneState", this.micOn ? "true" : "false");
     u.searchParams.set("screenSharingState", "false");
     u.searchParams.set("chatID", "");
-    u.searchParams.set("tabId", randomUUID().slice(0, 12));
+    const tabId = randomUUID().slice(0, 12);
+    u.searchParams.set("tabId", tabId);
+    // Extra constant parameters a catalog adapter asks for (#126). Defence in depth: the
+    // catalog validator already enforces this, but this builds a URL from downloaded data.
+    // Never overrides a parameter set above; never carries identity or room selection.
+    const q = this.adapter?.handshake?.query;
+    if (q && typeof q === "object" && !Array.isArray(q)) {
+      for (const [name, value] of Object.entries(q)) {
+        if (typeof value !== "string" || u.searchParams.has(name)) continue;
+        if (HANDSHAKE_FORBIDDEN.has(name.toLowerCase())) continue;
+        u.searchParams.set(name, value.replaceAll("{tabId}", tabId).replaceAll("{uuid}", () => randomUUID()));
+      }
+    }
     return u.toString();
   }
 
