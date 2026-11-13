@@ -31,8 +31,10 @@
 import http from "node:http";
 import fs from "node:fs";
 import { WorkAdventureClient } from "./wa-client.mjs";
-import { ADAPTERS } from "./adapters/index.mjs";
+import { ADAPTERS, matchVersion } from "./adapters/index.mjs";
 import { loadCached } from "./catalog/store.mjs";
+import { recoverAdapter } from "./catalog/recover.mjs";
+import { catalogUrl } from "./catalog/client.mjs";
 import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
 import { resolveConfig } from "./config.mjs";
 import { resolveClip } from "./resolve-clip.mjs";
@@ -42,7 +44,7 @@ import { stopWorker } from "./wa-stt.mjs";
 import { createRegistry } from "./daemon-registry.mjs";
 import { goQuiet } from "./quiet.mjs";
 import { createReconnector } from "./reconnect.mjs";
-import { ServerRejectedError } from "./server-rejected.mjs";
+import { ServerRejectedError, isVersionRejection } from "./server-rejected.mjs";
 import { REFUSED_EXIT } from "./supervise.mjs";
 
 const cfg = resolveConfig();
@@ -172,10 +174,18 @@ function watchLive(client) {
   client.on("close", () => {
     if (deliberateShutdown) return shutdown(0);
     if (client !== wa) return; // a stale client's close isn't a drop of the live one
-    attemptReconnect().catch((e) => {
-      log("reconnect gave up:", e.message);
-      shutdown(e instanceof ServerRejectedError && !e.retryable ? REFUSED_EXIT : 1);
-    });
+    attemptReconnect()
+      .catch(async (e) => {
+        // The server bumped its version while we were up: in auto mode fetch the
+        // catalog adapter and run the chain once more (#126). Only once per give-up.
+        if (!isVersionRejection(e) || !(await tryAdapterRecovery())) throw e;
+        log("adapter applied; reconnecting");
+        await attemptReconnect();
+      })
+      .catch((e) => {
+        log("reconnect gave up:", e.message);
+        shutdown(e instanceof ServerRejectedError && !e.retryable ? REFUSED_EXIT : 1);
+      });
   });
 }
 
@@ -295,6 +305,20 @@ const newClient = () =>
     // respects (#10). See wa-audio.mjs for the rest of that invariant.
     micOn: !cfg.stt,
   });
+
+// After a NEW_VERSION refusal: in auto mode (and only when nothing pins the
+// adapter) fetch the catalog's adapter for this server. The daemon has no
+// terminal, so ask/never never get here; `wa join` is where those prompt. A true
+// result means the next newClient() resolves the adapter from the cache.
+async function tryAdapterRecovery() {
+  if (cfg.adapterUpdates !== "auto" || cfg.version || cfg.target !== "auto") return false;
+  const outcome = await recoverAdapter({
+    roomUrl: cfg.roomUrl, mode: "auto", indexUrl: catalogUrl(),
+    builtins: ADAPTERS, matchRelease: matchVersion, log,
+  });
+  log(`adapter recovery: ${outcome.status}${outcome.adapter ? ` (${outcome.adapter.id}, ${outcome.hash})` : ""}`);
+  return outcome.status === "applied";
+}
 
 const reconnector = createReconnector({
   makeClient: () => {
@@ -483,7 +507,16 @@ log(`connecting to WorkAdventure as "${cfg.name}"…`);
 wa = newClient();
 wireClient(wa);
 try {
-  await wa.connect();
+  try {
+    await wa.connect();
+  } catch (e) {
+    // One recovery per refusal: a recovered adapter that is still rejected exits below.
+    if (!isVersionRejection(e) || !(await tryAdapterRecovery())) throw e;
+    try { wa.close(); } catch {}
+    wa = newClient();
+    wireClient(wa);
+    await wa.connect();
+  }
 } catch (e) {
   // Nothing to keep alive yet and the control API isn't up: say why and exit
   // non-zero rather than limping on via uncaughtException (#56).
