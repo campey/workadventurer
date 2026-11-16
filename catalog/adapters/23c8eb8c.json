@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "wa-1.34.0",
+  "waVersion": "1.34.0",
+  "apiVersionHash": "23c8eb8c",
+  "server": "production",
+  "protoFamily": "wa-1.34",
+  "meeting": {
+    "areaDwellMs": 0,
+    "areaLingerMs": 0
+  },
+  "movement": {
+    "walkPxPerS": 180,
+    "runPxPerS": 460
+  }
+}

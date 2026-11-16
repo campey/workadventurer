@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "updated": "2026-11-13T12:39:22.167Z",
+  "entries": {
+    "23c8eb8c": {
+      "status": "ok",
+      "server": "production",
+      "version": "v1.34.0",
+      "file": "adapters/23c8eb8c.json",
+      "sha256": "49d61fe536042f46cf1beceebaf50f11be12d72ee77bdfb109dbec68d0fa3d14",
+      "gate": null,
+      "issue": null
+    },
+    "62e25483": {
+      "status": "ok",
+      "server": "production",
+      "version": "v1.34.2",
+      "file": "adapters/62e25483.json",
+      "sha256": "44b04d209958de9c331ff6e94b43ea4edd9924cec37d55d250840286de00d6df",
+      "gate": null,
+      "issue": null
+    },
+    "b82fc568": {
+      "status": "ok",
+      "server": "production",
+      "version": "v1.34.1",
+      "file": "adapters/b82fc568.json",
+      "sha256": "00dfda7d58c261b34415002336ec074fa6123e662bd388003d3f80b675cf3256",
+      "gate": null,
+      "issue": null
+    },
+    "d2d82672": {
+      "status": "ok",
+      "server": "staging",
+      "version": "master@118dd84c",
+      "file": "adapters/d2d82672.json",
+      "sha256": "6db9d10270babf924f1c503d62306499e8a4b89a6cbd37ade1d86052b4ee200a",
+      "gate": null,
+      "issue": null
+    },
+    "f4cfe455": {
+      "status": "ok",
+      "server": "production",
+      "version": "v1.34.4",
+      "file": "adapters/f4cfe455.json",
+      "sha256": "a4797734c32b0178fae575f71c64151b6a2b5e53c11e6affd38a875a6bfa341b",
+      "gate": null,
+      "issue": null
+    }
+  }
+}

@@ -154,3 +154,91 @@ test("wa-1.34 keeps the wa-1.33 meeting strategy names; the area LIVEKIT/ONLINE 
   assert.equal(w134.meeting.webrtcStrategyName, w133.meeting.webrtcStrategyName);
   assert.equal(w134.meeting.areaAvailabilityStatus, undefined);
 });
+
+test("probeVersion adds the wa-api-version hash when the page has the tag", async () => {
+  const http = await import("node:http");
+  const { probeVersion } = await import("../src/adapters/index.mjs");
+  const srv = http.createServer((q, r) =>
+    r.end('<meta name="wa-api-version" content="f4cfe455"> v1.34.4')
+  );
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+  try {
+    const p = await probeVersion(`http://127.0.0.1:${srv.address().port}/_/x/y`);
+    assert.deepEqual(p, { kind: "release", minor: "1.34", raw: "v1.34.4", hash: "f4cfe455" });
+  } finally {
+    srv.close();
+  }
+});
+
+// --- cached catalog adapter (#126) ---
+
+const cachedAdapter = { id: "wa-cached", apiVersionHashes: ["deadbeef"], envelope: "seq-len-v1" };
+const unknownHashProbe = async () => ({ kind: "release", minor: "1.34", raw: "v1.34.9", hash: "deadbeef" });
+
+test("resolveAdapter: cached catalog adapter for an unknown hash beats the probe's default", async () => {
+  const seen = [];
+  const r = await resolveAdapter({
+    roomUrl: "https://x.example/_/a/b",
+    probeFn: unknownHashProbe,
+    cachedFor: async (h) => (seen.push(h), cachedAdapter),
+  });
+  assert.equal(r.adapter, cachedAdapter);
+  assert.equal(r.why, "catalog adapter wa-cached (deadbeef) from the local cache");
+  assert.deepEqual(seen, ["deadbeef"]);
+});
+
+test("resolveAdapter: a built-in hash never consults cachedFor", async () => {
+  let called = 0;
+  const r = await resolveAdapter({
+    roomUrl: "https://x.example/_/a/b",
+    probeFn: async () => ({ kind: "release", minor: "1.34", raw: "v1.34.9", hash: ADAPTERS["wa-1.34"].apiVersionHashes[0] }),
+    cachedFor: async () => (called++, cachedAdapter),
+  });
+  assert.equal(called, 0);
+  assert.equal(r.adapter, ADAPTERS["wa-1.34"]);
+});
+
+test("resolveAdapter: explicit override still wins over a cached adapter", async () => {
+  let called = 0;
+  const r = await resolveAdapter({
+    roomUrl: "https://x.example/_/a/b",
+    override: "wa-1.33",
+    probeFn: unknownHashProbe,
+    cachedFor: async () => (called++, cachedAdapter),
+  });
+  assert.equal(r.adapter, ADAPTERS["wa-1.33"]);
+  assert.equal(called, 0);
+});
+
+test("resolveAdapter: cachedFor returning null or throwing falls through to today's result", async () => {
+  const base = await resolveAdapter({ roomUrl: "https://x.example/_/a/b", probeFn: unknownHashProbe });
+  for (const cachedFor of [async () => null, async () => { throw new Error("disk on fire"); }, () => { throw new Error("sync"); }]) {
+    const r = await resolveAdapter({ roomUrl: "https://x.example/_/a/b", probeFn: unknownHashProbe, cachedFor });
+    assert.deepEqual(r, base);
+  }
+});
+
+test("resolveAdapter: a hash-only probe (no release string) uses the cached adapter", async () => {
+  const r = await resolveAdapter({
+    roomUrl: "https://x.example/_/a/b",
+    probeFn: async () => ({ hash: "deadbeef" }),
+    cachedFor: async () => cachedAdapter,
+  });
+  assert.equal(r.adapter, cachedAdapter);
+});
+
+test("src/wa-client.mjs imports nothing from src/catalog/ (the cache is injected)", () => {
+  const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/wa-client.mjs"), "utf8");
+  const importLines = src.split("\n").filter((l) => /^\s*(import\b|.*\bfrom\s+["'])/.test(l));
+  assert.ok(importLines.length > 0);
+  for (const l of importLines) assert.doesNotMatch(l, /catalog\//);
+  assert.doesNotMatch(src, /import\(\s*["'][^"']*catalog\//);
+});
+
+test("WorkAdventureClient.connect hands its cachedFor option to resolveAdapter; the daemon supplies it", () => {
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src");
+  const client = fs.readFileSync(path.join(dir, "wa-client.mjs"), "utf8");
+  assert.match(client, /cachedFor:\s*this\._cachedFor/);
+  const daemon = fs.readFileSync(path.join(dir, "wa-daemon.mjs"), "utf8");
+  assert.match(daemon, /cachedFor:\s*\(h\)\s*=>\s*loadCached\(h,\s*\{\s*builtins:\s*ADAPTERS\s*\}\)/);
+});

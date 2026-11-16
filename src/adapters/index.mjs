@@ -5,6 +5,7 @@
 import wa133 from "./wa-1.33.mjs";
 import wa134 from "./wa-1.34.mjs";
 import waMaster from "./wa-master.mjs";
+import { matchApiHash } from "../catalog/server-version.mjs";
 
 export const ADAPTERS = {
   "wa-1.33": wa133,
@@ -40,7 +41,11 @@ export async function probeVersion(roomUrl) {
   try {
     const res = await fetch(origin + "/", { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
-    return matchVersion(await res.text());
+    const html = await res.text();
+    const version = matchVersion(html);
+    const hash = matchApiHash(html);
+    if (!hash) return version;
+    return { ...(version ?? {}), hash };
   } catch {
     return null;
   }
@@ -49,11 +54,13 @@ export async function probeVersion(roomUrl) {
 const shaDrift = (a, b) => !(a.startsWith(b) || b.startsWith(a));
 
 /**
- * Resolve a target adapter. Precedence: explicit override > server probe >
- * host allowlist > warned default (wa-1.33).
- * @param {{roomUrl?:string, override?:string, probeFn?:(url:string)=>Promise<any>}} opts
+ * Resolve a target adapter. Precedence: explicit override > cached catalog
+ * adapter for the probed hash > server probe > host allowlist > warned default
+ * (wa-1.33). `cachedFor` is injected by the outer layer so the core client
+ * never touches the catalog cache; it only runs for a hash no built-in knows.
+ * @param {{roomUrl?:string, override?:string, probeFn?:(url:string)=>Promise<any>, cachedFor?:(hash:string)=>Promise<object|null>}} opts
  */
-export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion } = {}) {
+export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion, cachedFor } = {}) {
   if (override && override !== "auto") {
     const a = ADAPTERS[override];
     if (!a) {
@@ -65,6 +72,17 @@ export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion
   }
 
   const probe = roomUrl ? await probeFn(roomUrl) : null;
+
+  if (cachedFor && probe?.hash && !Object.values(ADAPTERS).some((a) => a.apiVersionHashes?.includes(probe.hash))) {
+    try {
+      const cached = await cachedFor(probe.hash);
+      if (cached) {
+        return { adapter: cached, why: `catalog adapter ${cached.id} (${probe.hash}) from the local cache` };
+      }
+    } catch {
+      /* a broken cache must never break connecting: fall through */
+    }
+  }
 
   if (probe?.kind === "release") {
     const key = `wa-${probe.minor}`;

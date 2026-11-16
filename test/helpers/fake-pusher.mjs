@@ -19,6 +19,7 @@ export async function startFakePusher({
   listenPort = 0,
   joinFirstMs = 0, // >0: the first connection joins, then is dropped after this many ms
   proto = "proto/wa-1.34/messages.proto",
+  acceptHashes = null, // given: reject (errorScreen) any /ws/room whose `version` query isn't listed; GET / serves a home page carrying the first one
 } = {}) {
   const root = await protobuf.load(path.join(__dirname, "..", "..", proto));
   const S2C = root.lookupType("ServerToClientMessage");
@@ -42,18 +43,33 @@ export async function startFakePusher({
   const joinedFrame = () =>
     framer._wrap(S2C.encode(S2C.fromObject({ roomJoinedMessage: { currentUserId: 1 } })).finish());
 
-  const stats ={ logins: 0, connections: 0 };
+  const stats = { logins: 0, connections: 0, versions: [] };
   const server = http.createServer((req, res) => {
     res.setHeader("content-type", "application/json");
     if (req.method === "POST" && req.url.startsWith("/anonymLogin")) {
       stats.logins++;
       return res.end(JSON.stringify({ authToken: "fake-token", userUuid: "fake-uuid" }));
     }
+    if (acceptHashes && req.method === "GET" && req.url === "/") {
+      res.setHeader("content-type", "text/html");
+      return res.end(`<html><head><meta name="wa-api-version" content="${acceptHashes[0]}"></head><body>v9.9.9</body></html>`);
+    }
     res.end("{}");
   });
   const wss = new WebSocketServer({ server, path: "/ws/room", handleProtocols: (p) => [...p][0] });
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
     stats.connections++;
+    if (acceptHashes) {
+      const v = new URL(req.url, "http://x").searchParams.get("version");
+      stats.versions.push(v);
+      if (acceptHashes.includes(v)) {
+        ws.send(joinedFrame());
+        return;
+      }
+      ws.send(frame());
+      setTimeout(() => ws.close(1000, "Error message sent"), 20);
+      return;
+    }
     if (stats.connections === 1 && joinFirstMs > 0) {
       // Let the first client join, then drop it: later connections get the
       // error screen, so the daemon sits in reconnect retry waits (#59 check).
