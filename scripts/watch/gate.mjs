@@ -233,6 +233,13 @@ export function firstFailure(output) {
   return lines.find((l) => /\bFAIL\b|\bfailed\b|\berror\b|join failed|closed:/i.test(l)) ?? lines.at(-1) ?? "no output";
 }
 
+/** The environment a child gets: ours plus `env`, minus any GitHub write token (a gate step must never hold it). */
+export function childEnv(env = {}, base = process.env) {
+  const out = { ...base, ...env };
+  for (const k of ["GITHUB_TOKEN", "GH_TOKEN"]) delete out[k];
+  return out;
+}
+
 /**
  * Run a child in its own process group, keep the last 16 KB of its output. When `signal` aborts, the whole
  * group gets SIGTERM, then SIGKILL after `graceMs` (falls back to child.kill without a group). Resolves { code, output }.
@@ -242,7 +249,7 @@ export function runChild({ command, args = [], env = {}, cwd, signal, graceMs = 
     let output = "";
     let child;
     try {
-      child = spawnFn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], detached: true });
+      child = spawnFn(command, args, { cwd, env: childEnv(env), stdio: ["ignore", "pipe", "pipe"], detached: true });
     } catch (e) {
       resolve({ code: null, output: `could not start ${command}: ${e.message}` });
       return;

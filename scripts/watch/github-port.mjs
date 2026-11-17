@@ -3,6 +3,9 @@
 // workflow. Task 5 adds issue methods to the same port.
 //
 //   mainCommit()                          -> sha of the tip of the base branch
+//   codeFingerprint()                     -> sha1 hex over the sorted root-tree entries (name + sha) of the base branch
+//                                         EXCLUDING `catalog`: it changes when code changes and not when the
+//                                         watcher publishes (ruling R11); one non-recursive GET /git/trees/<base>
 //   createBranch(name, sha)               -> create the branch, or reset it to `sha` if it exists
 //   commit({ branch, message, files, parent }) -> { sha }: one commit of [{ path, content }] whose parent is
 //                                         exactly `parent` (the sha given to createBranch); the branch is
@@ -25,6 +28,7 @@
 // any text that reaches an error message is scrubbed of it first.
 
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { HASH_RE } from "../../src/catalog/schema.mjs";
 
 const MAX_PAGES = 5;
@@ -38,6 +42,13 @@ export function assertCatalogPaths(paths) {
       throw new Error(`refusing to publish "${String(p).slice(0, 80)}": only files under catalog/ may be published`);
     }
   }
+}
+
+/** sha1 over the sorted root-tree entries (path + sha) other than `catalog`. */
+export function fingerprintOf(entries) {
+  const h = createHash("sha1");
+  for (const e of [...entries].filter((x) => x.path !== "catalog").sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) h.update(`${e.path}\0${e.sha}\n`);
+  return h.digest("hex");
 }
 
 /** The branch the watcher uses for a hash. Validates the hash before building the name. */
@@ -90,6 +101,12 @@ export function createGithubPort({ repo, token, fetch: fetchFn = globalThis.fetc
     async mainCommit() {
       const { data } = await api("GET", refRoute(base));
       return data.object.sha;
+    },
+    async codeFingerprint() {
+      const { data } = await api("GET", `/git/trees/${encodeURIComponent(base)}`);
+      if (!Array.isArray(data?.tree)) throw new Error("GET /git/trees: no tree in the answer");
+      if (data.truncated) throw new Error("GET /git/trees: root tree truncated");
+      return fingerprintOf(data.tree);
     },
     async createBranch(name, sha) {
       const made = await api("POST", "/git/refs", { ref: `refs/heads/${name}`, sha }, { okStatuses: [422] });

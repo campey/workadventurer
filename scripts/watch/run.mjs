@@ -23,7 +23,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { HASH_RE } from "../../src/catalog/schema.mjs";
-import { readServer, decide, buildCandidate, computeHashForVersion } from "./candidate.mjs";
+import { readServer, decide, buildCandidate, computeHashForVersion, normaliseVersion } from "./candidate.mjs";
 import { runGate, defaultRunners } from "./gate.mjs";
 import { publish } from "./publish.mjs";
 import { reportFailure, reportPass } from "./issues.mjs";
@@ -54,6 +54,7 @@ export function dryRunPort(real, say) {
   return {
     repo: real.repo,
     mainCommit: () => real.mainCommit(),
+    codeFingerprint: () => real.codeFingerprint(),
     findOpenPr: (b) => real.findOpenPr(b),
     findIssues: (q) => real.findIssues(q),
     createBranch: wrote("createBranch", (n) => ({ branch: n }), undefined),
@@ -95,6 +96,7 @@ export async function runWatch(deps, { dryRun = false, force = false, only = {},
   const warnings = [];
   const github = dryRun ? dryRunPort(deps.github, log) : deps.github;
   let dirty = false; // a publish merged: the local checkout is behind main
+  const handled = new Map(); // hash -> target that already decided it in this run
 
   for (const target of targets) {
     const res = { target, outcome: "error" };
@@ -106,17 +108,23 @@ export async function runWatch(deps, { dryRun = false, force = false, only = {},
       }
       const server = await deps.readServer(target);
       if (!server) { fault("could not read the server's home page"); continue; }
-      const { hash, release } = server;
+      const { hash } = server;
+      const release = server.release ? normaliseVersion(target, server.release) : server.release; // display form (<= 40 chars)
       if (!hash || !HASH_RE.test(hash)) { fault("the home page names no api version hash"); continue; }
       res.hash = hash;
       res.version = release;
       if (only.hash && only.hash !== hash) { res.outcome = "skip"; res.reason = `not the requested hash ${only.hash}`; log(`${target}: ${hash} skipped, ${res.reason}`); continue; }
 
+      if (only.version && normaliseVersion(target, only.version) !== release) { res.outcome = "skip"; res.reason = `not the requested version ${only.version}`; log(`${target}: ${release} skipped, ${res.reason}`); continue; }
+      if (handled.has(hash)) { res.outcome = "skip"; res.reason = `hash already handled this run as ${handled.get(hash)}`; log(`${target}: ${hash} skipped, ${res.reason}`); continue; }
+
       const catalogIndex = deps.loadIndex();
-      const mainCommit = await github.mainCommit();
-      const decision = decide({ hash, version: release, server: target, catalogIndex, force, mainCommit });
+      // Code fingerprint, not main's commit: the watcher's own catalog merges must not trigger retests.
+      const codeFingerprint = await github.codeFingerprint();
+      const decision = decide({ hash, version: release, server: target, catalogIndex, force, codeFingerprint });
       if (decision.action === "skip") { res.outcome = "skip"; res.reason = decision.reason; log(`${target}: ${hash} (${release}) skip: ${decision.reason}`); continue; }
       log(`${target}: ${hash} (${release}) gate: ${decision.reason}`);
+      handled.set(hash, target);
 
       // The candidate adapter, then its proto (fetched from upstream by the release the page names).
       const cand = await deps.buildCandidate({ hash, version: release, server: target, catalogIndex });
@@ -172,7 +180,7 @@ export async function runWatch(deps, { dryRun = false, force = false, only = {},
         log(`${target}: [dry-run] would publish a needs-attention placeholder for ${hash} (issue ${issue ?? "none"})`);
       } else {
         // Published even when the issue write failed: otherwise the next hour would gate (and put avatars on the server) again.
-        const pub = await deps.publish({ port: github, hash, placeholder: { server: target, version: release, gate: why, issue: issue ?? undefined, commit: mainCommit }, catalogDir });
+        const pub = await deps.publish({ port: github, hash, placeholder: { server: target, version: release, gate: why, issue: issue ?? undefined, commit: codeFingerprint }, catalogDir });
         if (pub.merged) dirty = true;
         if (!pub.ok) fault(`placeholder publish failed at ${pub.stage}: ${pub.error}`);
       }
@@ -201,14 +209,41 @@ export function parseArgs(argv) {
 }
 
 const truthy = (v) => /^(1|true|yes)$/i.test(String(v ?? ""));
+const TOKEN_VARS = ["GITHUB_TOKEN", "GH_TOKEN"];
 
-function git(args, cwd) {
-  const env = { ...process.env };
-  for (const k of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"]) delete env[k];
-  return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env });
+/** Remove the write token from an environment so no child process (gate runners, Gradle) inherits it. */
+export function scrubEnv(procEnv = process.env) {
+  for (const k of TOKEN_VARS) delete procEnv[k];
 }
 
-export async function main(argv = process.argv.slice(2), env = process.env) {
+function defaultGit(args, { cwd, env = {} }) {
+  const base = { ...process.env };
+  for (const k of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"]) delete base[k];
+  return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...base, ...env } });
+}
+
+/**
+ * Bring the local checkout level with origin/main after a merge. The token reaches git only through
+ * GIT_CONFIG_* environment variables of the one fetch (never argv, never the checkout's .git/config).
+ */
+export function createSyncCheckout({ token, cwd = repoRoot, exec = defaultGit } = {}) {
+  return async () => {
+    exec(["checkout", "--", "catalog"], { cwd });
+    exec(["clean", "-fdq", "--", "catalog"], { cwd });
+    const auth = Buffer.from(`x-access-token:${token}`).toString("base64");
+    exec(["fetch", "--quiet", "origin", "main"], {
+      cwd,
+      env: { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader", GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${auth}` },
+    });
+    exec(["merge", "--ff-only", "FETCH_HEAD"], { cwd });
+  };
+}
+
+/**
+ * Entry point. `injected` is for tests: { deps (replaces the real wiring), procEnv (the environment to scrub), catalogDir }.
+ * Returns the process exit code; throws on bad configuration.
+ */
+export async function main(argv = process.argv.slice(2), env = process.env, injected = {}) {
   const args = parseArgs(argv);
   // Workflow inputs arrive through the environment (never interpolated into shell): ADAPTER_WATCH_* mirror the flags.
   const dryRun = args.dryRun || truthy(env.ADAPTER_WATCH_DRY_RUN);
@@ -218,9 +253,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const repo = env.GITHUB_REPOSITORY;
   if (!token) throw new Error("GITHUB_TOKEN is required");
   if (!repo) throw new Error("GITHUB_REPOSITORY is required (owner/name)");
-  const catalogDir = path.join(repoRoot, "catalog");
+  // Only main publishes: a branch run would merge catalog changes built from branch code.
+  if (!dryRun && env.GITHUB_REF !== "refs/heads/main") throw new Error(`refusing to publish from ${env.GITHUB_REF ?? "an unknown ref"}: only refs/heads/main may publish (use dry_run elsewhere)`);
+  const catalogDir = injected.catalogDir ?? path.join(repoRoot, "catalog");
   const log = (m) => console.log(m);
-  const github = createGithubPort({ repo, token });
   const staging = {
     room: env.ADAPTER_WATCH_STAGING_ROOM || STAGING_FACTS.room,
     pusherUrl: env.ADAPTER_WATCH_STAGING_PUSHER || STAGING_FACTS.pusherUrl,
@@ -229,8 +265,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const areas = { production: env.ADAPTER_WATCH_AREA || DEFAULT_AREAS.production, staging: env.ADAPTER_WATCH_STAGING_AREA || DEFAULT_AREAS.staging };
   const runUrl = env.GITHUB_RUN_ID && /^\d+$/.test(env.GITHUB_RUN_ID) ? `https://github.com/${repo}/actions/runs/${env.GITHUB_RUN_ID}` : undefined;
 
-  const deps = {
-    github,
+  const deps = injected.deps ?? {
+    github: createGithubPort({ repo, token }),
     loadIndex: () => JSON.parse(fs.readFileSync(path.join(catalogDir, "index.json"), "utf8")),
     readServer: (t) => readServer(t),
     vendorProto: (server, release) => computeHashForVersion(server, release, { token }),
@@ -239,14 +275,12 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     publish,
     reportPass,
     reportFailure,
-    syncCheckout: async () => {
-      git(["checkout", "--", "catalog"], repoRoot);
-      git(["clean", "-fdq", "--", "catalog"], repoRoot);
-      git(["pull", "--ff-only", "origin", "main"], repoRoot);
-    },
+    syncCheckout: createSyncCheckout({ token }),
     runnersFor: (server) => defaultRunners({ staging: { ...staging, area: areas.staging }, area: areas[server] }),
     tmpDir: () => fs.mkdtempSync(path.join(os.tmpdir(), "adapter-watch-")),
   };
+  // The token now lives only in the port, the proto fetch and the sync closure: children (selfcheck, Gradle) never see it.
+  scrubEnv(injected.procEnv ?? process.env);
   log(`adapter watcher${dryRun ? " (dry run)" : ""}${force ? " (force)" : ""}`);
   const out = await runWatch(deps, { dryRun, force, only, targets: args.target ? [args.target] : TARGET_NAMES, runUrl, catalogDir, log });
   for (const r of out.results) log(`result ${r.target}: ${r.outcome}${r.hash ? ` ${r.hash}` : ""}${r.reason ? ` (${r.reason})` : ""}${r.gate ? ` gate=${r.gate}` : ""}`);

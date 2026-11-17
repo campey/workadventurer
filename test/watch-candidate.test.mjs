@@ -38,13 +38,13 @@ test("decide: needs-attention skips unless force, main moved, or version changed
   const ci = index({
     cccccccc: { status: "needs-attention", server: "production", version: "v1.34.5", commit: "abc123" },
   });
-  const base = { hash: "cccccccc", server: "production", version: "v1.34.5", catalogIndex: ci, mainCommit: "abc123" };
+  const base = { hash: "cccccccc", server: "production", version: "v1.34.5", catalogIndex: ci, codeFingerprint: "abc123" };
   assert.equal(decide(base).action, "skip");
   assert.equal(decide({ ...base, force: true }).action, "gate");
-  assert.equal(decide({ ...base, mainCommit: "def456" }).action, "gate");
+  assert.equal(decide({ ...base, codeFingerprint: "def456" }).action, "gate");
   assert.equal(decide({ ...base, version: "v1.34.6" }).action, "gate");
   // no known main commit: that trigger cannot fire
-  assert.equal(decide({ ...base, mainCommit: undefined }).action, "skip");
+  assert.equal(decide({ ...base, codeFingerprint: undefined }).action, "skip");
 });
 
 const prodFile = {
@@ -149,12 +149,12 @@ test("decide: a long master sha matches the stored 8-hex placeholder version", (
   const ci = index({
     dddddddd: { status: "needs-attention", server: "staging", version: "master@118dd84c", commit: "abc" },
   });
-  const r = decide({ hash: "dddddddd", server: "staging", version: "master@118dd84c" + "0".repeat(32), catalogIndex: ci, mainCommit: "abc" });
+  const r = decide({ hash: "dddddddd", server: "staging", version: "master@118dd84c" + "0".repeat(32), catalogIndex: ci, codeFingerprint: "abc" });
   assert.equal(r.action, "skip");
-  const r2 = decide({ hash: "dddddddd", server: "staging", version: "master@99999999aaaa", catalogIndex: ci, mainCommit: "abc" });
+  const r2 = decide({ hash: "dddddddd", server: "staging", version: "master@99999999aaaa", catalogIndex: ci, codeFingerprint: "abc" });
   assert.equal(r2.action, "gate");
   const prod = index({ eeeeeeee: { status: "needs-attention", server: "production", version: "v1.34.5", commit: "abc" } });
-  assert.equal(decide({ hash: "eeeeeeee", server: "production", version: "v1.34.5", catalogIndex: prod, mainCommit: "abc" }).action, "skip");
+  assert.equal(decide({ hash: "eeeeeeee", server: "production", version: "v1.34.5", catalogIndex: prod, codeFingerprint: "abc" }).action, "skip");
 });
 
 test("pickBase for staging sorts hash strings, not object order", () => {

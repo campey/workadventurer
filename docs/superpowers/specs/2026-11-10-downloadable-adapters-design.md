@@ -91,7 +91,7 @@ behaves as it does today.
   changing how the app behaves. Applying them is a later change to the app, not to the catalog.
 - A **placeholder** is an index entry with `status: "needs-attention"`, no `file`, and `gate` holding the failure summary.
   It also carries `server`, `version` (display form, `v1.34.5` / `master@<8 hex>`), `issue` (number or null), and `commit`
-  (the `main` commit sha it was recorded at; the watcher re-tests when `main` moves). `gate` is a single sanitised,
+  (a code fingerprint: sha1 over `main`'s root tree entries other than `catalog`, so it changes when code changes but not when the watcher publishes; the watcher re-tests when it differs). `gate` is a single sanitised,
   200-character-capped string (`gateDetail`), not an object. `fetchIndex` keeps all of these and strips `file`/`sha256`;
   `rebuildIndex` keeps placeholders verbatim until an adapter file for that hash appears and replaces them with an `ok` entry.
 - URL: `https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json` (my call; a client setting
@@ -195,7 +195,7 @@ Steps of a run, **for each of production and staging**:
    open issue, not one per hash** (my call): "Staging needs attention" is updated to name the newest failing hash and
    closed when a staging hash passes, because staging's hash churns and per-hash issues would flood. A hash already marked
    `needs-attention` is **not** re-tested every hour (it would put live avatars on production each time for the same
-   answer): it is re-run only on a manual run, or when `main` has changed since the placeholder recorded its commit,
+   answer): it is re-run only on a manual run, or when the repository's code (everything but `catalog/`) has changed since the placeholder recorded its fingerprint,
    or when the server's version string changes (my call).
 7. A release that is not live yet (the hook case) is **not** gated: the gate needs production to accept the hash, and
    staging runs `master`, not the release. The hook only makes us notice sooner; the gate runs once production switches.

@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runWatch, parseOnly, parseArgs, gateSummary, dryRunPort } from "../scripts/watch/run.mjs";
+import { runWatch, parseOnly, parseArgs, gateSummary, dryRunPort, main, createSyncCheckout, scrubEnv } from "../scripts/watch/run.mjs";
+import { fingerprintOf } from "../scripts/watch/github-port.mjs";
 import { decide, buildCandidate } from "../scripts/watch/candidate.mjs";
 import { publish } from "../scripts/watch/publish.mjs";
 import { reportPass, reportFailure } from "../scripts/watch/issues.mjs";
@@ -29,12 +30,16 @@ const baseFile = JSON.parse(fs.readFileSync(path.join(SRC, "adapters", "23c8eb8c
 function fakeGithub() {
   const g = { repo: "campey/workadventurer", writes: [], prs: [], issues: [], branches: new Map() };
   let n = 0;
-  g.mainCommit = async () => MAIN;
+  // main moves with every merge and its `catalog` tree entry changes (as the real repo's does)
+  g.main = MAIN;
+  g.tree = [{ path: "src", sha: "s1" }, { path: "scripts", sha: "t1" }, { path: "catalog", sha: "c0" }];
+  g.mainCommit = async () => g.main;
+  g.codeFingerprint = async () => fingerprintOf(g.tree);
   g.createBranch = async (name, sha) => { g.writes.push("createBranch"); g.branches.set(name, sha); };
   g.commit = async ({ branch }) => { g.writes.push("commit"); const sha = String(++n).padStart(40, "c"); g.branches.set(branch, sha); return { sha }; };
   g.findOpenPr = async () => null;
   g.openPr = async ({ branch, title }) => { g.writes.push("openPr"); g.prs.push({ number: g.prs.length + 1, branch, title }); return { number: g.prs.length }; };
-  g.merge = async (num) => { g.writes.push("merge"); return { merged: true }; };
+  g.merge = async (num) => { g.writes.push("merge"); g.main = String(++n).padStart(40, "d"); g.tree.find((e) => e.path === "catalog").sha = `c${n}`; return { merged: true }; };
   g.findIssues = async ({ label, state }) => ({ issues: g.issues.filter((i) => (state === "all" || i.state === state) && (!label || i.labels.includes(label))).map((i) => ({ ...i })), truncated: false });
   g.createIssue = async ({ title, body, labels }) => { g.writes.push("createIssue"); const i = { number: 100 + g.issues.length, title, body, labels, state: "open" }; g.issues.push(i); return { number: i.number, labels }; };
   g.addLabels = async (num) => ({ labels: ["adapter-watch"] });
@@ -58,7 +63,7 @@ function setup({ pages, gateResults = {}, catalogDir = tmpCatalog(), github = fa
       const runners = Object.fromEntries(["proto-diff", "selfcheck", "scenarios", "kotlin-smoke"].map((s) => [s, async () => (s === failAt ? { ok: false, detail: `${s} broke` } : { ok: true })]));
       return runGate({ ...a, runners });
     },
-    publish: (a) => publish({ checkoutCommit: MAIN, sleep: async () => {}, ...a }),
+    publish: async (a) => publish({ checkoutCommit: await github.mainCommit(), sleep: async () => {}, ...a }),
     reportPass,
     reportFailure,
     syncCheckout: async () => { synced.push(1); },
@@ -97,7 +102,7 @@ test("fail: placeholder carries the failing step, main commit and issue number; 
   const e = idx.entries[PROD_HASH];
   assert.equal(e.status, "needs-attention");
   assert.match(e.gate, /^selfcheck: selfcheck broke/);
-  assert.equal(e.commit, MAIN);
+  assert.equal(e.commit, await s.github.codeFingerprint());
   assert.equal(e.issue, s.github.issues.find((i) => /adapter 11111111/.test(i.title)).number);
   assert.match(idx.entries[STAGE_HASH].gate, /^kotlin-smoke/);
   assert.equal(s.github.issues.length, 2);
@@ -125,15 +130,14 @@ test("skip: known ok hash and an unchanged needs-attention hash do not gate", as
   assert.equal(r.faults.length, 0);
 });
 
-test("retest triggers: force, main moved, version changed", async () => {
+test("retest triggers: force, code changed, version changed", async () => {
   const s = setup({ pages: { staging: pages().staging }, gateResults: { staging: "selfcheck" } });
   await run(s, { targets: ["staging"] });
   s.gateCalls.length = 0;
   assert.equal((await run(s, { targets: ["staging"] })).results[0].outcome, "skip");
   assert.equal((await run(s, { targets: ["staging"], force: true })).results[0].outcome, "fail");
   assert.equal(s.gateCalls.length, 1);
-  s.deps.github.mainCommit = async () => "b".repeat(40);
-  s.deps.publish = (a) => publish({ checkoutCommit: "b".repeat(40), sleep: async () => {}, ...a });
+  s.github.tree.find((e) => e.path === "src").sha = "s2"; // code changed
   assert.equal((await run(s, { targets: ["staging"] })).results[0].outcome, "fail");
   assert.equal(s.gateCalls.length, 2);
   s.deps.readServer = async () => ({ hash: STAGE_HASH, release: "master@fedcba9876543210" });
@@ -235,6 +239,10 @@ test("workflow: parses, triggers, permissions, concurrency", { skip: !YAML && "y
   assert.equal(wf.concurrency["cancel-in-progress"], false);
   const steps = wf.jobs.watch.steps;
   assert.ok(steps.some((s) => String(s.uses).startsWith("actions/setup-java")));
+  assert.match(wf.jobs.watch.if, /refs\/heads\/main/);
+  assert.ok(wf.jobs.watch["timeout-minutes"] >= 120);
+  assert.equal(steps.find((s) => String(s.uses).startsWith("actions/checkout")).with["persist-credentials"], false);
+  assert.ok(steps.some((s) => s.run === "npm ci --ignore-scripts"));
   for (const s of steps) {
     if (!s.run) continue;
     assert.ok(!/\$\{\{/.test(s.run), `no expression in run: ${s.run}`);
@@ -255,4 +263,77 @@ test("workflow: the dispatch payload is never read; no expression in any run scr
   });
   assert.match(wfText, /concurrency:\s*\n\s*group: adapter-watch\s*\n\s*cancel-in-progress: false/);
   assert.match(wfText, /GITHUB_TOKEN: \$\{\{ github.token \}\}/);
+});
+
+test("R11: the watcher's own catalog merge does not retrigger; a non-catalog change does", async () => {
+  const s = setup({ pages: pages(), gateResults: { production: "selfcheck", staging: "selfcheck" } });
+  const first = await run(s);
+  assert.deepEqual(first.results.map((x) => x.outcome), ["fail", "fail"]);
+  assert.notEqual(s.github.main, MAIN, "merges advanced main");
+  s.gateCalls.length = 0;
+  const again = await run(s);
+  assert.deepEqual(again.results.map((x) => x.outcome), ["skip", "skip"]);
+  assert.equal(s.gateCalls.length, 0);
+  s.github.tree.find((e) => e.path === "scripts").sha = "t2";
+  const third = await run(s);
+  assert.deepEqual(third.results.map((x) => x.outcome), ["fail", "fail"]);
+});
+
+test("the same failing hash on both servers is gated once per run", async () => {
+  const same = { hash: PROD_HASH, release: "v1.34.9" };
+  const s = setup({ pages: { production: same, staging: { hash: PROD_HASH, release: "master@abcdef0123456789" } }, gateResults: { production: "selfcheck" } });
+  const r = await run(s);
+  assert.deepEqual(r.results.map((x) => x.outcome), ["fail", "skip"]);
+  assert.equal(s.gateCalls.length, 1);
+  assert.equal(s.github.issues.length, 1);
+});
+
+test("a 40-hex staging release is normalised before it reaches issues and the placeholder", async () => {
+  const s = setup({ pages: { staging: { hash: STAGE_HASH, release: "master@" + "abcdef0123".repeat(4) } }, gateResults: { staging: "selfcheck" } });
+  const r = await run(s, { targets: ["staging"] });
+  assert.deepEqual(r.faults, []);
+  assert.equal(readIndex(s.catalogDir).entries[STAGE_HASH].version, "master@abcdef01");
+});
+
+test("--version narrows to a server showing that version", async () => {
+  const s = setup({ pages: pages() });
+  const r = await run(s, { only: { version: "v1.34.9" } });
+  assert.deepEqual(r.results.map((x) => x.outcome), ["pass", "skip"]);
+});
+
+test("syncCheckout: token only in the fetch's env, never argv", async () => {
+  const calls = [];
+  await createSyncCheckout({ token: "sekret-token", cwd: "/x", exec: (args, o) => calls.push({ args, env: o.env }) })();
+  assert.deepEqual(calls.map((c) => c.args[0]), ["checkout", "clean", "fetch", "merge"]);
+  assert.ok(!JSON.stringify(calls.map((c) => c.args)).includes("sekret-token"));
+  assert.ok(!JSON.stringify(calls.map((c) => c.args)).includes(Buffer.from("x-access-token:sekret-token").toString("base64")));
+  assert.equal(calls.filter((c) => c.env).length, 1);
+  assert.equal(calls[2].env.GIT_CONFIG_COUNT, "1");
+  assert.ok(calls[2].env.GIT_CONFIG_VALUE_0.includes(Buffer.from("x-access-token:sekret-token").toString("base64")));
+  assert.deepEqual(calls[3].args, ["merge", "--ff-only", "FETCH_HEAD"]);
+});
+
+test("main(): config errors, publish only from main, token scrubbed, exit codes", async () => {
+  const base = { GITHUB_TOKEN: "tok", GITHUB_REPOSITORY: "campey/workadventurer", GITHUB_REF: "refs/heads/main" };
+  const quiet = console.log; console.log = () => {};
+  try {
+    await assert.rejects(() => main([], { ...base, GITHUB_TOKEN: "" }), /GITHUB_TOKEN/);
+    await assert.rejects(() => main([], { ...base, GITHUB_REPOSITORY: "" }), /GITHUB_REPOSITORY/);
+    await assert.rejects(() => main([], { ...base, GITHUB_REF: "refs/heads/feature" }, { deps: {} }), /only refs\/heads\/main/);
+    await assert.rejects(() => main([], { ...base, ADAPTER_WATCH_HASH: "bad;hash" }), /hash/);
+
+    // a dry run from a branch is allowed; the token is scrubbed from the process environment first
+    const s = setup({ pages: pages() });
+    const procEnv = { GITHUB_TOKEN: "tok", GH_TOKEN: "tok", PATH: "/bin" };
+    assert.equal(await main(["--dry-run"], { ...base, GITHUB_REF: "refs/heads/feature" }, { deps: s.deps, procEnv, catalogDir: s.catalogDir }), 0);
+    assert.deepEqual(procEnv, { PATH: "/bin" });
+    assert.deepEqual(s.github.writes, []);
+
+    // exit 1 on a watcher fault (unreadable server), 0 on a failed gate
+    const f = setup({ pages: { staging: pages().staging } });
+    assert.equal(await main([], base, { deps: f.deps, procEnv: {}, catalogDir: f.catalogDir }), 1);
+    const g = setup({ pages: pages(), gateResults: { production: "selfcheck", staging: "selfcheck" } });
+    assert.equal(await main([], base, { deps: g.deps, procEnv: {}, catalogDir: g.catalogDir }), 0);
+  } finally { console.log = quiet; }
+  const e = { GITHUB_TOKEN: "a", GH_TOKEN: "b", X: "1" }; scrubEnv(e); assert.deepEqual(e, { X: "1" });
 });

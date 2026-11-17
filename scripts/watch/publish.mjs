@@ -44,6 +44,8 @@ const fail = (stage, error, extra = {}) => ({ ok: false, stage, error, ...extra 
  * publish({ port, hash, adapterFile?, placeholder?, catalogDir?, now? })
  *   adapterFile: the validated adapter (object or exact text)  -> a pass
  *   placeholder: { server, version, gate, issue?, commit? }     -> a fail verdict
+ *     `commit` holds the code fingerprint (port.codeFingerprint(), see decide() in candidate.mjs), not a git commit;
+ *     when omitted the port's fingerprint is used, else main's sha.
  * Exactly one of the two.
  */
 export async function publish({ port, hash, adapterFile, placeholder, catalogDir = DEFAULT_DIR, now = new Date(), checkoutCommit, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 2000, maxWaitMs = 15000 } = {}) {
@@ -132,7 +134,7 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
       if (fs.existsSync(adapterPath)) return fail("validate", `${hash} already has an adapter file; not replacing it with a placeholder`);
       if (p.issue != null && !Number.isInteger(p.issue)) return fail("validate", "placeholder issue must be a number");
       let commit = p.commit;
-      if (commit == null) commit = mainSha;
+      if (commit == null) commit = (port.codeFingerprint ? await port.codeFingerprint() : null) ?? mainSha;
       if (typeof commit !== "string" || !/^[0-9a-f]{7,40}$/.test(commit)) return fail("validate", "placeholder commit must be a hex sha");
       const version = normaliseVersion(p.server, p.version);
       if (version != null && !/^[\w.@-]{1,40}$/.test(version)) return fail("validate", "placeholder version has unexpected characters or is too long");

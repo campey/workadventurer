@@ -6,7 +6,7 @@ import path from "node:path";
 import {
   runGate, STEP_NAMES, selfcheckInvocation, scenariosInvocation, kotlinSmokeInvocation,
   createProtoDiffRunner, createScenariosRunner, createKotlinSmokeRunner, createSelfcheckRunner,
-  firstFailure, runChild,
+  firstFailure, runChild, childEnv,
 } from "../scripts/watch/gate.mjs";
 
 const FILE = { schema: 1, id: "wa-1.34.9", waVersion: "1.34.9", apiVersionHash: "abc12345", server: "production", protoFamily: "wa-1.34" };
@@ -247,4 +247,14 @@ test("a child that ignores SIGTERM is SIGKILLed after the grace period", async (
   setTimeout(() => ac.abort(), 100);
   const r = await Promise.race([p, new Promise((res) => setTimeout(() => res("hung"), 5000))]);
   assert.notEqual(r, "hung");
+});
+
+test("runChild strips GitHub write tokens from the child environment", async () => {
+  const env = childEnv({ GH_TOKEN: "x", KEEP: "1" }, { GITHUB_TOKEN: "y", PATH: "/bin" });
+  assert.deepEqual(env, { PATH: "/bin", KEEP: "1" });
+  process.env.GITHUB_TOKEN = "leak";
+  try {
+    const r = await runChild({ command: process.execPath, args: ["-e", "console.log('t=' + process.env.GITHUB_TOKEN)"], env: { GH_TOKEN: "leak" } });
+    assert.match(r.output, /t=undefined/);
+  } finally { delete process.env.GITHUB_TOKEN; }
 });
