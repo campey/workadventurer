@@ -706,8 +706,9 @@ A route's waypoints are tile **centres**, so it ends up to about 22 px from the 
   downloads, `never` doesn't. `always` downloads, switches the session (and the daemon
   it starts) to `auto`, and writes `"adapterUpdates": "auto"` into the config file; it
   refuses (and says so) to touch a config file it cannot parse. The daemon recovers by
-  itself only in `auto` mode, only when nothing pins the adapter (`WA_VERSION` /
-  `WA_TARGET`), after a `NEW_VERSION` refusal (once per give-up). Otherwise it logs
+  itself only in `auto` mode, only when nothing pins or supplies the adapter (`WA_VERSION` /
+  `WA_TARGET` pin it; an adapter file, `WA_ADAPTER_FILE`, supplies it: a refused candidate file is never
+  replaced from the catalog and the daemon exits as above), after a `NEW_VERSION` refusal (once per give-up). Otherwise it logs
   how to allow it (run `wa join` again, or set `WA_ADAPTER_UPDATES=auto`) and exits
   as before; `wa join` is where the prompt happens.
 - **Security limits.** A downloaded file is checked against the index's sha256 and a
@@ -752,17 +753,22 @@ into `catalog/index.json` and opens or updates an issue. Both go through branch
   `waVersion` and `protoFamily`, the run link, and a hidden marker
   `<!-- adapter-watch:<hash|staging> -->`. Label `adapter-watch`. The watcher only edits or
   closes an issue whose body carries its marker (anyone can file a lookalike), and if
-  the label is later removed it still finds the issue by title plus marker, so it does not
-  open a duplicate. If several open issues match, the oldest is updated and the rest are
+  the label is later removed it still finds a production issue by title plus marker, so it does
+  not open a duplicate (production only: the staging issue is found by label plus marker, so a
+  removed label there means a second staging issue). If several open issues match, the oldest is updated and the rest are
   reported as warnings, never closed (a pass closes them all).
 - **The placeholder** in `catalog/index.json`: `status: "needs-attention"`, `server`,
   `version`, `gate` (the issue's failing step, control characters stripped), `issue`
   (its number, or null) and `commit`. **`commit` is a code fingerprint, not a git commit**
-  (ruling R11): sha1 over the sorted `path\0sha\n` entries of `main`'s root tree other than
-  `catalog` (`fingerprintOf` in `github-port.mjs`; the publish job computes the same value
-  from `git ls-tree`). It changes when code changes and not when the watcher merges to
-  `catalog/`; had it been main's commit, every publish would have looked like a code change
-  and re-tested every placeholder. `wa join` shows the placeholder's `gate` text to the
+  (rulings R11, R14): sha1 over the sorted `path\0sha\n` entries of `main`'s root tree limited to
+  `bin`, `src`, `scripts`, `world-port`, `android`, `proto`, `package.json` and
+  `package-lock.json` (`fingerprintOf` in `github-port.mjs`; the jobs compute the same value
+  from `git ls-tree`). It changes when gate-relevant code changes, not when the watcher merges to
+  `catalog/` or docs change; had it been main's commit, every publish would have looked like a code change
+  and re-tested every placeholder. **Ownership (R13):** production and staging can show the same hash.
+  A placeholder written by production is never re-gated or replaced from staging (staging skips it);
+  production over a staging-written placeholder gates once and takes ownership; `publish.mjs` also
+  refuses (stage `validate`) to replace a production `needs-attention` entry with a staging-origin one. `wa join` shows the placeholder's `gate` text to the
   user ("needs attention").
 - **Reading the gate steps** (`scripts/watch/gate.mjs`; a failed step skips the rest, so the
   first `fail` is the answer):
@@ -774,7 +780,7 @@ into `catalog/index.json` and opens or updates an issue. Both go through branch
     always pass). The detail names the file set (`src/` or `android/`) and the change. Fix:
     a code or adapter change, then a manual bump.
   - `selfcheck`: `scripts/selfcheck.mjs --adapter-file` joins, moves, bubbles and
-    enters an area (staging: `--target wa-master` with the staging room, pusher and woka).
+    enters an area (best-effort: with no `livekitRoomProperty` area on the map that step SKIPs, and a SKIP passes). It passes no `--target`, for production and staging alike: an explicit target beats an adapter file, so naming `wa-master` would test the built-in instead of the candidate. Staging adds `--room` plus `WA_PUSHER_URL` and `WA_WOKA_ID`.
     The detail is the first FAIL/error line of its output, so read the run log.
   - `scenarios`: the live scenario suite (`WORLD=live`, `WA_ADAPTER_FILE`). Production only;
     on staging the step is recorded as skipped ("production only") and counts as a pass,
@@ -801,7 +807,10 @@ into `catalog/index.json` and opens or updates an issue. Both go through branch
 - **Two jobs, and why** (ruling R12). `gate` runs third-party code (selfcheck, the live
   scenarios, Gradle) with `contents: read`, a checkout without credentials, no dependency
   caches (a cache saved by this job could be restored into a job with write access) and no
-  token; it uploads `verdicts/<server>.json`. `publish` is the only job with write
+  write token. Its own read-only `GITHUB_TOKEN` is passed to the one step that runs the gate
+  phase, only to lift the 60/hour unauthenticated API limit when fetching the candidate's
+  upstream proto (public data); it adds nothing to the boundary because the job can write
+  nothing, and the gate's child processes never receive it (`runChild` strips it). It uploads `verdicts/<server>.json`. `publish` is the only job with write
   permissions and runs no gate code (`npm ci --ignore-scripts`, no Gradle). It treats the
   artifact as untrusted: size caps, strict schema, `pass` recomputed from the steps, then
   re-reads the server and requires the same hash and version, re-decides, and REBUILDS the
@@ -809,9 +818,18 @@ into `catalog/index.json` and opens or updates an issue. Both go through branch
   compromised gate can flip pass/fail for a hash the server announces at that moment
   (a bad adapter published as `ok`, or a good one marked needing attention). It cannot
   publish any other hash, any other content, or write anything else. Only `main` publishes
-  (the workflow and `run.mjs` both refuse other refs, except a dry run).
+  (the workflow and `run.mjs` both refuse other refs, except a dry run). Second residual: gate-job
+  code running with sudo could in theory reach the runner's Actions cache token and poison a cache
+  that `android-release.yml` (which has `contents: write`) restores; the gate job reads and writes
+  no cache itself, but the runner-level token is out of this design's reach.
+- **Go-live switch.** Scheduled and `repository_dispatch` runs (both jobs) only happen when the
+  repository variable `ADAPTER_WATCH_ENABLED` is `true` (Settings, Secrets and variables,
+  Actions, Variables). Default OFF; a manual `workflow_dispatch` always runs. Setting it is the
+  go-live step, after the Task 8 dry run.
+- **Not implemented:** pruning old staging entries (the spec says keep the newest five). Staging
+  hashes churn, so the catalog grows until that follow-up lands.
 - **Repo settings it needs.** Settings, Actions, General: "Allow GitHub Actions to create and
-  approve pull requests" ticked; `main` requires a PR but **no required status checks** (a
+  approve pull requests" ticked; `main` requires a PR with 0 approvals but **no required status checks** (a
   PR opened with the default token starts no workflows, so a required check would never
   report); squash merging allowed (the watcher merges with it); label `adapter-watch`
   created. Permissions are per job in the workflow: `publish` has `contents`,
@@ -826,12 +844,16 @@ into `catalog/index.json` and opens or updates an issue. Both go through branch
   closes it only after its own passing gate run).
 - **Not verified live yet** (the first real runs may need a fix): the staging area word
   (`Meeting`, a one-word substring match; `ADAPTER_WATCH_STAGING_AREA` overrides), the
-  production area word (`Fire`; `ADAPTER_WATCH_AREA`), the staging woka id (the one
-  `scripts/selfcheck.mjs` knows; `ADAPTER_WATCH_STAGING_WOKA`), `cache-disabled: true` on
+  production area word (`Fire`; `ADAPTER_WATCH_AREA`), the staging room, pusher and woka id (`STAGING_FACTS` in
+  `scripts/watch/run.mjs`; the woka reaches selfcheck as `WA_WOKA_ID`; overridable with
+  `ADAPTER_WATCH_STAGING_ROOM`, `_PUSHER` and `_WOKA`), `cache-disabled: true` on
   `gradle/actions/setup-gradle@v4` (the Gradle cache is meant to be neither read nor written),
   and the token-carrying `git fetch` through `GIT_CONFIG_*` in `createSyncCheckout` (only
   reached after a merge, so the first publish followed by a second target exercises it). The
   watcher also needs a dry run on a throwaway hash to confirm the repo settings above.
+  Note the overrides `ADAPTER_WATCH_AREA`, `_STAGING_AREA`, `_STAGING_WOKA`, `_STAGING_ROOM` and
+  `_STAGING_PUSHER` are NOT passed by the workflow: to change one, edit the defaults in `run.mjs` or
+  add the variable to the gate job's step.
 
 ### The manual procedure (fallback)
 
