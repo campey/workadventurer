@@ -30,15 +30,15 @@ const ok = (server, version, file) => ({ status: "ok", server, version, file, sh
 
 test("decide: new hash gates; ok hash skips", () => {
   const ci = index({ aaaaaaaa: ok("production", "v1.34.4", "adapters/aaaaaaaa.json") });
-  assert.equal(decide({ hash: "bbbbbbbb", version: "v1.34.5", catalogIndex: ci }).action, "gate");
-  assert.equal(decide({ hash: "aaaaaaaa", version: "v1.34.4", catalogIndex: ci, force: true }).action, "skip");
+  assert.equal(decide({ hash: "bbbbbbbb", server: "production", version: "v1.34.5", catalogIndex: ci }).action, "gate");
+  assert.equal(decide({ hash: "aaaaaaaa", server: "production", version: "v1.34.4", catalogIndex: ci, force: true }).action, "skip");
 });
 
 test("decide: needs-attention skips unless force, main moved, or version changed", () => {
   const ci = index({
     cccccccc: { status: "needs-attention", server: "production", version: "v1.34.5", commit: "abc123" },
   });
-  const base = { hash: "cccccccc", version: "v1.34.5", catalogIndex: ci, mainCommit: "abc123" };
+  const base = { hash: "cccccccc", server: "production", version: "v1.34.5", catalogIndex: ci, mainCommit: "abc123" };
   assert.equal(decide(base).action, "skip");
   assert.equal(decide({ ...base, force: true }).action, "gate");
   assert.equal(decide({ ...base, mainCommit: "def456" }).action, "gate");
@@ -132,7 +132,7 @@ test("computeProtoHash follows WorkAdventure's recipe and sends the token", asyn
   assert.equal(r.shortSha, "01234567");
   assert.ok(seen.every((s) => s.auth === "Bearer tok"));
   const seen2 = [];
-  const st = await computeHashForVersion("staging", "master@118dd84c", { fetch: fakeGithub(seen2) });
+  const st = await computeHashForVersion("staging", "master@118dd84c", { token: "", fetch: fakeGithub(seen2) });
   assert.match(seen2[0].url, /\/commits\/118dd84c/);
   assert.ok(seen2.every((s) => s.auth === undefined));
   assert.equal(st.apiVersionHash.length, 8);
@@ -158,8 +158,12 @@ test("decide: a long master sha matches the stored 8-hex placeholder version", (
 });
 
 test("pickBase for staging sorts hash strings, not object order", () => {
-  const ci = index({ "12345678": ok("staging", "master@aaaaaaaa", "x"), abcdef00: ok("staging", "master@bbbbbbbb", "y") });
-  assert.equal(pickBase(ci, "staging").hash, "abcdef00");
+  const ci = index({ "0abcdef0": ok("staging", "master@aaaaaaaa", "x"), "99999999": ok("staging", "master@bbbbbbbb", "y") });
+  assert.equal(pickBase(ci, "staging").hash, "99999999");
   const ci2 = index({ abcdef00: ok("staging", "master@bbbbbbbb", "y"), "99999999": ok("staging", "master@aaaaaaaa", "x") });
   assert.equal(pickBase(ci2, "staging").hash, "abcdef00");
+});
+
+test("decide requires a server", () => {
+  assert.throws(() => decide({ hash: "aaaaaaaa", version: "v1.34.5", catalogIndex: index({}) }), /server must be/);
 });

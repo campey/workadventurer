@@ -69,14 +69,15 @@ export function pickBase(catalogIndex, server) {
  * string differs from the placeholder's `version`.
  */
 export function decide({ hash, version, server, catalogIndex, force = false, mainCommit }) {
+  if (server !== "production" && server !== "staging") throw new Error(`decide: server must be production or staging, got "${server}"`);
   const e = catalogIndex?.entries?.[hash];
   if (!e) return { action: "gate", reason: "new hash" };
   if (e.status === "ok") return { action: "skip", reason: "already ok" };
   if (e.status !== "needs-attention") return { action: "gate", reason: `entry status "${e.status}"` };
   if (force) return { action: "gate", reason: "manual run" };
   if (mainCommit && e.commit !== mainCommit) return { action: "gate", reason: "main changed since the placeholder" };
-  const shown = normaliseVersion(server ?? e.server, version);
-  if (shown && shown !== normaliseVersion(e.server, e.version)) return { action: "gate", reason: "server version changed" };
+  const shown = normaliseVersion(server, version);
+  if (shown && shown !== normaliseVersion(server, e.version)) return { action: "gate", reason: "server version changed" };
   return { action: "skip", reason: "needs-attention, nothing changed" };
 }
 
