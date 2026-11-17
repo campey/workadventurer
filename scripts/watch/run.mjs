@@ -511,7 +511,7 @@ async function mainInner(argv, env, injected) {
   // Defence in depth for `--phase all`: the token lives only in the port, the proto fetch and the sync closure, so
   // children (selfcheck, Gradle) never inherit it. This is NOT a boundary (a child could still read /proc/<pid>/environ
   // of this process's earlier state or use sudo); the real boundary is the workflow's two jobs: the gate job runs
-  // `--phase gate` with a read-only token and never has any GitHub token (the publish job, which has the write token, runs no gate code).
+  // `--phase gate` with a read-only token and never has a GitHub WRITE token (the publish job, which has the write token, runs no gate code).
   scrubEnv(injected.procEnv ?? process.env);
   log(`adapter watcher, phase ${args.phase}${dryRun ? " (dry run)" : ""}${force ? " (force)" : ""}`);
   const out = await runWatch(deps, { dryRun, force, only, targets: args.target ? [args.target] : TARGET_NAMES, runUrl, catalogDir, log, phase: args.phase, verdictDir: args.verdictDir });

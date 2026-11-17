@@ -97,7 +97,7 @@ behaves as it does today.
 - URL: `https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json` (my call; a client setting
   `WA_CATALOG_URL` / an app setting overrides it, which the gate and tests use).
 - Seeded with the hashes we already know and have verified (production v1.34.0, .1, .2, .4; staging `d2d82672`; v1.34.3 is left out because it was never seen live). Staging is already past its seed entry: the watcher's first run produces the current one.
-- **Staging entries are pruned**: the catalog keeps the newest five staging entries, because staging produces a new hash every few days and old ones are never asked for again. Production entries are kept forever. Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
+- **Staging entries should be pruned (NOT implemented yet, follow-up)**: the catalog keeps the newest five staging entries, because staging produces a new hash every few days and old ones are never asked for again. Production entries are kept forever. Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
 
 ### Handshake parameters
 
@@ -197,7 +197,7 @@ Steps of a run, **for each of production and staging**:
    `needs-attention` is **not** re-tested every hour (it would put live avatars on production each time for the same
    answer): it is re-run only on a manual run, or when the repository's gate-relevant code (see the fingerprint above) has changed since the placeholder recorded its fingerprint,
    or when the server's version string changes (my call).
-   The workflow is two jobs (R12): `gate` runs the third-party gate steps with read-only permissions and no token and
+   The workflow is two jobs (R12): `gate` runs the third-party gate steps with read-only permissions and no write token (a read-only token reaches only the gate-phase step, R16) and
    uploads a verdict per server; `publish` (the only job with write permissions, running no gate code) treats the
    verdict as untrusted data, re-reads the server, rebuilds the adapter itself and re-decides. Residual risk: a forged
    verdict can at worst flip pass/fail for a hash the server really announces at that moment.
