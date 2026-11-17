@@ -8,6 +8,7 @@ import { matchVersion, ADAPTERS } from "../../src/adapters/index.mjs";
 import { fetchAdapterFile } from "../../src/catalog/client.mjs";
 import { validateAdapterFile } from "../../src/catalog/schema.mjs";
 import { computeProtoHash } from "../vendor-proto.mjs";
+import { displayVersion } from "../catalog-index.mjs";
 
 export const TARGETS = {
   production: "https://play.workadventu.re/",
@@ -23,9 +24,13 @@ export function readServer(target, { fetch, timeoutMs } = {}) {
 
 /** The upstream hash for a release tag or the `master` commit the page names (GITHUB_TOKEN raises the rate limit). */
 export function computeHashForVersion(server, release, { token, fetch } = {}) {
-  const m = String(release).match(/^master@([0-9a-f]{7,40})$/);
-  const ref = server === "staging" && m ? m[1] : String(release);
-  return computeProtoHash(ref, { token, fetch });
+  if (server === "staging") {
+    const m = String(release).match(/^master@([0-9a-f]+)$/);
+    if (!m) throw new Error(`staging release "${release}" does not name a master commit (expected master@<sha>)`);
+    return computeProtoHash(m[1], { token, fetch });
+  }
+  if (!release) throw new Error("production release is missing");
+  return computeProtoHash(String(release), { token, fetch });
 }
 
 const semverKey = (v) => (String(v).match(/\d+/g) ?? []).map(Number);
@@ -47,7 +52,10 @@ export function pickBase(catalogIndex, server) {
   let best = null;
   for (const [hash, e] of Object.entries(catalogIndex?.entries ?? {})) {
     if (e?.status !== "ok" || e.server !== server) continue;
-    if (!best || (server === "production" ? cmpSemver(e.version, best.entry.version) >= 0 : true)) best = { hash, entry: e };
+    if (!best) best = { hash, entry: e };
+    else if (server === "production") {
+      if (cmpSemver(e.version, best.entry.version) >= 0) best = { hash, entry: e };
+    } else if (hash > best.hash) best = { hash, entry: e };
   }
   return best;
 }
@@ -60,14 +68,15 @@ export function pickBase(catalogIndex, server) {
  * `main` commit differs from the placeholder's `commit`, or the server's version
  * string differs from the placeholder's `version`.
  */
-export function decide({ hash, version, catalogIndex, force = false, mainCommit }) {
+export function decide({ hash, version, server, catalogIndex, force = false, mainCommit }) {
   const e = catalogIndex?.entries?.[hash];
   if (!e) return { action: "gate", reason: "new hash" };
   if (e.status === "ok") return { action: "skip", reason: "already ok" };
   if (e.status !== "needs-attention") return { action: "gate", reason: `entry status "${e.status}"` };
   if (force) return { action: "gate", reason: "manual run" };
   if (mainCommit && e.commit !== mainCommit) return { action: "gate", reason: "main changed since the placeholder" };
-  if (version && e.version !== version) return { action: "gate", reason: "server version changed" };
+  const shown = normaliseVersion(server ?? e.server, version);
+  if (shown && shown !== normaliseVersion(e.server, e.version)) return { action: "gate", reason: "server version changed" };
   return { action: "skip", reason: "needs-attention, nothing changed" };
 }
 
@@ -79,6 +88,13 @@ export function waVersionFor(server, version) {
   }
   const m = String(version).match(/^v?(\d+\.\d+\.\d+)$/);
   return m ? m[1] : null;
+}
+
+/** The form the index stores: v1.34.5, master@<8 hex>. Unnameable versions come back as given. */
+export function normaliseVersion(server, version) {
+  if (!version) return null;
+  const wa = waVersionFor(server, version);
+  return wa ? displayVersion(wa) : String(version);
 }
 
 const NUMBER_KEYS = ["meeting", "movement", "handshake"];

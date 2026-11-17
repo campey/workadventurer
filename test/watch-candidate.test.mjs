@@ -131,7 +131,35 @@ test("computeProtoHash follows WorkAdventure's recipe and sends the token", asyn
   assert.equal(r.apiVersionHash, sha1(inner).slice(0, 8));
   assert.equal(r.shortSha, "01234567");
   assert.ok(seen.every((s) => s.auth === "Bearer tok"));
-  const st = await computeHashForVersion("staging", "master@118dd84c", { fetch: fakeGithub(seen) });
-  assert.match(seen.at(-1).url, /118dd84c|a\.ts|b\.ts|messages\.proto/);
+  const seen2 = [];
+  const st = await computeHashForVersion("staging", "master@118dd84c", { fetch: fakeGithub(seen2) });
+  assert.match(seen2[0].url, /\/commits\/118dd84c/);
+  assert.ok(seen2.every((s) => s.auth === undefined));
   assert.equal(st.apiVersionHash.length, 8);
+  assert.throws(() => computeHashForVersion("staging", null, {}), /master@<sha>/);
+  assert.throws(() => computeHashForVersion("staging", "v1.34.5", {}), /master@<sha>/);
+});
+
+test("waVersionFor returns null for a missing or odd version", () => {
+  assert.equal(waVersionFor("staging", null), null);
+  assert.equal(waVersionFor("production", undefined), null);
+});
+
+test("decide: a long master sha matches the stored 8-hex placeholder version", () => {
+  const ci = index({
+    dddddddd: { status: "needs-attention", server: "staging", version: "master@118dd84c", commit: "abc" },
+  });
+  const r = decide({ hash: "dddddddd", server: "staging", version: "master@118dd84c" + "0".repeat(32), catalogIndex: ci, mainCommit: "abc" });
+  assert.equal(r.action, "skip");
+  const r2 = decide({ hash: "dddddddd", server: "staging", version: "master@99999999aaaa", catalogIndex: ci, mainCommit: "abc" });
+  assert.equal(r2.action, "gate");
+  const prod = index({ eeeeeeee: { status: "needs-attention", server: "production", version: "v1.34.5", commit: "abc" } });
+  assert.equal(decide({ hash: "eeeeeeee", server: "production", version: "v1.34.5", catalogIndex: prod, mainCommit: "abc" }).action, "skip");
+});
+
+test("pickBase for staging sorts hash strings, not object order", () => {
+  const ci = index({ "12345678": ok("staging", "master@aaaaaaaa", "x"), abcdef00: ok("staging", "master@bbbbbbbb", "y") });
+  assert.equal(pickBase(ci, "staging").hash, "abcdef00");
+  const ci2 = index({ abcdef00: ok("staging", "master@bbbbbbbb", "y"), "99999999": ok("staging", "master@aaaaaaaa", "x") });
+  assert.equal(pickBase(ci2, "staging").hash, "abcdef00");
 });
