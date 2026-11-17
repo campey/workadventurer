@@ -18,7 +18,10 @@ Project-specific rules for Claude Code sessions working in this repo.
   (#124/#125): the probe → recorder → scenario → fake → gap loop, `npm run scenarios`,
   `WORLD=live`, `RECORD=1`, `world-port/probes/run.mjs`, the `confirmedBy` rule.
 - `docs/superpowers/specs/2026-11-10-downloadable-adapters-design.md` — downloadable adapters (#126);
-  the CLI side is summarised in `docs/field-notes.md` "When prod bumps" ("With the catalog").
+  the CLI side is summarised in `docs/field-notes.md` "When the watcher says needs attention" ("With the catalog").
+- **Adapter watcher (#127)** — `.github/workflows/adapter-watch.yml`, `scripts/watch/`. How to read its
+  issues and placeholders, force a retest, the gate/publish job split (R12), the repo settings it needs,
+  and what is still unverified live: `docs/field-notes.md` "When the watcher says needs attention".
 
 - `android/docs/field-notes.md` — the Android client's gate-by-gate findings, led by a
   "Protocol and behaviour reference" (spaces, roles, mic state and mute, libwebrtc

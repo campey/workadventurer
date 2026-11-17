@@ -241,7 +241,7 @@ the reason are logged on connect and shown in `wa status`.
 A patch release that shifts the `apiVersionHash` **appends** to that adapter's
 `apiVersionHashes` — it does not fork a new adapter. Refresh `wa-master` with
 `node scripts/vendor-proto.mjs <ref>` (prints the recomputed hash). When **prod moves to a new `major.minor`** (it does without notice — see
-[docs/field-notes.md § When prod bumps](docs/field-notes.md#when-prod-bumps)), clients stop connecting
+[docs/field-notes.md § When the watcher says needs attention](docs/field-notes.md#when-the-watcher-says-needs-attention-and-a-manual-bump)), clients stop connecting
 with `NEW_VERSION` until there's an adapter for it.
 
 **Before any change touching `src/`:** `node scripts/selfcheck.mjs` (prod) must

@@ -98,7 +98,7 @@ export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion
       adapter: newest,
       why:
         `probed ${probe.raw} — no ${key} adapter, using ${newest.id} behaviours; ` +
-        `the server may reject its hash (NEW_VERSION) — see "When prod bumps" in docs/field-notes.md`,
+        `the server may reject its hash (NEW_VERSION) — see "When the watcher says needs attention" in docs/field-notes.md`,
       warn: true,
     };
   }
