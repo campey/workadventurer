@@ -90,6 +90,10 @@ behaves as it does today.
   (dwell 1500 / linger 2500, no walk/run), so it ignores the behaviour numbers. This keeps a first download from
   changing how the app behaves. Applying them is a later change to the app, not to the catalog.
 - A **placeholder** is an index entry with `status: "needs-attention"`, no `file`, and `gate` holding the failure summary.
+  It also carries `server`, `version` (display form, `v1.34.5` / `master@<8 hex>`), `issue` (number or null), and `commit`
+  (the `main` commit sha it was recorded at; the watcher re-tests when `main` moves). `gate` is a single sanitised,
+  200-character-capped string (`gateDetail`), not an object. `fetchIndex` keeps all of these and strips `file`/`sha256`;
+  `rebuildIndex` keeps placeholders verbatim until an adapter file for that hash appears and replaces them with an `ok` entry.
 - URL: `https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json` (my call; a client setting
   `WA_CATALOG_URL` / an app setting overrides it, which the gate and tests use).
 - Seeded with the hashes we already know and have verified (production v1.34.0, .1, .2, .4; staging `d2d82672`; v1.34.3 is left out because it was never seen live). Staging is already past its seed entry: the watcher's first run produces the current one.
