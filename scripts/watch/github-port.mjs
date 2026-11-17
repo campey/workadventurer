@@ -12,6 +12,11 @@
 //   merge(number, { expectedHeadSha })    -> { merged: true } (throws or { merged:false } otherwise); GitHub
 //                                         refuses (409) if the PR head is no longer expectedHeadSha
 //   repo                                  -> "owner/name", so callers can check a PR's head repo
+//   findIssues({ label, state })          -> [{ number, title, state }] oldest first (pull requests excluded);
+//                                         state is open | closed | all; first 100 only
+//   createIssue({ title, body, labels })  -> { number }
+//   updateIssue(number, { title, body })  -> { number }
+//   closeIssue(number, { comment })       -> { closed: true }: comments first (if given), then closes
 //
 // Every method may throw; callers (publish) turn that into a result object.
 // The token is only ever sent in the Authorization header: it is never logged, and
@@ -119,6 +124,31 @@ export function createGithubPort({ repo, token, fetch: fetchFn = globalThis.fetc
       if (!expectedHeadSha) throw new Error("merge needs expectedHeadSha");
       const { data } = await api("PUT", `/pulls/${number}/merge`, { merge_method: "squash", sha: expectedHeadSha });
       return { merged: data?.merged === true };
+    },
+    async findIssues({ label, state = "open" } = {}) {
+      if (typeof label !== "string" || !label) throw new Error("findIssues needs a label");
+      if (!["open", "closed", "all"].includes(state)) throw new Error("findIssues: state must be open, closed or all");
+      const { data } = await api("GET", `/issues?labels=${encodeURIComponent(label)}&state=${state}&per_page=100&sort=created&direction=asc`);
+      if (!Array.isArray(data)) return [];
+      return data
+        .filter((i) => !i.pull_request)
+        .map((i) => ({ number: i.number, title: String(i.title ?? ""), state: i.state }))
+        .sort((a, b) => a.number - b.number);
+    },
+    async createIssue({ title, body, labels = [] }) {
+      const { data } = await api("POST", "/issues", { title, body, labels });
+      return { number: data.number };
+    },
+    async updateIssue(number, { title, body }) {
+      if (!Number.isInteger(number)) throw new Error("updateIssue needs an issue number");
+      const { data } = await api("PATCH", `/issues/${number}`, { ...(title !== undefined ? { title } : {}), ...(body !== undefined ? { body } : {}) });
+      return { number: data.number };
+    },
+    async closeIssue(number, { comment } = {}) {
+      if (!Number.isInteger(number)) throw new Error("closeIssue needs an issue number");
+      if (comment) await api("POST", `/issues/${number}/comments`, { body: comment });
+      await api("PATCH", `/issues/${number}`, { state: "closed", state_reason: "completed" });
+      return { closed: true };
     },
   };
 }
