@@ -17,7 +17,7 @@ const unavailable = (reason) => ({ status: "unavailable", reason });
 // The text is untrusted and ends up on the terminal: control characters become
 // spaces and the length is capped.
 const MAX_DETAIL = 200;
-function gateDetail(gate) {
+export function gateDetail(gate) {
   if (gate == null) return undefined;
   let text;
   if (typeof gate === "string") text = gate;
