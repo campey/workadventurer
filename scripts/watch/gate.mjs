@@ -171,9 +171,12 @@ export function createProtoDiffRunner({ root = repoRoot, nodeSources, kotlinSour
   };
 }
 
-/** `node scripts/selfcheck.mjs` for the candidate; staging uses wa-master's target with the staging room, pusher and woka. */
+/**
+ * `node scripts/selfcheck.mjs` for the candidate. NO `--target`: an explicit target other than auto beats an adapter
+ * file (R1/R7), so naming `wa-master` would test the built-in, not the candidate. Staging adds its room, pusher and woka.
+ */
 export function selfcheckInvocation({ candidateFile, server, staging = {}, root = repoRoot }) {
-  const args = [path.join(root, "scripts/selfcheck.mjs"), "--target", server === "staging" ? "wa-master" : "production", "--adapter-file", candidateFile];
+  const args = [path.join(root, "scripts/selfcheck.mjs"), "--adapter-file", candidateFile];
   const env = withProxy();
   if (server === "staging") {
     if (staging.room) args.push("--room", staging.room);

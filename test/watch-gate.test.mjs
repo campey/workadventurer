@@ -98,10 +98,16 @@ test("without a candidateFile the gate writes the file for the clients", async (
 
 test("selfcheck gets the candidate via --adapter-file; staging adds room, pusher and woka", () => {
   const p = selfcheckInvocation({ candidateFile: "/c.json", server: "production" });
-  assert.deepEqual(p.args.slice(1), ["--target", "production", "--adapter-file", "/c.json"]);
+  assert.deepEqual(p.args.slice(1), ["--adapter-file", "/c.json"]);
   assert.equal(p.env.NODE_USE_ENV_PROXY, "1");
   const s = selfcheckInvocation({ candidateFile: "/c.json", server: "staging", staging: { room: "https://r/", pusherUrl: "https://p", wokaId: "w1" } });
-  assert.deepEqual(s.args.slice(1), ["--target", "wa-master", "--adapter-file", "/c.json", "--room", "https://r/"]);
+  assert.deepEqual(s.args.slice(1), ["--adapter-file", "/c.json", "--room", "https://r/"]);
+  // R1/R7: an explicit target beats the file, so no invocation may name one (or pin a version) and test a built-in instead
+  for (const inv of [p, s]) {
+    assert.ok(!inv.args.includes("--target") && !inv.args.some((a) => /wa-master|wa-1\./.test(a)), "no explicit target");
+    assert.ok(!("WA_TARGET" in inv.env) && !("WA_VERSION" in inv.env), "no target or version pin in the env");
+    assert.ok(inv.args.includes("--adapter-file"));
+  }
   assert.equal(s.env.WA_PUSHER_URL, "https://p");
   assert.equal(s.env.WA_WOKA_ID, "w1");
 });
