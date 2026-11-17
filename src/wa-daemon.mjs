@@ -324,6 +324,10 @@ const newClient = () =>
 // result means the next newClient() resolves the adapter from the cache.
 async function tryAdapterRecovery() {
   if (cfg.version || cfg.target !== "auto") return false;
+  if (cfg.adapterFile) {
+    log(`the server refused the candidate adapter file ${cfg.adapterFile}; not fetching a catalog adapter in its place`);
+    return false;
+  }
   if (cfg.adapterUpdates !== "auto") {
     log("the server's version is newer than any adapter here: run `wa join` again to check the catalog for an adapter, or set WA_ADAPTER_UPDATES=auto so the daemon does it itself");
     return false;

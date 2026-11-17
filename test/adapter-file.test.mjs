@@ -1,4 +1,6 @@
 import { test } from "node:test";
+import { spawnSync } from "node:child_process";
+import { WorkAdventureClient } from "../src/wa-client.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -81,9 +83,6 @@ test("config: adapterFile from flag > env > config file, made absolute; reaches 
   }
 });
 
-import { spawnSync } from "node:child_process";
-import { WorkAdventureClient } from "../src/wa-client.mjs";
-
 test("WorkAdventureClient.connect resolves the injected fileAdapter without probing", async () => {
   const fileAdapter = loadAdapterFile(goodFile(), ADAPTERS);
   const c = new WorkAdventureClient({
@@ -110,4 +109,19 @@ test("wa join with an unreadable adapter file exits non-zero before starting a d
 test("LiveWorld with an invalid adapter file throws at construction", async () => {
   const { LiveWorld } = await import("../world-port/live/live-world.mjs");
   assert.throws(() => new LiveWorld({ roomUrl: "https://x/@/a/b/c", name: "t", adapterFile: path.join(dir, "missing.json") }), /cannot read/);
+});
+
+test("config: a relative adapterFile in the config file resolves against the config file's directory", () => {
+  const saved = process.env.WA_ADAPTER_FILE;
+  delete process.env.WA_ADAPTER_FILE;
+  try {
+    const sub = path.join(dir, "cfgdir");
+    fs.mkdirSync(sub, { recursive: true });
+    const f = path.join(sub, "config.json");
+    fs.writeFileSync(f, JSON.stringify({ adapterFile: "adapters/c.json" }));
+    assert.equal(resolveConfig({}, f).adapterFile, path.join(sub, "adapters", "c.json"));
+    assert.equal(resolveConfig({ adapterFile: "x.json" }, f).adapterFile, path.resolve("x.json"));
+  } finally {
+    if (saved !== undefined) process.env.WA_ADAPTER_FILE = saved;
+  }
 });

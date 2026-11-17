@@ -55,7 +55,7 @@ const shaDrift = (a, b) => !(a.startsWith(b) || b.startsWith(a));
 
 /**
  * Resolve a target adapter. Precedence: explicit override (a target other than
- * "auto") > explicit adapter file (`fileAdapter`, already loaded and built by the
+ * "auto"; WA_VERSION only pins the hash the client sends and never displaces a file) > explicit adapter file (`fileAdapter`, already loaded and built by the
  * outer layer; no probe is made) > cached catalog
  * adapter for the probed hash > server probe > host allowlist > warned default
  * (wa-1.33). `cachedFor` is injected by the outer layer so the core client

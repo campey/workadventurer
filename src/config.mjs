@@ -76,7 +76,10 @@ export function resolveConfig(flags = {}, configPath = CONFIG_PATH) {
   const cleanFlags = Object.fromEntries(
     Object.entries(flags).filter(([, v]) => v !== undefined && v !== null)
   );
-  const merged = { ...BASE, ...fromFile(configPath), ...fromEnv(), ...cleanFlags };
+  const file = fromFile(configPath);
+  // A relative adapterFile in the config file is relative to that file; flag and env stay cwd-relative.
+  if (typeof file.adapterFile === "string") file.adapterFile = path.resolve(path.dirname(configPath), file.adapterFile);
+  const merged = { ...BASE, ...file, ...fromEnv(), ...cleanFlags };
   merged.port = Number(merged.port) || BASE.port;
   merged.stt = merged.stt === true || merged.stt === "1" || merged.stt === "true";
   merged.adapterFile = merged.adapterFile ? path.resolve(String(merged.adapterFile)) : null;

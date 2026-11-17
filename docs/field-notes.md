@@ -681,8 +681,9 @@ A route's waypoints are tile **centres**, so it ends up to about 22 px from the 
   adapter file that is not in the catalog (`src/catalog/adapter-file.mjs`, same
   validation as the cache). It wins over cached catalog adapter, probe, allowlist and
   built-in hash matching, and skips the catalog pre-flight in `wa join`; only an
-  explicit `--target`/`WA_TARGET` (not `auto`) still beats it, and `WA_VERSION` still
-  sets the hash sent. An unreadable or invalid file is a hard error (exit 2), never a
+  explicit `--target`/`WA_TARGET` (not `auto`) still beats it, and `WA_VERSION`/`version`
+  only pins the hash sent in the handshake; it does not displace the file (the file's
+  behaviours stay). An unreadable or invalid file is a hard error (exit 2), never a
   fallback. The client gets it injected as `fileAdapter`, like `cachedFor`.
 - **`wa join`.** It no longer just fails on a server hash it doesn't know. Unless
   something pins the adapter (`WA_VERSION` or `WA_TARGET`, or the `version` /
