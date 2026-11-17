@@ -4,8 +4,8 @@
 //
 //   mainCommit()                          -> sha of the tip of the base branch
 //   codeFingerprint()                     -> sha1 hex over the sorted root-tree entries (name + sha) of the base branch
-//                                         EXCLUDING `catalog`: it changes when code changes and not when the
-//                                         watcher publishes (ruling R11); one non-recursive GET /git/trees/<base>
+//                                         limited to FINGERPRINT_ENTRIES (R14): it changes when gate-relevant code
+//                                         changes, not when the watcher publishes (R11) or docs change; one non-recursive GET /git/trees/<base>
 //   createBranch(name, sha)               -> create the branch, or reset it to `sha` if it exists
 //   commit({ branch, message, files, parent }) -> { sha }: one commit of [{ path, content }] whose parent is
 //                                         exactly `parent` (the sha given to createBranch); the branch is
@@ -44,10 +44,17 @@ export function assertCatalogPaths(paths) {
   }
 }
 
-/** sha1 over the sorted root-tree entries (path + sha) other than `catalog`. */
+/**
+ * R14: the root entries whose change can change what the gate does (the clients, the scripts the gate runs, the
+ * Android app, the vendored protos, the dependencies). An allowlist: docs, catalog/ and CI files do not count, so a
+ * docs-only commit does not retest every needs-attention hash.
+ */
+export const FINGERPRINT_ENTRIES = ["android", "bin", "package-lock.json", "package.json", "proto", "scripts", "src", "world-port"];
+
+/** sha1 over the sorted root-tree entries (path + sha) in FINGERPRINT_ENTRIES. */
 export function fingerprintOf(entries) {
   const h = createHash("sha1");
-  for (const e of [...entries].filter((x) => x.path !== "catalog").sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) h.update(`${e.path}\0${e.sha}\n`);
+  for (const e of [...entries].filter((x) => FINGERPRINT_ENTRIES.includes(x.path)).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) h.update(`${e.path}\0${e.sha}\n`);
   return h.digest("hex");
 }
 

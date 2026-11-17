@@ -37,6 +37,15 @@ import { assertCatalogPaths, branchFor } from "./github-port.mjs";
 const DEFAULT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "catalog");
 const SERVERS = ["production", "staging"];
 
+/** R13: a production needs-attention entry is never replaced by a staging-origin verdict. */
+function ownedByProduction(indexBuf, hash, originServer) {
+  if (originServer !== "staging" || !indexBuf) return false;
+  try {
+    const e = JSON.parse(indexBuf.toString("utf8"))?.entries?.[hash];
+    return e?.status === "needs-attention" && e.server === "production";
+  } catch { return false; }
+}
+
 const msg = (e) => String(e?.message ?? e).slice(0, 300);
 const fail = (stage, error, extra = {}) => ({ ok: false, stage, error, ...extra });
 
@@ -114,6 +123,7 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
       const checked = validateAdapterFile(parsed, ADAPTERS);
       if (!checked.ok) return fail("validate", `adapter file invalid: ${checked.reason}`);
       if (checked.file.apiVersionHash !== hash) return fail("validate", `adapter file's apiVersionHash is ${checked.file.apiVersionHash}, not ${hash}`);
+      if (ownedByProduction(before.index, hash, checked.file.server)) return fail("validate", `${hash} has a production needs-attention entry; a staging verdict does not replace it`);
       if (before.adapter !== null) {
         if (!before.adapter.equals(Buffer.from(text))) return fail("validate", `${hash} already has a different adapter file in the catalog; refusing to replace it`);
         // Identical file: done only if the index already lists it as ok with this file's sha256;
@@ -132,6 +142,7 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
       const p = placeholder;
       if (!SERVERS.includes(p?.server)) return fail("validate", `placeholder server must be one of ${SERVERS.join(", ")}`);
       if (fs.existsSync(adapterPath)) return fail("validate", `${hash} already has an adapter file; not replacing it with a placeholder`);
+      if (ownedByProduction(before.index, hash, p.server)) return fail("validate", `${hash} has a production needs-attention entry; a staging placeholder does not replace it`);
       if (p.issue != null && !Number.isInteger(p.issue)) return fail("validate", "placeholder issue must be a number");
       // The code fingerprint is required (callers read it from the port): there is no sensible default, and a
       // main commit sha here would make every merge look like a code change.
@@ -175,7 +186,7 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
       stage = "merge";
       // GitHub moves a PR's head asynchronously after the ref update: wait briefly for ours.
       // (The sha pin on merge stays the authoritative check.)
-      for (let waited = 0; existing && existing.headSha !== commitSha && waited < maxWaitMs; waited += pollMs) {
+      for (let waited = 0; existing && existing.headSha !== commitSha && waited < maxWaitMs; waited += Math.max(1, pollMs)) {
         await sleep(pollMs);
         existing = await port.findOpenPr(branch);
       }

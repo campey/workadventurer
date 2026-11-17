@@ -167,3 +167,16 @@ test("pickBase for staging sorts hash strings, not object order", () => {
 test("decide requires a server", () => {
   assert.throws(() => decide({ hash: "aaaaaaaa", version: "v1.34.5", catalogIndex: index({}) }), /server must be/);
 });
+
+test("decide ownership (R13): staging never re-gates a production placeholder; production takes over a staging one", () => {
+  const entry = (server) => ({ status: "needs-attention", server, version: "v1.34.5", commit: "abc123" });
+  const base = { hash: "cccccccc", version: "v1.34.5", mainCommit: undefined, codeFingerprint: "abc123" };
+  const prodOwned = index({ cccccccc: entry("production") });
+  const stagingOwned = index({ cccccccc: entry("staging") });
+  assert.equal(decide({ ...base, server: "staging", catalogIndex: prodOwned }).action, "skip");
+  assert.equal(decide({ ...base, server: "staging", catalogIndex: prodOwned, force: true }).action, "skip");
+  assert.equal(decide({ ...base, server: "staging", catalogIndex: prodOwned, codeFingerprint: "zzz" }).action, "skip");
+  assert.equal(decide({ ...base, server: "production", catalogIndex: stagingOwned }).action, "gate");
+  assert.equal(decide({ ...base, server: "production", catalogIndex: prodOwned }).action, "skip");
+  assert.equal(decide({ ...base, server: "staging", catalogIndex: stagingOwned }).action, "skip");
+});

@@ -64,11 +64,13 @@ export function pickBase(catalogIndex, server) {
  * Decide whether a server hash needs the gate.
  *   skip: the hash is already `ok`, or it is `needs-attention` with no retest trigger.
  *   gate: new hash, or a retest trigger fired.
- * Retest triggers for a `needs-attention` placeholder: `force` (manual run), the code
+ * Ownership (R13): a placeholder written by production is never re-gated or replaced from staging; production
+ * gates over a staging-written placeholder once (and the new placeholder or ok entry is then production's).
+ * Retest triggers for a `needs-attention` placeholder of the same server: `force` (manual run), the code
  * fingerprint differs from the placeholder's `commit` field, or the server's version
  * string differs from the placeholder's `version`. The `commit` field holds the CODE
- * FINGERPRINT (port.codeFingerprint(): sha1 of main's root tree entries except `catalog`),
- * not a git commit: the watcher's own catalog merges must not retrigger a retest (R11).
+ * FINGERPRINT (port.codeFingerprint(): sha1 of the root tree entries bin, src, scripts, world-port, android, proto, package.json and
+ * package-lock.json, R14), not a git commit; neither catalog/ nor docs/ count: the watcher's own catalog merges must not retrigger a retest (R11).
  */
 export function decide({ hash, version, server, catalogIndex, force = false, codeFingerprint }) {
   if (server !== "production" && server !== "staging") throw new Error(`decide: server must be production or staging, got "${server}"`);
@@ -76,6 +78,10 @@ export function decide({ hash, version, server, catalogIndex, force = false, cod
   if (!e) return { action: "gate", reason: "new hash" };
   if (e.status === "ok") return { action: "skip", reason: "already ok" };
   if (e.status !== "needs-attention") return { action: "gate", reason: `entry status "${e.status}"` };
+  // R13: production and staging can show the same hash. Production owns it: staging never gates or overwrites a
+  // placeholder production wrote; production over a staging-written one gates once and takes ownership.
+  if (server === "staging" && e.server === "production") return { action: "skip", reason: "owned by production" };
+  if (server === "production" && e.server === "staging") return { action: "gate", reason: "production takes over a staging placeholder" };
   if (force) return { action: "gate", reason: "manual run" };
   if (codeFingerprint && e.commit !== codeFingerprint) return { action: "gate", reason: "code changed since the placeholder" };
   const shown = normaliseVersion(server, version);
