@@ -53,7 +53,9 @@ const ADAPTER_UPDATES = ["ask", "auto", "never"];
 
 function fromFile(configPath = CONFIG_PATH) {
   try {
-    return JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    // `null`, a number or an array parses fine but is not a config: treat it as no config.
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
   }
