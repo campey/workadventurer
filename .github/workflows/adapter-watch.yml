@@ -2,13 +2,15 @@
 # (proto-diff, selfcheck, live scenarios on production, Kotlin smoke), and publishes the adapter to catalog/
 # through a PR (pass) or records a needs-attention placeholder plus an issue (fail).
 #
-#   hourly                       -> re-reads both home pages; does nothing when every hash is known
+#   hourly                       -> re-reads both home pages; does nothing when every hash is known. Schedule and
+#                                   repository_dispatch runs need the repository variable ADAPTER_WATCH_ENABLED = true
+#                                   (default off: set it after the Task 8 dry run); manual runs always work.
 #   Actions -> "Adapter watch"   -> manual: optional hash/version to narrow to, force a retest, dry run
 #   repository_dispatch wa-release -> an optional hook so a release is noticed sooner. The payload is NEVER
 #                                    trusted or even read: the run re-reads the servers' home pages itself.
 #
 # Two jobs, and the split is the security boundary. `gate` runs third-party code (selfcheck, live scenarios, Gradle)
-# with `contents: read` and NO token or secret in its environment; it only uploads verdicts/. `publish` holds the
+# with `contents: read` and NO secret and no write token (only its own read-only token, for public data); it only uploads verdicts/. `publish` holds the
 # write permissions, runs no gate code (npm ci --ignore-scripts, no Gradle) and treats the verdict artifact as
 # untrusted: it validates it, re-reads the servers, rebuilds the candidate adapter itself and re-decides.
 # Residual risk: a forged verdict can at worst flip pass/fail for a hash the server really announces right now.
@@ -53,8 +55,10 @@ concurrency:
 
 jobs:
   gate:
-    # Only main publishes (the orchestrator refuses too); a manual dry run may use any ref.
-    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    # Scheduled and repository_dispatch runs only happen once the repository variable ADAPTER_WATCH_ENABLED is
+    # 'true' (the go-live switch, default off); a manual run is always allowed. Only main publishes (the
+    # orchestrator refuses too); a manual dry run may use any ref.
+    if: ${{ (github.event_name == 'workflow_dispatch' || vars.ADAPTER_WATCH_ENABLED == 'true') && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -85,7 +89,12 @@ jobs:
       - name: Gate
         env:
           # Manual-run inputs travel as environment variables and are validated in code; the repository_dispatch
-          # payload is not used at all. No token is passed.
+          # payload is not used at all.
+          # This job's own token is read-only (permissions: contents: read) and is only used to lift the 60/hour
+          # unauthenticated GitHub API limit when fetching the candidate's upstream proto (public data). It adds
+          # nothing to the R12 boundary: the job can write nothing, and the gate's child processes never get it
+          # (runChild strips it).
+          GITHUB_TOKEN: ${{ github.token }}
           ADAPTER_WATCH_HASH: ${{ github.event_name == 'workflow_dispatch' && inputs.hash || '' }}
           ADAPTER_WATCH_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
           ADAPTER_WATCH_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || '' }}
@@ -101,7 +110,7 @@ jobs:
 
   publish:
     needs: gate
-    if: ${{ !cancelled() && needs.gate.result != 'cancelled' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)) }}
+    if: ${{ !cancelled() && needs.gate.result != 'cancelled' && (github.event_name == 'workflow_dispatch' || vars.ADAPTER_WATCH_ENABLED == 'true') && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -116,7 +125,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
 
       - run: npm ci --ignore-scripts
 
@@ -132,6 +140,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_RUN_ID: ${{ github.run_id }}
+          ADAPTER_WATCH_HASH: ${{ github.event_name == 'workflow_dispatch' && inputs.hash || '' }}
+          ADAPTER_WATCH_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
           ADAPTER_WATCH_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || '' }}
           ADAPTER_WATCH_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || '' }}
         run: node scripts/watch/run.mjs --phase publish --verdict-dir verdicts

@@ -257,12 +257,14 @@ export async function runGatePhase(deps, { force = false, only = {}, targets = T
  *   deps: { github, readServer, loadIndex, loadVerdict(target) -> null | { raw } | { error }, buildCandidate,
  *           publish, reportPass, reportFailure, syncCheckout }
  */
-export async function runPublishPhase(deps, { dryRun = false, force = false, only = {}, targets = TARGET_NAMES, runUrl, catalogDir, log = () => {} } = {}) {
+export async function runPublishPhase(deps, { dryRun = false, force = false, only = {}, syncFirst = true, targets = TARGET_NAMES, runUrl, catalogDir, log = () => {} } = {}) {
   const results = [];
   const faults = [];
   const warnings = [];
   const github = dryRun ? dryRunPort(deps.github, log) : deps.github;
-  let dirty = false; // a publish merged: the local checkout is behind main
+  // The checkout may already be behind main (it moved while the gate ran): sync before the first publish. Also set
+  // after every merge. Dry runs and the single-process `all` mode (just checked out) skip the first sync.
+  let dirty = syncFirst && !dryRun;
   // The code fingerprint is taken ONCE, before any sync or merge, from the commit the gate also ran on, and used for
   // every target: later merges (and syncs) must not change what a placeholder records.
   let fingerprint;
@@ -274,7 +276,17 @@ export async function runPublishPhase(deps, { dryRun = false, force = false, onl
     const fault = (m) => { faults.push(`${target}: ${m}`); res.outcome = "fault"; res.error = m; log(`${target}: FAULT ${m}`); };
     try {
       const loaded = deps.loadVerdict(target);
-      if (!loaded) { res.outcome = "skip"; res.reason = "no verdict from the gate"; log(`${target}: no verdict, nothing to publish`); continue; }
+      if (!loaded) {
+        res.outcome = "skip"; res.reason = "no verdict from the gate"; log(`${target}: no verdict, nothing to publish`);
+        // A merge whose issue close failed would leave its issue open for good (the gate skips an ok hash): close it now.
+        const server = await deps.readServer(target);
+        if (server?.hash && deps.loadIndex().entries?.[server.hash]?.status === "ok") {
+          const rep = await deps.reportPass({ port: github, server: target, hash: server.hash, version: server.release ? normaliseVersion(target, server.release) : null, runUrl });
+          if (!rep.ok) warnings.push(`${target}: could not check for a stale issue (${rep.stage}: ${rep.error})`);
+          else if (rep.closed?.length) log(`${target}: closed stale issue(s) ${rep.closed.map((n) => `#${n}`).join(", ")} for the already published ${server.hash}`);
+        }
+        continue;
+      }
       if (loaded.error) { fault(`ignoring the verdict: ${loaded.error}`); continue; }
       const checked = validateVerdict(loaded.raw, { target });
       if (!checked.ok) { fault(`ignoring the verdict: ${checked.reason}`); continue; }
@@ -372,7 +384,7 @@ export async function runWatch(deps, options = {}) {
   const withVerdict = options.targets ?? TARGET_NAMES;
   const p = await runPublishPhase(
     { ...deps, loadVerdict: (t) => (g.verdicts.has(t) ? { raw: g.verdicts.get(t) } : null) },
-    { ...options, targets: withVerdict.filter((t) => g.verdicts.has(t)) },
+    { ...options, syncFirst: false, targets: withVerdict.filter((t) => g.verdicts.has(t)) },
   );
   const results = g.results.map((r) => p.results.find((x) => x.target === r.target) ?? r);
   return { results, faults: [...g.faults, ...p.faults], warnings: [...g.warnings, ...p.warnings] };
@@ -446,6 +458,17 @@ export function createSyncCheckout({ token, cwd = repoRoot, exec = defaultGit } 
  * Returns the process exit code; throws on bad configuration.
  */
 export async function main(argv = process.argv.slice(2), env = process.env, injected = {}) {
+  // The token is captured here, before the environment is scrubbed, so any error text can still be cleaned of it.
+  const secret = env.GITHUB_TOKEN;
+  try {
+    return await mainInner(argv, env, injected);
+  } catch (e) {
+    if (secret && String(e?.message ?? "").includes(secret)) e.message = e.message.split(secret).join("***");
+    throw e;
+  }
+}
+
+async function mainInner(argv, env, injected) {
   const args = parseArgs(argv);
   // Workflow inputs arrive through the environment (never interpolated into shell): ADAPTER_WATCH_* mirror the flags.
   const dryRun = args.dryRun || truthy(env.ADAPTER_WATCH_DRY_RUN);
@@ -501,6 +524,6 @@ export async function main(argv = process.argv.slice(2), env = process.env, inje
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().then(
     (code) => process.exit(code),
-    (e) => { console.error(`adapter watcher: ${String(e?.message ?? e).split(String(process.env.GITHUB_TOKEN || "\0")).join("***")}`); process.exit(1); },
+    (e) => { console.error(`adapter watcher: ${String(e?.message ?? e)}`); process.exit(1); }, // main() already scrubbed the token
   );
 }

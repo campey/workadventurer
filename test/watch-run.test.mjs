@@ -244,13 +244,27 @@ test("workflow: parses, triggers, concurrency, two-job split", { skip: !YAML && 
   // gate: third-party code, read-only, no token or secret anywhere in it
   assert.deepEqual(gate.permissions, { contents: "read" });
   const gateText = JSON.stringify(gate);
-  assert.ok(!/secrets\.|github\.token|GITHUB_TOKEN|GH_TOKEN/.test(gateText), "no token or secret in the gate job");
+  assert.ok(!/secrets\./.test(gateText), "no secret in the gate job");
+  assert.ok(!/GH_TOKEN/.test(gateText));
+  // its own read-only token appears in exactly one place: the step that runs the gate phase (proto fetch rate limit)
+  assert.equal((gateText.match(/github\.token/g) ?? []).length, 1);
+  const gateStep = gate.steps.find((st) => /--phase gate/.test(st.run ?? ""));
+  assert.equal(gateStep.env.GITHUB_TOKEN, "${{ github.token }}");
+  assert.ok(!/GITHUB_TOKEN/.test(JSON.stringify(gate.steps.filter((st) => st !== gateStep))));
   assert.ok(gate.steps.some((st) => String(st.uses).startsWith("actions/setup-java")));
   assert.ok(gate.steps.some((st) => /--phase gate/.test(st.run ?? "")));
   assert.ok(gate.steps.some((st) => String(st.uses).startsWith("actions/upload-artifact")));
   assert.equal(gate.steps.find((st) => String(st.uses).startsWith("actions/checkout")).with["persist-credentials"], false);
   assert.ok(gate.steps.some((st) => st.run === "npm ci --ignore-scripts"));
   assert.match(gate.if, /refs\/heads\/main/);
+  // go-live switch: scheduled and dispatched runs need the repository variable; manual runs are always allowed
+  for (const job of [gate, publish]) {
+    assert.match(job.if, /vars\.ADAPTER_WATCH_ENABLED == 'true'/);
+    assert.match(job.if, /github\.event_name == 'workflow_dispatch' \|\| vars\.ADAPTER_WATCH_ENABLED == 'true'/);
+  }
+  assert.ok(publish.steps.every((st) => !(st.with && st.with.cache)), "no cache in the publish job");
+  const pubEnv = publish.steps.find((st) => /--phase publish/.test(st.run ?? "")).env;
+  assert.ok("ADAPTER_WATCH_HASH" in pubEnv && "ADAPTER_WATCH_VERSION" in pubEnv);
   // third-party code must not save a cache a write job could restore
   const gradle = gate.steps.find((st) => String(st.uses).startsWith("gradle/actions/setup-gradle"));
   assert.equal(gradle.with["cache-disabled"], true);
@@ -498,6 +512,10 @@ test("localCodeFingerprint matches the API-side fingerprint of the same tree", (
   assert.equal(fp, fingerprintOf(entries));
   fs.writeFileSync(path.join(repo, "catalog", "i.json"), "{\"a\":1}"); git("add", "-A"); git("commit", "-qm", "y");
   assert.equal(localCodeFingerprint(repo), fp, "a catalog-only change keeps the fingerprint");
+  fs.writeFileSync(path.join(repo, "README.md"), "changed docs"); git("add", "-A"); git("commit", "-qm", "z");
+  assert.equal(localCodeFingerprint(repo), fp, "a docs-only change keeps the fingerprint (R14)");
+  fs.writeFileSync(path.join(repo, "src", "a.js"), "2"); git("add", "-A"); git("commit", "-qm", "w");
+  assert.notEqual(localCodeFingerprint(repo), fp, "a src change moves it");
 });
 
 test("main --phase gate needs no token or repo and makes no GitHub call", async () => {
@@ -522,7 +540,7 @@ test("publish phase takes the fingerprint once, before any sync, for every targe
   const r = await runWatch(s.deps, { phase: "publish", verdictDir: dir, catalogDir: s.catalogDir });
   assert.deepEqual(r.faults, []);
   assert.equal(calls, 1);
-  assert.equal(s.synced.length, 1, "a sync happened between the two targets");
+  assert.equal(s.synced.length, 2, "synced before the first publish and again between the two targets");
   const idx = readIndex(s.catalogDir);
   assert.equal(idx.entries[PROD_HASH].commit, "1".padStart(40, "e"));
   assert.equal(idx.entries[STAGE_HASH].commit, "1".padStart(40, "e"));
@@ -552,4 +570,116 @@ test("the verdict directory is capped before anything is read", async () => {
   for (const t of ["production", "staging"]) fs.writeFileSync(path.join(big, `${t}.json`), "x".repeat(15000));
   fs.writeFileSync(path.join(big, "a.bin"), "x".repeat(40000));
   assert.match(readVerdictFile(big, "staging").error, /too large/);
+});
+
+// ---- R13 ownership, R14 fingerprint, stale checkout, stale issues, token scrub ----
+const mergeCount = (s) => s.github.writes.filter((w) => w === "merge").length;
+
+test("R13: the same failing hash on both servers is gated, merged and reported once over four runs", async () => {
+  const same = { production: { hash: PROD_HASH, release: "v1.34.9" }, staging: { hash: PROD_HASH, release: "master@abcdef0123456789" } };
+  const s = setup({ pages: same, gateResults: { production: "selfcheck", staging: "selfcheck" } });
+  const outcomes = [];
+  for (let i = 0; i < 4; i++) outcomes.push((await run(s)).results.map((x) => x.outcome));
+  assert.deepEqual(outcomes, [["fail", "skip"], ["skip", "skip"], ["skip", "skip"], ["skip", "skip"]]);
+  assert.equal(s.gateCalls.length, 1);
+  assert.deepEqual(s.gateCalls.map((c) => c.server), ["production"]);
+  assert.equal(mergeCount(s), 1);
+  assert.equal(s.github.issues.length, 1);
+  assert.equal(readIndex(s.catalogDir).entries[PROD_HASH].server, "production");
+});
+
+test("R13: a staging pass never overwrites a production placeholder", async () => {
+  const same = { hash: PROD_HASH, release: "v1.34.9" };
+  const s = setup({ pages: { production: same, staging: { hash: PROD_HASH, release: "master@abcdef0123456789" } }, gateResults: { production: "selfcheck" } });
+  await run(s, { targets: ["production"] });
+  s.gateCalls.length = 0;
+  const before = fs.readFileSync(path.join(s.catalogDir, "index.json"), "utf8");
+  const r = await run(s, { targets: ["staging"], force: true });
+  assert.equal(r.results[0].outcome, "skip");
+  assert.match(r.results[0].reason, /owned by production/);
+  assert.equal(s.gateCalls.length, 0);
+  assert.equal(fs.readFileSync(path.join(s.catalogDir, "index.json"), "utf8"), before);
+});
+
+test("R13: production over a staging-written placeholder gates once and takes ownership", async () => {
+  const same = { hash: PROD_HASH, release: "v1.34.9" };
+  const s = setup({ pages: { production: same, staging: { hash: PROD_HASH, release: "master@abcdef0123456789" } }, gateResults: { staging: "selfcheck", production: "selfcheck" } });
+  await run(s, { targets: ["staging"] });
+  assert.equal(readIndex(s.catalogDir).entries[PROD_HASH].server, "staging");
+  s.gateCalls.length = 0;
+  assert.equal((await run(s, { targets: ["production"] })).results[0].outcome, "fail");
+  assert.equal(readIndex(s.catalogDir).entries[PROD_HASH].server, "production");
+  assert.equal((await run(s, { targets: ["production"] })).results[0].outcome, "skip");
+  assert.equal(s.gateCalls.length, 1);
+});
+
+test("R13: publish refuses a staging-origin verdict over a production needs-attention entry", async () => {
+  const dir = tmpCatalog();
+  const fp = "b".repeat(40);
+  const pub = (o) => publish({ checkoutCommit: MAIN, sleep: async () => {}, catalogDir: dir, ...o });
+  assert.equal((await pub({ port: fakeGithub(), hash: "abcdef01", placeholder: { server: "production", version: "v1.34.9", gate: "x", commit: fp } })).ok, true);
+  const p = await pub({ port: fakeGithub(), hash: "abcdef01", placeholder: { server: "staging", version: "master@abcdef01", gate: "y", commit: fp } });
+  assert.equal(p.ok, false);
+  assert.equal(p.stage, "validate");
+  const a = await pub({ port: fakeGithub(), hash: "abcdef01", adapterFile: { ...baseFile, apiVersionHash: "abcdef01", server: "staging", id: "wa-master-abcdef01", waVersion: "master-abcdef01", protoFamily: "wa-master" } });
+  assert.equal(a.ok, false);
+  assert.equal(a.stage, "validate");
+  assert.equal(readIndex(dir).entries.abcdef01.server, "production");
+});
+
+test("R14: the fingerprint covers gate-relevant root entries only", () => {
+  const base = [{ path: "src", sha: "s" }, { path: "scripts", sha: "t" }, { path: "docs", sha: "d1" }, { path: "catalog", sha: "c1" }, { path: "package.json", sha: "p" }, { path: "README.md", sha: "r1" }];
+  const fp = fingerprintOf(base);
+  const changed = (path_, sha) => fingerprintOf(base.map((e) => (e.path === path_ ? { ...e, sha } : e)));
+  assert.equal(changed("docs", "d2"), fp);
+  assert.equal(changed("catalog", "c2"), fp);
+  assert.equal(changed("README.md", "r2"), fp);
+  for (const k of ["src", "scripts", "package.json"]) assert.notEqual(changed(k, "zz"), fp, k);
+});
+
+test("publish phase syncs before the first publish: main moving during the gate does not fail at stale", async () => {
+  const mk = () => setup({ pages: { production: pages().production }, gateResults: { production: "selfcheck" } });
+  const go = async (opts) => {
+    const s = mk();
+    const dir = tmp("verdicts-");
+    await runWatch(s.deps, { phase: "gate", verdictDir: dir, catalogDir: s.catalogDir });
+    let local = MAIN;
+    s.github.main = "f".repeat(40); // main moved while the gate ran
+    s.deps.publish = (a) => publish({ checkoutCommit: local, sleep: async () => {}, ...a });
+    s.deps.syncCheckout = async () => { local = s.github.main; };
+    return { s, r: await runWatch(s.deps, { phase: "publish", verdictDir: dir, catalogDir: s.catalogDir, ...opts }) };
+  };
+  const ok = await go({});
+  assert.deepEqual(ok.r.faults, []);
+  assert.equal(readIndex(ok.s.catalogDir).entries[PROD_HASH].status, "needs-attention");
+  const stale = await go({ syncFirst: false });
+  assert.match(stale.r.faults[0], /stale/);
+});
+
+test("an issue left open after a merge whose close failed is closed on a later run", async () => {
+  const s = setup({ pages: { production: pages().production }, gateResults: { production: "selfcheck" } });
+  await run(s, { targets: ["production"] });
+  assert.equal(s.github.issues[0].state, "open");
+  // second run: the gate passes and the merge happens, but closing the issue fails
+  const pass = async (a) => runGate({ ...a, runners: Object.fromEntries(["proto-diff", "selfcheck", "scenarios", "kotlin-smoke"].map((n) => [n, async () => ({ ok: true })])) });
+  const realPass = s.deps.reportPass;
+  s.deps.runGate = pass;
+  s.deps.reportPass = async () => ({ ok: false, stage: "close", error: "boom" });
+  const r2 = await run(s, { targets: ["production"], force: true });
+  assert.equal(r2.faults.length, 1);
+  assert.equal(readIndex(s.catalogDir).entries[PROD_HASH].status, "ok");
+  assert.equal(s.github.issues[0].state, "open");
+  // third run: nothing to gate (ok), nothing to publish, but the stale issue is closed
+  s.deps.reportPass = realPass;
+  const dir = tmp("empty-");
+  const r3 = await runWatch(s.deps, { phase: "publish", verdictDir: dir, catalogDir: s.catalogDir, runUrl: RUN_URL });
+  assert.deepEqual(r3.faults, []);
+  assert.equal(s.github.issues[0].state, "closed");
+});
+
+test("main(): an error that contains the token is scrubbed even though the environment was scrubbed", async () => {
+  await assert.rejects(
+    () => main(["--phase", "publish", "--verdict-dir", "x"], { GITHUB_TOKEN: "sekret", GITHUB_REPOSITORY: "a/b", GITHUB_REF: "refs/heads/sekret" }),
+    (e) => /refs\/heads\/\*\*\*/.test(e.message) && !e.message.includes("sekret"),
+  );
 });
