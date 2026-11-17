@@ -124,7 +124,7 @@ test("kotlin smoke passes the hash and walks to an area; staging adds room and p
   assert.match(k.cwd, /android$/);
   const a = k.args.find((x) => x.startsWith("--args="));
   assert.match(a, /--api-version abc12345/);
-  assert.match(a, /--walk-to-area 'Red Table'/);
+  assert.match(a, /--walk-to-area Red( |$)/);
   assert.doesNotMatch(a, /--room/);
   const s = kotlinSmokeInvocation({ hash: "d2d82672", server: "staging", staging: { room: "https://s/r", pusherUrl: "https://p" } });
   assert.match(s.args.find((x) => x.startsWith("--args=")), /--room https:\/\/s\/r --pusher https:\/\/p/);
@@ -135,7 +135,7 @@ test("child runners decide on exit code and, for the smoke, on arrival", async (
   assert.equal((await createSelfcheckRunner({ run: okRun("OK") })({ candidateFile: "/c", server: "production" })).ok, true);
   const bad = await createSelfcheckRunner({ run: okRun("PASS a\nFAIL  move  — stuck\n\nFAIL", 1) })({ candidateFile: "/c", server: "production" });
   assert.deepEqual([bad.ok, bad.detail], [false, "FAIL  move  — stuck"]);
-  const smoke = (o, c) => createKotlinSmokeRunner({ run: okRun(o, c) })({ hash: "h", server: "production" });
+  const smoke = (o, c) => createKotlinSmokeRunner({ run: okRun(o, c) })({ hash: "abc12345", server: "production" });
   assert.equal((await smoke("· walk ended: ARRIVED", 0)).ok, true);
   assert.equal((await smoke("· walk ended: TIMEOUT", 0)).ok, false);
   assert.equal((await smoke("join failed: nope", 1)).ok, false);
@@ -173,4 +173,78 @@ test("proto-diff runner: same proto passes; a used removal fails against the rig
   assert.match(nodeHit.detail, /wa-1\.34 \(Node\).*src\//);
   const miss = await createProtoDiffRunner({ root, nodeSources: [], kotlinSources: [] })({ file: FILE, candidateProto: cand });
   assert.equal(miss.ok, true);
+});
+
+// --- fix round 1 ---
+
+test("kotlin smoke arguments are validated; each rejection is a failed step, never a throw", async () => {
+  const run = async () => { throw new Error("must not run"); };
+  const smoke = (o) => createKotlinSmokeRunner({ run, stopGradle: async () => {}, area: o.area, staging: o.staging })({ hash: o.hash ?? "abc12345", server: o.server ?? "production" });
+  for (const hash of ["", "xyz", "abc 123", "abc12345 --evil", "ab", "abc'12345"]) {
+    const r = await smoke({ hash });
+    assert.equal(r.ok, false, hash);
+    assert.match(r.detail, /bad api version hash/);
+  }
+  for (const area of ["Red Table", "Re'd", 'Re"d', "Re\nd", "Re`d", "Re$d", "Re\\d"]) {
+    const r = await smoke({ area });
+    assert.equal(r.ok, false, JSON.stringify(area));
+    assert.match(r.detail, /area must not contain/);
+  }
+  for (const [k, v] of [["room", "https://x/ y"], ["pusherUrl", "https://p'"]]) {
+    const r = await smoke({ server: "staging", staging: { room: "https://s/r", pusherUrl: "https://p", [k]: v } });
+    assert.equal(r.ok, false, k);
+  }
+  assert.throws(() => kotlinSmokeInvocation({ hash: "abc12345", server: "production", name: "a b" }), /name must not/);
+});
+
+test("staging kotlin smoke without staging.room fails closed", async () => {
+  let ran = false;
+  const r = await createKotlinSmokeRunner({ run: async () => { ran = true; return { code: 0, output: "" }; } })({ hash: "abc12345", server: "staging" });
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /staging needs staging\.room/);
+  assert.equal(ran, false);
+});
+
+test("after a timeout the gradle daemon is stopped (injected)", async () => {
+  const ac = new AbortController();
+  let stopped = 0;
+  const run = async () => { ac.abort(); return { code: null, output: "killed" }; };
+  const r = await createKotlinSmokeRunner({ run, stopGradle: async () => { stopped++; } })({ hash: "abc12345", server: "production", signal: ac.signal });
+  assert.equal(r.ok, false);
+  assert.equal(stopped, 1);
+});
+
+test("a runner that resolves after its timeout is ignored", async () => {
+  const late = () => new Promise((res) => setTimeout(() => res({ ok: true }), 100));
+  const r = await gate({ runners: { ...allPass(), selfcheck: late }, timeouts: { selfcheck: 20 } });
+  await new Promise((res) => setTimeout(res, 150));
+  assert.equal(r.steps[1].status, "fail");
+  assert.match(r.steps[1].detail, /timed out/);
+});
+
+test("timeout kills the whole process tree, grandchild included", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tree-"));
+  const pidFile = path.join(tmp, "grandchild.pid");
+  const grand = `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(()=>{}, 1000)`;
+  const parent = `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grand)}], { stdio: 'ignore' }); setInterval(()=>{}, 1000)`;
+  const ac = new AbortController();
+  const p = runChild({ command: process.execPath, args: ["-e", parent], signal: ac.signal, graceMs: 100 });
+  for (let i = 0; i < 100 && !fs.existsSync(pidFile); i++) await new Promise((r) => setTimeout(r, 50));
+  const pid = Number(fs.readFileSync(pidFile, "utf8"));
+  assert.doesNotThrow(() => process.kill(pid, 0), "grandchild is running before the abort");
+  ac.abort();
+  await p;
+  let alive = true;
+  for (let i = 0; i < 40 && alive; i++) {
+    try { process.kill(pid, 0); await new Promise((r) => setTimeout(r, 50)); } catch { alive = false; }
+  }
+  assert.equal(alive, false, "grandchild is gone");
+});
+
+test("a child that ignores SIGTERM is SIGKILLed after the grace period", async () => {
+  const ac = new AbortController();
+  const p = runChild({ command: process.execPath, args: ["-e", "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"], signal: ac.signal, graceMs: 100 });
+  setTimeout(() => ac.abort(), 100);
+  const r = await Promise.race([p, new Promise((res) => setTimeout(() => res("hung"), 5000))]);
+  assert.notEqual(r, "hung");
 });

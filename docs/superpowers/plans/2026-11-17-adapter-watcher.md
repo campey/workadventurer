@@ -50,7 +50,7 @@ The gate must run the clients with an adapter that is not in the catalog yet.
 
 Runs, in order, and records each step's result and first failure text (sanitised and capped like `gateDetail`):
 (a) `proto-diff` against the family in use and the wa-1.33 proto, scanning `src/` **and** `android/` (extend
-`proto-diff` and the backtest's Kotlin matching), additive-only for the Android proto;
+`proto-diff` and the backtest's Kotlin matching), additive-only for the Android proto (ruling R9: a wire-breaking item vs wa-1.33 fails only when Kotlin "uses" it, i.e. message name AND field name co-occur in ONE android/**/*.kt file, `kotlinUses` in proto-diff, shared with the backtest; removals nothing in Kotlin mentions pass);
 (b) `selfcheck --adapter-file`; (c) production only: `npm run scenarios` with `WORLD=live` and `--adapter-file`;
 (d) Kotlin smoke: `wa-cli` with `--api-version <hash>` joining and walking to an area (staging and production).
 - Result object `{pass, steps:[{name,status,detail}], candidateFile}`; a timeout per step; never throws.

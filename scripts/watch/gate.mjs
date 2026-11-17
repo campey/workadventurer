@@ -1,6 +1,10 @@
 // Adapter watcher, step 3: the gate (#127). Runs the checks a candidate adapter must
 // pass before it may reach the catalog, in order, and reports each step:
 //   proto-diff   no wire change the clients use (Node family: src/; wa-1.33: android/)
+//                "Additive-only" for Android (ruling R9): the candidate may add anything, but a wire-breaking
+//                item against wa-1.33 fails when Kotlin uses it, where "uses" means the message name AND (for a
+//                field or enum value) its name co-occur in ONE android/**/*.kt file (proto-diff's `kotlinUses`,
+//                shared with adapter-backtest). Removals nothing in Kotlin mentions pass.
 //   selfcheck    the CLI joins, moves, bubbles and enters an area with the candidate
 //   scenarios    the live scenario suite (production only: staging has no world facts)
 //   kotlin-smoke wa-cli with the candidate's hash joins and walks to an area
@@ -190,11 +194,29 @@ export function scenariosInvocation({ candidateFile, server, root = repoRoot }) 
   };
 }
 
-/** `wa-cli --api-version <hash> --walk-to-area <area>` through Gradle; staging passes its own room and pusher. */
-export function kotlinSmokeInvocation({ hash, server, staging = {}, area = "Red Table", seconds = 30, name = "adapter-gate", root = repoRoot }) {
-  const words = ["--name", name, "--api-version", hash, "--seconds", String(seconds), "--walk-to-area", area.includes(" ") ? `'${area}'` : area];
+const HASH_RE = /^[0-9a-f]{6,64}$/i;
+// An argument that reaches Gradle's --args string must not carry anything its splitter or a shell could reinterpret.
+const SAFE_ARG = /^[^\s'"`\\$\x00-\x1f\x7f-\x9f]+$/;
+
+/** Throws a clear Error for a hash or argument that must not reach the Gradle command line. */
+export function validateKotlinArgs({ hash, name, area, room, pusherUrl }) {
+  if (!HASH_RE.test(String(hash ?? ""))) throw new Error(`kotlin smoke: bad api version hash "${String(hash).slice(0, 40)}"`);
+  for (const [label, v] of [["name", name], ["area", area], ["room", room], ["pusher", pusherUrl]]) {
+    if (v !== undefined && v !== null && !SAFE_ARG.test(String(v))) throw new Error(`kotlin smoke: ${label} must not contain whitespace, quotes or control characters`);
+  }
+}
+
+/**
+ * `wa-cli --api-version <hash> --walk-to-area <area>` through Gradle. Staging must name its own room and pusher
+ * (otherwise wa-cli would join the production room). Throws on a bad hash or argument. The area is a single
+ * word to match (e.g. "Red"), as Gradle's --args splitting is not safe for spaces.
+ */
+export function kotlinSmokeInvocation({ hash, server, staging = {}, area = "Red", seconds = 30, name = "adapter-gate", root = repoRoot }) {
+  if (server === "staging" && !staging.room) throw new Error("kotlin smoke: staging needs staging.room (otherwise it would join the production room)");
+  validateKotlinArgs({ hash, name, area, room: staging.room, pusherUrl: staging.pusherUrl });
+  const words = ["--name", name, "--api-version", hash, "--seconds", String(seconds), "--walk-to-area", area];
   if (server === "staging") {
-    if (staging.room) words.push("--room", staging.room);
+    words.push("--room", staging.room);
     if (staging.pusherUrl) words.push("--pusher", staging.pusherUrl);
   }
   return {
@@ -211,13 +233,16 @@ export function firstFailure(output) {
   return lines.find((l) => /\bFAIL\b|\bfailed\b|\berror\b|join failed|closed:/i.test(l)) ?? lines.at(-1) ?? "no output";
 }
 
-/** Run a child, keep the last 16 KB of its output, kill it when `signal` aborts. Resolves { code, output }. */
-export function runChild({ command, args = [], env = {}, cwd, signal, spawnFn = spawn }) {
+/**
+ * Run a child in its own process group, keep the last 16 KB of its output. When `signal` aborts, the whole
+ * group gets SIGTERM, then SIGKILL after `graceMs` (falls back to child.kill without a group). Resolves { code, output }.
+ */
+export function runChild({ command, args = [], env = {}, cwd, signal, graceMs = 2000, spawnFn = spawn }) {
   return new Promise((resolve) => {
     let output = "";
     let child;
     try {
-      child = spawnFn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+      child = spawnFn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], detached: true });
     } catch (e) {
       resolve({ code: null, output: `could not start ${command}: ${e.message}` });
       return;
@@ -225,11 +250,22 @@ export function runChild({ command, args = [], env = {}, cwd, signal, spawnFn = 
     const keep = (d) => { output = (output + d).slice(-16384); };
     child.stdout?.on("data", keep);
     child.stderr?.on("data", keep);
-    const kill = () => child.kill("SIGKILL");
-    signal?.addEventListener("abort", kill, { once: true });
-    child.on("error", (e) => resolve({ code: null, output: `${output}\nerror: ${e.message}` }));
+    const send = (sig) => {
+      try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* already gone */ } }
+    };
+    let hard;
+    const kill = () => {
+      send("SIGTERM");
+      hard = setTimeout(() => send("SIGKILL"), graceMs);
+    };
+    if (signal?.aborted) kill();
+    else signal?.addEventListener("abort", kill, { once: true });
+    child.on("error", (e) => { clearTimeout(hard); resolve({ code: null, output: `${output}\nerror: ${e.message}` }); });
     child.on("close", (code) => {
       signal?.removeEventListener("abort", kill);
+      // Stragglers in the group (grandchildren that outlived the leader) go too, once the leader is done.
+      if (signal?.aborted) { send("SIGKILL"); }
+      clearTimeout(hard);
       resolve({ code, output });
     });
   });
@@ -252,10 +288,23 @@ export function createScenariosRunner({ run = runChild, root } = {}) {
   };
 }
 
-/** Kotlin smoke step: exit 0 and the walk reached the area. */
-export function createKotlinSmokeRunner({ staging, area, run = runChild, root } = {}) {
-  return async ({ hash, server, signal }) =>
-    childResult(await run({ ...kotlinSmokeInvocation({ hash, server, staging, area, root }), signal }), (o) => /walk ended: ARRIVED/.test(o));
+/**
+ * Kotlin smoke step: exit 0 and the walk reached the area. A bad argument is a failed step. After an abort
+ * (timeout) the Gradle daemon is stopped best-effort through `stopGradle` (injectable).
+ */
+export function createKotlinSmokeRunner({ staging, area, run = runChild, stopGradle, root } = {}) {
+  const stop = stopGradle ?? (() => run({ command: "./gradlew", args: ["--stop"], cwd: path.join(root ?? repoRoot, "android") }));
+  return async ({ hash, server, signal }) => {
+    let inv;
+    try {
+      inv = kotlinSmokeInvocation({ hash, server, staging, area, root });
+    } catch (e) {
+      return { ok: false, detail: e.message };
+    }
+    const res = await run({ ...inv, signal });
+    if (signal?.aborted) { try { await stop(); } catch { /* best effort */ } }
+    return childResult(res, (o) => /walk ended: ARRIVED/.test(o));
+  };
 }
 
 /** All four default runners. `staging` is { room, pusherUrl, wokaId, area }. */
@@ -264,6 +313,6 @@ export function defaultRunners(opts = {}) {
     "proto-diff": createProtoDiffRunner(opts),
     selfcheck: createSelfcheckRunner(opts),
     scenarios: createScenariosRunner(opts),
-    "kotlin-smoke": createKotlinSmokeRunner({ ...opts, area: opts.area }),
+    "kotlin-smoke": createKotlinSmokeRunner(opts),
   };
 }

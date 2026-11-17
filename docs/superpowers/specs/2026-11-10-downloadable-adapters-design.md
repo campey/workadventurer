@@ -165,7 +165,7 @@ Steps of a run, **for each of production and staging**:
    against the protocol family in use, take the newest `ok` entry as the base for behaviour numbers.
 3. **Gate**, all must pass: (a) the proto diff has no wire change the clients use: `proto-diff` today scans only
    `src/`, so it must also scan `android/` and be run against both the proto family the Node client uses and the
-   wa-1.33 proto the Android app has built in (additive changes only); (b) the CLI
+   wa-1.33 proto the Android app has built in (additive changes only: a wire-breaking item fails only if Kotlin uses it, meaning the message name and the field name occur together in one `android/**/*.kt` file); (b) the CLI
    `selfcheck` against production with the candidate (join, move, bubble, area meeting); (c) the live scenario suite
    (`WORLD=live`) with the candidate; (d) a Kotlin smoke with the candidate's hash (`wa-cli`: join and walk to an area).
    For (b) to (d) the clients need to take a candidate from a file or flag without it being in the catalog:

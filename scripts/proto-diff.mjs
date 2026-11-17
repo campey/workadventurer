@@ -74,6 +74,19 @@ export function readKotlinSources(root = repoRoot) {
 }
 
 /**
+ * Does Android use a wire-breaking item? Ruling R9: the message name AND (for a field or enum value) the
+ * field name must co-occur in ONE Kotlin file (a bare `id` or `roomId` elsewhere proves nothing); a message
+ * or enum on its own counts when any file names it. Either name may start in lower case. The backtest uses
+ * this same function. `files` are Kotlin file texts; `it` is { msg, field? }.
+ */
+export function kotlinUses(files, it) {
+  const word = (t, n) => new RegExp(`\\b${n}\\b`).test(t);
+  return files.some((t) => (it.field
+    ? word(t, it.msg) && (word(t, it.field) || word(t, lowerFirst(it.field)))
+    : word(t, it.msg) || word(t, lowerFirst(it.msg))));
+}
+
+/**
  * Diff two proto files. `sources` is { src: string[], android: string[] } (texts); a client whose
  * list is missing is not scanned. Returns
  *   { counts, breaking: [{ text, usedBy: ["src"|"android"...] }], additive: string[], usedBy: Set }.
@@ -88,7 +101,7 @@ export function diffProtos(oldPath, newPath, { sources = {} } = {}) {
     const tb = b.types.get(name);
     const leaf = name.split(".").pop();
     if (!tb) {
-      items.push({ text: `REMOVED message ${name}`, names: [leaf, lowerFirst(leaf)] });
+      items.push({ text: `REMOVED message ${name}`, names: [leaf, lowerFirst(leaf)], msg: leaf });
       continue;
     }
     const fa = new Map(ta.fieldsArray.map((f) => [f.id, f]));
@@ -102,13 +115,13 @@ export function diffProtos(oldPath, newPath, { sources = {} } = {}) {
       // counts by itself.
       const parent = [leaf, lowerFirst(leaf)];
       if (!g) {
-        items.push({ text: `REMOVED field ${name}.${f.name} = ${id} (${sig(f)})`, names: [f.name], parent, oneof: !!f.partOf });
+        items.push({ text: `REMOVED field ${name}.${f.name} = ${id} (${sig(f)})`, names: [f.name], parent, oneof: !!f.partOf, msg: leaf, field: f.name });
         continue;
       }
       if (g.name !== f.name)
-        items.push({ text: `RENAMED ${name} field ${id}: ${f.name} -> ${g.name}`, names: [f.name, g.name], parent, oneof: !!f.partOf });
+        items.push({ text: `RENAMED ${name} field ${id}: ${f.name} -> ${g.name}`, names: [f.name, g.name], parent, oneof: !!f.partOf, msg: leaf, field: f.name });
       if (sig(f) !== sig(g))
-        items.push({ text: `CHANGED ${name}.${f.name} = ${id}: [${sig(f)}] -> [${sig(g)}]`, names: [f.name], parent, oneof: !!f.partOf });
+        items.push({ text: `CHANGED ${name}.${f.name} = ${id}: [${sig(f)}] -> [${sig(g)}]`, names: [f.name], parent, oneof: !!f.partOf, msg: leaf, field: f.name });
     }
     for (const [id, g] of fb) if (!fa.has(id)) additive.push(`+ ${name}.${g.name} = ${id} (${sig(g)})`);
   }
@@ -117,12 +130,12 @@ export function diffProtos(oldPath, newPath, { sources = {} } = {}) {
   for (const [name, ea] of a.enums) {
     const eb = b.enums.get(name);
     if (!eb) {
-      items.push({ text: `REMOVED enum ${name}`, names: [name.split(".").pop()] });
+      items.push({ text: `REMOVED enum ${name}`, names: [name.split(".").pop()], msg: name.split(".").pop() });
       continue;
     }
     for (const [k, v] of Object.entries(ea.values)) {
-      if (!(k in eb.values)) items.push({ text: `REMOVED enum value ${name}.${k}=${v}`, names: [k] });
-      else if (eb.values[k] !== v) items.push({ text: `CHANGED enum value ${name}.${k}: ${v} -> ${eb.values[k]}`, names: [k] });
+      if (!(k in eb.values)) items.push({ text: `REMOVED enum value ${name}.${k}=${v}`, names: [k], msg: name.split(".").pop(), field: k });
+      else if (eb.values[k] !== v) items.push({ text: `CHANGED enum value ${name}.${k}: ${v} -> ${eb.values[k]}`, names: [k], msg: name.split(".").pop(), field: k });
     }
     for (const k of Object.keys(eb.values)) if (!(k in ea.values)) additive.push(`+ enum value ${name}.${k}=${eb.values[k]}`);
   }
@@ -134,7 +147,9 @@ export function diffProtos(oldPath, newPath, { sources = {} } = {}) {
 
   const usedBy = new Set();
   const breaking = items.map((item) => {
-    const by = Object.entries(sources).filter(([, texts]) => isUsed(texts, item)).map(([client]) => client);
+    const by = Object.entries(sources)
+      .filter(([client, texts]) => (client === "android" && item.msg ? kotlinUses(texts, item) : isUsed(texts, item)))
+      .map(([client]) => client);
     by.forEach((c) => usedBy.add(c));
     return { text: item.text, usedBy: by };
   });

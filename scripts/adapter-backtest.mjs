@@ -21,7 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseQueryValidator } from "./lib/query-validator.mjs";
-import { readKotlinSources } from "./proto-diff.mjs";
+import { readKotlinSources, kotlinUses } from "./proto-diff.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const argv = process.argv.slice(2);
@@ -69,15 +69,8 @@ function androidMentions(items) {
   if (!kotlinFiles) {
     kotlinFiles = readKotlinSources(root);
   }
-  const word = (t, n) => new RegExp(`\\b${n}\\b`).test(t);
-  const lc = (n) => n.charAt(0).toLowerCase() + n.slice(1);
   const hits = [];
-  for (const it of items) {
-    const ok = kotlinFiles.some((t) => (it.field
-      ? (word(t, it.msg) && (word(t, it.field) || word(t, lc(it.field))))
-      : (word(t, it.msg) || word(t, lc(it.msg)))));
-    if (ok) hits.push(it.field ? `${it.msg}.${it.field}` : it.msg);
-  }
+  for (const it of items) if (kotlinUses(kotlinFiles, it)) hits.push(it.field ? `${it.msg}.${it.field}` : it.msg);
   return hits;
 }
 

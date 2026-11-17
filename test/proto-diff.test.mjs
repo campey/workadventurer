@@ -33,3 +33,14 @@ test("a plain field name counts only with its parent message mentioned", () => {
   const d = diffProtos(OLD, NEW, { sources: { android: ["val legacyNote = 1"] } });
   assert.equal(d.usedBy.size, 0);
 });
+
+test("android use needs message and field in ONE file (ruling R9)", () => {
+  const split = diffProtos(OLD, NEW, { sources: { android: ["class Ping { val a = 1 }", "val x = legacyNote"] } });
+  assert.equal(split.usedBy.size, 0, "mentioned only in separate files");
+  const together = diffProtos(OLD, NEW, { sources: { android: ["Ping(legacyNote = 1)"] } });
+  assert.deepEqual([...together.usedBy], ["android"]);
+  const gone = diffProtos(OLD, NEW, { sources: { android: ["val gone = 1"] } });
+  assert.deepEqual([...gone.usedBy], ["android"], "a removed message counts by its lower-case name too");
+  const removedNowhere = diffProtos(OLD, NEW, { sources: { android: ["nothing"] } });
+  assert.equal(removedNowhere.usedBy.size, 0);
+});
