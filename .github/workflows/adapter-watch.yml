@@ -1,0 +1,85 @@
+# The adapter watcher (#127): notices a new WorkAdventure server hash (production or staging), runs the gate
+# (proto-diff, selfcheck, live scenarios on production, Kotlin smoke), and publishes the adapter to catalog/
+# through a PR (pass) or records a needs-attention placeholder plus an issue (fail).
+#
+#   hourly                       -> re-reads both home pages; does nothing when every hash is known
+#   Actions -> "Adapter watch"   -> manual: optional hash/version to narrow to, force a retest, dry run
+#   repository_dispatch wa-release -> an optional hook so a release is noticed sooner. The payload is NEVER
+#                                    trusted or even read: the run re-reads the servers' home pages itself.
+#
+# See docs/superpowers/specs/2026-11-10-downloadable-adapters-design.md section 3. Needs "Allow GitHub Actions to
+# create and approve pull requests" and no required status checks on main (the bot PR gets none).
+name: Adapter watch
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      hash:
+        description: "Only gate this api version hash (it must be what a server shows now)"
+        required: false
+        type: string
+      version:
+        description: "Only gate this server version (informational narrowing, e.g. v1.34.5)"
+        required: false
+        type: string
+      force:
+        description: "Retest hashes marked needs-attention even if nothing changed"
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: "Do everything except the PR, the merge and the issue writes"
+        required: false
+        type: boolean
+        default: false
+  repository_dispatch:
+    types: [wa-release]
+
+permissions:
+  contents: write        # the catalog commit on adapter/<hash>
+  pull-requests: write   # open and merge that PR
+  issues: write          # the needs-attention issue
+
+# One run at a time, ever: two overlapping runs would gate the same hash twice and race on adapter/<hash>.
+concurrency:
+  group: adapter-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # The Kotlin smoke builds wa-cli. Cheap when nothing is new (the orchestrator only invokes it for a new hash).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Watch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          # Manual-run inputs travel as environment variables and are validated in code; the repository_dispatch
+          # payload is not used at all.
+          ADAPTER_WATCH_HASH: ${{ github.event_name == 'workflow_dispatch' && inputs.hash || '' }}
+          ADAPTER_WATCH_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+          ADAPTER_WATCH_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || '' }}
+          ADAPTER_WATCH_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || '' }}
+        run: node scripts/watch/run.mjs
