@@ -251,11 +251,17 @@ test("workflow: parses, triggers, concurrency, two-job split", { skip: !YAML && 
   assert.equal(gate.steps.find((st) => String(st.uses).startsWith("actions/checkout")).with["persist-credentials"], false);
   assert.ok(gate.steps.some((st) => st.run === "npm ci --ignore-scripts"));
   assert.match(gate.if, /refs\/heads\/main/);
+  // third-party code must not save a cache a write job could restore
+  const gradle = gate.steps.find((st) => String(st.uses).startsWith("gradle/actions/setup-gradle"));
+  assert.equal(gradle.with["cache-disabled"], true);
+  const node = gate.steps.find((st) => String(st.uses).startsWith("actions/setup-node"));
+  assert.ok(!node.with.cache, "no npm cache in the gate job");
 
   // publish: the only writer, runs no gate code
   assert.deepEqual(publish.permissions, { contents: "write", "pull-requests": "write", issues: "write" });
   assert.equal(publish.needs, "gate");
-  assert.match(publish.if, /always\(\)/);
+  assert.match(publish.if, /!cancelled\(\)/);
+  assert.ok(!/always\(\)/.test(publish.if));
   assert.match(publish.if, /needs\.gate\.result != 'cancelled'/);
   assert.match(publish.if, /refs\/heads\/main/);
   assert.ok(publish.steps.some((st) => String(st.uses).startsWith("actions/download-artifact")));
@@ -504,4 +510,46 @@ test("main --phase gate needs no token or repo and makes no GitHub call", async 
     await assert.rejects(() => main(["--phase", "bogus"], {}), /phase/);
   } finally { console.log = quiet; }
   assert.ok(fs.existsSync(path.join(dir, "production.json")));
+});
+
+test("publish phase takes the fingerprint once, before any sync, for every target", async () => {
+  const s = setup({ pages: pages(), gateResults: { production: "selfcheck", staging: "selfcheck" } });
+  const dir = tmp("verdicts-");
+  await runWatch(s.deps, { phase: "gate", verdictDir: dir, catalogDir: s.catalogDir });
+  let calls = 0;
+  s.deps.codeFingerprint = async () => `${++calls}`.padStart(40, "e");
+  s.deps.syncCheckout = async () => { s.synced.push(1); };
+  const r = await runWatch(s.deps, { phase: "publish", verdictDir: dir, catalogDir: s.catalogDir });
+  assert.deepEqual(r.faults, []);
+  assert.equal(calls, 1);
+  assert.equal(s.synced.length, 1, "a sync happened between the two targets");
+  const idx = readIndex(s.catalogDir);
+  assert.equal(idx.entries[PROD_HASH].commit, "1".padStart(40, "e"));
+  assert.equal(idx.entries[STAGE_HASH].commit, "1".padStart(40, "e"));
+});
+
+test("publish phase honours --hash/--version narrowing", async () => {
+  const s = setup({ pages: pages() });
+  const dir = tmp("verdicts-");
+  await runWatch(s.deps, { phase: "gate", verdictDir: dir, catalogDir: s.catalogDir });
+  const r = await runWatch(s.deps, { phase: "publish", verdictDir: dir, catalogDir: s.catalogDir, only: { hash: STAGE_HASH } });
+  assert.deepEqual(r.results.map((x) => x.outcome), ["skip", "pass"]);
+  assert.equal(readIndex(s.catalogDir).entries[PROD_HASH], undefined);
+  const r2 = await runWatch(setup({ pages: pages() }).deps, { phase: "publish", verdictDir: dir, catalogDir: tmpCatalog(), only: { version: "v9.9.9" } });
+  assert.deepEqual(r2.results.map((x) => x.outcome), ["skip", "skip"]);
+});
+
+test("the verdict directory is capped before anything is read", async () => {
+  const s = setup({ pages: pages() });
+  const dir = tmp("verdicts-");
+  await runWatch(s.deps, { phase: "gate", verdictDir: dir, catalogDir: s.catalogDir });
+  for (let i = 0; i < 8; i++) fs.writeFileSync(path.join(dir, `x${i}.txt`), "x");
+  const r = await runWatch(s.deps, { phase: "publish", verdictDir: dir, catalogDir: s.catalogDir });
+  assert.deepEqual(r.results.map((x) => x.outcome), ["fault", "fault"]);
+  assert.match(r.faults[0], /more than 8/);
+  assert.deepEqual(s.github.writes, []);
+  const big = tmp("verdicts-");
+  for (const t of ["production", "staging"]) fs.writeFileSync(path.join(big, `${t}.json`), "x".repeat(15000));
+  fs.writeFileSync(path.join(big, "a.bin"), "x".repeat(40000));
+  assert.match(readVerdictFile(big, "staging").error, /too large/);
 });

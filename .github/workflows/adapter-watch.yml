@@ -64,10 +64,11 @@ jobs:
         with:
           persist-credentials: false
 
+      # No dependency caches in this job: it runs third-party code, and a cache it saved could be restored
+      # into a job with write access (cache poisoning).
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
 
       - run: npm ci --ignore-scripts
 
@@ -78,6 +79,8 @@ jobs:
           java-version: "17"
 
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true   # neither read nor write: see above
 
       - name: Gate
         env:
@@ -98,7 +101,7 @@ jobs:
 
   publish:
     needs: gate
-    if: always() && needs.gate.result != 'cancelled' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry_run))
+    if: ${{ !cancelled() && needs.gate.result != 'cancelled' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

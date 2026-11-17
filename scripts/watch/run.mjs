@@ -153,9 +153,25 @@ export function writeVerdicts(dir, verdicts) {
   for (const [target, v] of verdicts) fs.writeFileSync(path.join(dir, `${target}.json`), `${JSON.stringify(v, null, 2)}\n`);
 }
 
+export const VERDICT_DIR_MAX_FILES = 8;
+export const VERDICT_DIR_MAX_BYTES = 64 * 1024;
+
+/** The whole artifact directory is capped before anything in it is read: null when fine, else a reason. */
+export function checkVerdictDir(dir) {
+  let names;
+  try { names = fs.readdirSync(dir); } catch (e) { return e.code === "ENOENT" ? null : `cannot read the verdict directory: ${e.code ?? "error"}`; }
+  if (names.length > VERDICT_DIR_MAX_FILES) return `the verdict directory has ${names.length} entries (more than ${VERDICT_DIR_MAX_FILES})`;
+  let total = 0;
+  for (const n of names) { try { total += fs.lstatSync(path.join(dir, n)).size; } catch { /* vanished */ } }
+  if (total > VERDICT_DIR_MAX_BYTES) return `the verdict directory is too large (${total} bytes)`;
+  return null;
+}
+
 /** Read verdicts/<target>.json: null when absent; { error } when oversized or unparseable; else { raw }. */
 export function readVerdictFile(dir, target) {
   if (!TARGET_NAMES.includes(target)) throw new Error(`unknown target ${target}`);
+  const tooBig = checkVerdictDir(dir);
+  if (tooBig) return { error: tooBig };
   const file = path.join(dir, `${target}.json`);
   let st;
   try { st = fs.lstatSync(file); } catch (e) { return e.code === "ENOENT" ? null : { error: `cannot read ${target} verdict: ${e.code ?? "error"}` }; }
@@ -241,12 +257,16 @@ export async function runGatePhase(deps, { force = false, only = {}, targets = T
  *   deps: { github, readServer, loadIndex, loadVerdict(target) -> null | { raw } | { error }, buildCandidate,
  *           publish, reportPass, reportFailure, syncCheckout }
  */
-export async function runPublishPhase(deps, { dryRun = false, force = false, targets = TARGET_NAMES, runUrl, catalogDir, log = () => {} } = {}) {
+export async function runPublishPhase(deps, { dryRun = false, force = false, only = {}, targets = TARGET_NAMES, runUrl, catalogDir, log = () => {} } = {}) {
   const results = [];
   const faults = [];
   const warnings = [];
   const github = dryRun ? dryRunPort(deps.github, log) : deps.github;
   let dirty = false; // a publish merged: the local checkout is behind main
+  // The code fingerprint is taken ONCE, before any sync or merge, from the commit the gate also ran on, and used for
+  // every target: later merges (and syncs) must not change what a placeholder records.
+  let fingerprint;
+  const fingerprintOnce = async () => (fingerprint ??= await deps.codeFingerprint());
 
   for (const target of targets) {
     const res = { target, outcome: "error" };
@@ -262,7 +282,11 @@ export async function runPublishPhase(deps, { dryRun = false, force = false, tar
       const { hash } = verdict;
       res.hash = hash;
       res.version = verdict.version;
+      if ((only.hash && only.hash !== hash) || (only.version && normaliseVersion(target, only.version) !== verdict.version)) {
+        res.outcome = "skip"; res.reason = "not the requested hash/version"; log(`${target}: ${hash} skipped, ${res.reason}`); continue;
+      }
 
+      const fp = await fingerprintOnce();
       const server = await deps.readServer(target);
       if (!server) { fault("could not read the server's home page"); continue; }
       const rawRelease = server.release ?? null;
@@ -276,7 +300,7 @@ export async function runPublishPhase(deps, { dryRun = false, force = false, tar
         try { await deps.syncCheckout(); dirty = false; } catch (e) { fault(`could not refresh the checkout after a merge: ${msg(e)}`); continue; }
       }
       const catalogIndex = deps.loadIndex();
-      const codeFingerprint = await github.codeFingerprint();
+      const codeFingerprint = fp;
       const decision = decide({ hash, version: release, server: target, catalogIndex, force, codeFingerprint });
       if (decision.action === "skip") { res.outcome = "skip"; res.reason = decision.reason; log(`${target}: ${hash} (${release}) skip: ${decision.reason}`); continue; }
 
@@ -447,7 +471,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, inje
   const github = injected.deps || !writes ? undefined : createGithubPort({ repo, token });
   const deps = injected.deps ?? {
     github,
-    codeFingerprint: args.phase === "gate" ? () => localCodeFingerprint() : () => github.codeFingerprint(),
+    // gate and publish jobs both fingerprint their own checkout (HEAD = github.sha); a single process asks the API.
+    codeFingerprint: args.phase === "all" ? () => github.codeFingerprint() : () => localCodeFingerprint(),
     loadIndex: () => JSON.parse(fs.readFileSync(path.join(catalogDir, "index.json"), "utf8")),
     readServer: (t) => readServer(t),
     vendorProto: (server, release) => computeHashForVersion(server, release, { token }),
