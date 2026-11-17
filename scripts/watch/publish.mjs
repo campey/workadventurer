@@ -10,9 +10,21 @@
 // as { ok: false, stage, error }. A re-run reuses the branch (reset to main) and any
 // open PR for it. If the merge fails, main is untouched (the PR stays open for a
 // re-run) and the failure is reported.
+//
+// Safety: the merge is pinned. The branch is cut from main's tip (mainSha), the commit's
+// parent is exactly that sha, and merge() is told the commit sha it expects the PR head
+// to be (GitHub answers 409 if anyone moved the branch). An existing open PR is reused
+// only if its head is our commit and from this repo.
+// Stale checkout: the files are built from the local checkout, so its commit
+// (`checkoutCommit`, default `git rev-parse HEAD` in catalogDir) must equal main's tip,
+// else stage "stale" (the workflow re-checks out main and re-runs). This is simpler and
+// safer than rebuilding the index from the remote tree.
+// An existing adapter file is never replaced: identical bytes is "already-published"
+// (success, no PR); different bytes fails at "validate".
 
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { HASH_RE, validateAdapterFile } from "../../src/catalog/schema.mjs";
 import { ADAPTERS } from "../../src/adapters/index.mjs";
@@ -33,7 +45,7 @@ const fail = (stage, error, extra = {}) => ({ ok: false, stage, error, ...extra 
  *   placeholder: { server, version, gate, issue?, commit? }     -> a fail verdict
  * Exactly one of the two.
  */
-export async function publish({ port, hash, adapterFile, placeholder, catalogDir = DEFAULT_DIR, now = new Date() } = {}) {
+export async function publish({ port, hash, adapterFile, placeholder, catalogDir = DEFAULT_DIR, now = new Date(), checkoutCommit } = {}) {
   let branch;
   try {
     branch = branchFor(hash);
@@ -55,6 +67,20 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
     return fail("validate", msg(e));
   }
 
+  let mainSha;
+  try {
+    mainSha = await port.mainCommit();
+  } catch (e) {
+    return fail("branch", msg(e));
+  }
+  let local = checkoutCommit;
+  if (local === undefined) {
+    try { local = execFileSync("git", ["-C", catalogDir, "rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { local = null; }
+  }
+  if (local !== mainSha) {
+    return fail("stale", `the local checkout (${local ?? "unknown commit"}) is not main's current commit (${mainSha}); check out main again and re-run`);
+  }
+
   // Local files first, restored if anything below fails before the PR exists.
   const snapshot = (p) => { try { return fs.readFileSync(p); } catch { return null; } };
   const before = { adapter: snapshot(adapterPath), index: snapshot(indexPath) };
@@ -74,6 +100,10 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
       const checked = validateAdapterFile(parsed, ADAPTERS);
       if (!checked.ok) return fail("validate", `adapter file invalid: ${checked.reason}`);
       if (checked.file.apiVersionHash !== hash) return fail("validate", `adapter file's apiVersionHash is ${checked.file.apiVersionHash}, not ${hash}`);
+      if (before.adapter !== null) {
+        if (before.adapter.equals(Buffer.from(text))) return { ok: true, merged: false, status: "already-published", branch, files: [] };
+        return fail("validate", `${hash} already has a different adapter file in the catalog; refusing to replace it`);
+      }
       fs.mkdirSync(path.dirname(adapterPath), { recursive: true });
       fs.writeFileSync(adapterPath, text);
       message = `Adapter ${hash}: add (gate passed)`;
@@ -84,12 +114,14 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
       if (fs.existsSync(adapterPath)) return fail("validate", `${hash} already has an adapter file; not replacing it with a placeholder`);
       if (p.issue != null && !Number.isInteger(p.issue)) return fail("validate", "placeholder issue must be a number");
       let commit = p.commit;
-      if (commit == null) commit = await port.mainCommit();
+      if (commit == null) commit = mainSha;
       if (typeof commit !== "string" || !/^[0-9a-f]{7,40}$/.test(commit)) return fail("validate", "placeholder commit must be a hex sha");
+      const version = normaliseVersion(p.server, p.version);
+      if (version != null && !/^[\w.@-]{1,40}$/.test(version)) return fail("validate", "placeholder version has unexpected characters or is too long");
       const entry = {
         status: "needs-attention",
         server: p.server,
-        version: normaliseVersion(p.server, p.version),
+        version,
         gate: gateDetail(p.gate) ?? null,
         issue: p.issue ?? null,
         commit,
@@ -111,20 +143,27 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
   let pr;
   let stage = "branch";
   try {
-    const sha = await port.mainCommit();
-    await port.createBranch(branch, sha);
+    await port.createBranch(branch, mainSha);
     stage = "commit";
-    await port.commit({ branch, message, files: out });
+    const made = await port.commit({ branch, message, files: out, parent: mainSha });
+    const commitSha = made?.sha;
+    if (typeof commitSha !== "string" || !commitSha) throw new Error("commit returned no sha");
     stage = "pr";
-    pr = (await port.findOpenPr(branch)) ?? (await port.openPr({
+    const existing = await port.findOpenPr(branch);
+    if (existing && (existing.headSha !== commitSha || (port.repo !== undefined && existing.headRepo !== port.repo))) {
+      stage = "merge";
+      throw new Error(`open PR #${existing.number} on ${branch} is not our commit or not from this repo; not merging it`);
+    }
+    pr = existing ?? (await port.openPr({
       branch,
       title,
       body: `${message}\n\nOpened by the adapter watcher (#127). Touches only catalog/.`,
     }));
     stage = "merge";
-    const merged = await port.merge(pr.number);
-    if (!merged || merged.merged !== true) return fail("merge", "GitHub did not merge the pull request", { pr: pr.number, branch });
+    const merged = await port.merge(pr.number, { expectedHeadSha: commitSha });
+    if (!merged || merged.merged !== true) { restore(); return fail("merge", "GitHub did not merge the pull request", { pr: pr.number, branch }); }
   } catch (e) {
+    restore();
     return fail(stage, msg(e), pr ? { pr: pr.number, branch } : { branch });
   }
   return { ok: true, merged: true, branch, pr: pr.number, files: out.map((f) => f.path) };

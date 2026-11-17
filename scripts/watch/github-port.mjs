@@ -4,10 +4,14 @@
 //
 //   mainCommit()                          -> sha of the tip of the base branch
 //   createBranch(name, sha)               -> create the branch, or reset it to `sha` if it exists
-//   commit({ branch, message, files })    -> one commit of [{ path, content }] on the branch
-//   findOpenPr(branch)                    -> { number } | null
+//   commit({ branch, message, files, parent }) -> { sha }: one commit of [{ path, content }] whose parent is
+//                                         exactly `parent` (the sha given to createBranch); the branch is
+//                                         force-moved to it
+//   findOpenPr(branch)                    -> { number, headSha, headRepo } | null
 //   openPr({ branch, title, body })       -> { number }
-//   merge(number)                         -> { merged: true } (throws or { merged:false } otherwise)
+//   merge(number, { expectedHeadSha })    -> { merged: true } (throws or { merged:false } otherwise); GitHub
+//                                         refuses (409) if the PR head is no longer expectedHeadSha
+//   repo                                  -> "owner/name", so callers can check a PR's head repo
 //
 // Every method may throw; callers (publish) turn that into a result object.
 // The token is only ever sent in the Authorization header: it is never logged, and
@@ -64,7 +68,7 @@ export function createGithubPort({ repo, token, fetch: fetchFn = globalThis.fetc
     try { data = await res.json(); } catch { /* empty or non-JSON body */ }
     if (!res.ok && !okStatuses.includes(res.status)) {
       const msg = typeof data?.message === "string" ? data.message : "";
-      throw new Error(scrub(`${method} ${route}: HTTP ${res.status} ${msg}`.trim().slice(0, 300)));
+      throw new Error(scrub(`${method} ${route}: HTTP ${res.status} ${msg}`.trim()).slice(0, 300));
     }
     return { status: res.status, data };
   }
@@ -73,37 +77,47 @@ export function createGithubPort({ repo, token, fetch: fetchFn = globalThis.fetc
   const updateRoute = (name) => `/git/refs/heads/${name.split("/").map(encodeURIComponent).join("/")}`;
 
   return {
+    repo,
     async mainCommit() {
       const { data } = await api("GET", refRoute(base));
       return data.object.sha;
     },
     async createBranch(name, sha) {
       const made = await api("POST", "/git/refs", { ref: `refs/heads/${name}`, sha }, { okStatuses: [422] });
-      if (made.status === 422) await api("PATCH", updateRoute(name), { sha, force: true });
+      if (made.status === 422) {
+        // Only "already exists" means reset the branch; any other 422 (bad sha, bad name) is an error.
+        if (!/reference already exists/i.test(String(made.data?.message ?? ""))) {
+          throw new Error(scrub(`POST /git/refs: HTTP 422 ${made.data?.message ?? ""}`.trim()).slice(0, 300));
+        }
+        await api("PATCH", updateRoute(name), { sha, force: true });
+      }
     },
-    async commit({ branch, message, files }) {
+    async commit({ branch, message, files, parent }) {
       assertCatalogPaths(files.map((f) => f.path));
-      const head = (await api("GET", refRoute(branch))).data.object.sha;
-      const parent = (await api("GET", `/git/commits/${head}`)).data;
+      if (!/^[0-9a-f]{40}$/.test(parent ?? "")) throw new Error("commit needs the parent sha the branch was cut from");
+      const base = (await api("GET", `/git/commits/${parent}`)).data;
       const tree = (await api("POST", "/git/trees", {
-        base_tree: parent.tree.sha,
+        base_tree: base.tree.sha,
         tree: files.map((f) => ({ path: f.path, mode: "100644", type: "blob", content: f.content })),
       })).data;
-      const made = (await api("POST", "/git/commits", { message, tree: tree.sha, parents: [head] })).data;
-      await api("PATCH", updateRoute(branch), { sha: made.sha });
+      const made = (await api("POST", "/git/commits", { message, tree: tree.sha, parents: [parent] })).data;
+      await api("PATCH", updateRoute(branch), { sha: made.sha, force: true });
       return { sha: made.sha };
     },
     async findOpenPr(branch) {
       const owner = repo.split("/")[0];
       const { data } = await api("GET", `/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}&base=${encodeURIComponent(base)}`);
-      return Array.isArray(data) && data.length ? { number: data[0].number } : null;
+      if (!Array.isArray(data) || !data.length) return null;
+      const pr = data[0];
+      return { number: pr.number, headSha: pr.head?.sha, headRepo: pr.head?.repo?.full_name };
     },
     async openPr({ branch, title, body }) {
       const { data } = await api("POST", "/pulls", { title, body, head: branch, base });
       return { number: data.number };
     },
-    async merge(number) {
-      const { data } = await api("PUT", `/pulls/${number}/merge`, { merge_method: "squash" });
+    async merge(number, { expectedHeadSha } = {}) {
+      if (!expectedHeadSha) throw new Error("merge needs expectedHeadSha");
+      const { data } = await api("PUT", `/pulls/${number}/merge`, { merge_method: "squash", sha: expectedHeadSha });
       return { merged: data?.merged === true };
     },
   };
