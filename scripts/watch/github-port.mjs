@@ -12,9 +12,11 @@
 //   merge(number, { expectedHeadSha })    -> { merged: true } (throws or { merged:false } otherwise); GitHub
 //                                         refuses (409) if the PR head is no longer expectedHeadSha
 //   repo                                  -> "owner/name", so callers can check a PR's head repo
-//   findIssues({ label, state })          -> [{ number, title, state }] oldest first (pull requests excluded);
-//                                         state is open | closed | all; first 100 only
-//   createIssue({ title, body, labels })  -> { number }
+//   findIssues({ label?, state })         -> { issues: [{ number, title, state, body, author }], truncated }
+//                                         oldest first, pull requests excluded; label optional; state is
+//                                         open | closed | all; up to 5 pages of 100, truncated:true if more
+//   createIssue({ title, body, labels })  -> { number, labels }: labels as GitHub actually applied them
+//   addLabels(number, labels)             -> { labels }: the issue's labels afterwards
 //   updateIssue(number, { title, body })  -> { number }
 //   closeIssue(number, { comment })       -> { closed: true }: comments first (if given), then closes
 //
@@ -24,6 +26,8 @@
 
 import path from "node:path";
 import { HASH_RE } from "../../src/catalog/schema.mjs";
+
+const MAX_PAGES = 5;
 
 /** Refuse any path that is not a plain file path under catalog/ (the PR may touch nothing else). */
 export function assertCatalogPaths(paths) {
@@ -126,18 +130,32 @@ export function createGithubPort({ repo, token, fetch: fetchFn = globalThis.fetc
       return { merged: data?.merged === true };
     },
     async findIssues({ label, state = "open" } = {}) {
-      if (typeof label !== "string" || !label) throw new Error("findIssues needs a label");
+      if (label != null && (typeof label !== "string" || !label)) throw new Error("findIssues: label must be a non-empty string");
       if (!["open", "closed", "all"].includes(state)) throw new Error("findIssues: state must be open, closed or all");
-      const { data } = await api("GET", `/issues?labels=${encodeURIComponent(label)}&state=${state}&per_page=100&sort=created&direction=asc`);
-      if (!Array.isArray(data)) return [];
-      return data
-        .filter((i) => !i.pull_request)
-        .map((i) => ({ number: i.number, title: String(i.title ?? ""), state: i.state }))
-        .sort((a, b) => a.number - b.number);
+      const issues = [];
+      let truncated = false;
+      for (let page = 1; page <= MAX_PAGES; page++) {
+        const q = `${label ? `labels=${encodeURIComponent(label)}&` : ""}state=${state}&per_page=100&page=${page}&sort=created&direction=asc`;
+        const { data } = await api("GET", `/issues?${q}`);
+        if (!Array.isArray(data)) break;
+        for (const i of data) {
+          if (i.pull_request) continue;
+          issues.push({ number: i.number, title: String(i.title ?? ""), state: i.state, body: String(i.body ?? ""), author: i.user?.login ?? null });
+        }
+        if (data.length < 100) break;
+        if (page === MAX_PAGES) truncated = true;
+      }
+      issues.sort((x, y) => x.number - y.number);
+      return { issues, truncated };
     },
     async createIssue({ title, body, labels = [] }) {
       const { data } = await api("POST", "/issues", { title, body, labels });
-      return { number: data.number };
+      return { number: data.number, labels: (data.labels ?? []).map((l) => (typeof l === "string" ? l : l?.name)) };
+    },
+    async addLabels(number, labels) {
+      if (!Number.isInteger(number)) throw new Error("addLabels needs an issue number");
+      const { data } = await api("POST", `/issues/${number}/labels`, { labels });
+      return { labels: (Array.isArray(data) ? data : []).map((l) => (typeof l === "string" ? l : l?.name)) };
     },
     async updateIssue(number, { title, body }) {
       if (!Number.isInteger(number)) throw new Error("updateIssue needs an issue number");
