@@ -45,7 +45,7 @@ function fakePort({ mergeFails = 0, failAt, main = MAIN } = {}) {
   };
   return f;
 }
-const pub = (o) => publish({ checkoutCommit: MAIN, ...o });
+const pub = (o) => publish({ checkoutCommit: MAIN, sleep: async () => {}, ...o });
 
 test("pass: writes the adapter and index, branch adapter/<hash>, PR merged, only catalog/ touched", async () => {
   const dir = tmpCatalog();
@@ -311,4 +311,65 @@ test("REST adapter: a token straddling the 300-char cut is still scrubbed", asyn
   const msgText = "x".repeat(300 - "GET /git/ref/heads/main: HTTP 500 ".length - 10) + TOKEN;
   const port = createGithubPort({ repo: "campey/workadventurer", token: TOKEN, fetch: restFetch(({ json }) => json({ message: msgText }, 500)) });
   await assert.rejects(port.mainCommit(), (e) => { assert.ok(!e.message.includes(TOKEN)); assert.ok(!e.message.includes("ghp_STRADDLE")); return true; });
+});
+
+test("a reused PR whose head catches up after some polls is merged; one that never does is not", async () => {
+  for (const [lag, ok] of [[2, true], [1e9, false]]) {
+    const port = fakePort();
+    port.prs.push({ number: 5, branch: `adapter/${HASH}` });
+    let polls = 0;
+    const find = port.findOpenPr;
+    port.findOpenPr = async (b) => { const r = await find(b); if (r && polls++ < lag) r.headSha = "0".repeat(40); return r; };
+    const r = await pub({ port, hash: HASH, adapterFile: adapter(), catalogDir: tmpCatalog(), pollMs: 1, maxWaitMs: 10 });
+    assert.equal(r.ok, ok);
+    if (ok) assert.deepEqual(port.merged, [5]);
+    else { assert.equal(r.stage, "merge"); assert.deepEqual(port.merged, []); }
+  }
+});
+
+test("a port without repo fails the reuse check", async () => {
+  const port = fakePort();
+  delete port.repo;
+  port.prs.push({ number: 5, branch: `adapter/${HASH}` });
+  const r = await pub({ port, hash: HASH, adapterFile: adapter(), catalogDir: tmpCatalog() });
+  assert.equal(r.stage, "merge");
+});
+
+test("already-published needs an ok index entry with the matching sha256", async () => {
+  const dir = tmpCatalog();
+  await pub({ port: fakePort(), hash: HASH, adapterFile: adapter(), catalogDir: dir });
+  const text = fs.readFileSync(path.join(dir, "adapters", `${HASH}.json`), "utf8");
+  const idx = readIndex(dir);
+  idx.entries[HASH] = { status: "needs-attention", server: "production", version: "v1.34.5", gate: "x", issue: null, commit: "b".repeat(40) };
+  fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify(idx, null, 2) + "\n");
+  const port = fakePort();
+  const r = await pub({ port, hash: HASH, adapterFile: text, catalogDir: dir });
+  assert.equal(r.ok, true);
+  assert.equal(r.status, undefined);
+  assert.equal(r.merged, true);
+  assert.equal(readIndex(dir).entries[HASH].status, "ok");
+  assert.deepEqual(port.commits[0].files.map((f) => f.path), [`catalog/adapters/${HASH}.json`, "catalog/index.json"]);
+});
+
+test("default checkout detection: clean temp git repo works, dirty tree is stale", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "publish-git-"));
+  const dir = path.join(root, "catalog");
+  fs.mkdirSync(path.join(dir, "adapters"), { recursive: true });
+  fs.copyFileSync(path.join(SRC, "adapters", "23c8eb8c.json"), path.join(dir, "adapters", "23c8eb8c.json"));
+  rebuildIndex(dir);
+  const git = (...a) => execFileSync("git", ["-C", root, "-c", "user.email=t@t", "-c", "user.name=t", ...a], { encoding: "utf8" });
+  git("init", "-q"); git("add", "."); git("commit", "-q", "-m", "x");
+  const head = git("rev-parse", "HEAD").trim();
+  const dirty = path.join(dir, "stray.txt");
+  fs.writeFileSync(dirty, "x");
+  const r1 = await publish({ port: fakePort({ main: head }), hash: HASH, adapterFile: adapter(), catalogDir: dir, sleep: async () => {} });
+  assert.equal(r1.stage, "stale");
+  assert.match(r1.error, /uncommitted/);
+  assert.equal(fs.existsSync(path.join(dir, "adapters", `${HASH}.json`)), false);
+  fs.rmSync(dirty);
+  const port = fakePort({ main: head });
+  port.commit = async (a) => ({ sha: "e".repeat(40) }); // parent assertion in the shared fake is MAIN
+  const r2 = await publish({ port: Object.assign(port, { findOpenPr: async () => null, openPr: async () => ({ number: 1 }), merge: async () => ({ merged: true }) }), hash: HASH, adapterFile: adapter(), catalogDir: dir, sleep: async () => {} });
+  assert.equal(r2.ok, true);
 });

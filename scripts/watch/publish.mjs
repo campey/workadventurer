@@ -25,6 +25,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { HASH_RE, validateAdapterFile } from "../../src/catalog/schema.mjs";
 import { ADAPTERS } from "../../src/adapters/index.mjs";
@@ -45,7 +46,7 @@ const fail = (stage, error, extra = {}) => ({ ok: false, stage, error, ...extra 
  *   placeholder: { server, version, gate, issue?, commit? }     -> a fail verdict
  * Exactly one of the two.
  */
-export async function publish({ port, hash, adapterFile, placeholder, catalogDir = DEFAULT_DIR, now = new Date(), checkoutCommit } = {}) {
+export async function publish({ port, hash, adapterFile, placeholder, catalogDir = DEFAULT_DIR, now = new Date(), checkoutCommit, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 2000, maxWaitMs = 15000 } = {}) {
   let branch;
   try {
     branch = branchFor(hash);
@@ -75,7 +76,18 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
   }
   let local = checkoutCommit;
   if (local === undefined) {
-    try { local = execFileSync("git", ["-C", catalogDir, "rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { local = null; }
+    // Default: the checkout's own HEAD, and it must be clean under catalogDir (a dirty
+    // tree would publish uncommitted edits). GIT_DIR and friends are dropped so an
+    // inherited environment cannot point git at another repository.
+    const env = { ...process.env };
+    for (const k of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR"]) delete env[k];
+    const git = (...args) => execFileSync("git", ["-C", catalogDir, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env });
+    try {
+      local = git("rev-parse", "HEAD").trim();
+      if (git("status", "--porcelain", "--", ".").trim() !== "") {
+        return fail("stale", "the catalog checkout has uncommitted changes; use a clean checkout of main");
+      }
+    } catch { local = null; }
   }
   if (local !== mainSha) {
     return fail("stale", `the local checkout (${local ?? "unknown commit"}) is not main's current commit (${mainSha}); check out main again and re-run`);
@@ -101,11 +113,17 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
       if (!checked.ok) return fail("validate", `adapter file invalid: ${checked.reason}`);
       if (checked.file.apiVersionHash !== hash) return fail("validate", `adapter file's apiVersionHash is ${checked.file.apiVersionHash}, not ${hash}`);
       if (before.adapter !== null) {
-        if (before.adapter.equals(Buffer.from(text))) return { ok: true, merged: false, status: "already-published", branch, files: [] };
-        return fail("validate", `${hash} already has a different adapter file in the catalog; refusing to replace it`);
+        if (!before.adapter.equals(Buffer.from(text))) return fail("validate", `${hash} already has a different adapter file in the catalog; refusing to replace it`);
+        // Identical file: done only if the index already lists it as ok with this file's sha256;
+        // otherwise (e.g. a leftover needs-attention entry) go on and publish the repaired index.
+        let entry = null;
+        try { entry = JSON.parse(before.index?.toString("utf8") ?? "null")?.entries?.[hash]; } catch { /* treat as missing */ }
+        const sha256 = createHash("sha256").update(before.adapter).digest("hex");
+        if (entry?.status === "ok" && entry.sha256 === sha256) return { ok: true, merged: false, status: "already-published", branch, files: [] };
+      } else {
+        fs.mkdirSync(path.dirname(adapterPath), { recursive: true });
+        fs.writeFileSync(adapterPath, text);
       }
-      fs.mkdirSync(path.dirname(adapterPath), { recursive: true });
-      fs.writeFileSync(adapterPath, text);
       message = `Adapter ${hash}: add (gate passed)`;
       title = `Adapter ${hash} (gate passed)`;
     } else {
@@ -149,10 +167,18 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
     const commitSha = made?.sha;
     if (typeof commitSha !== "string" || !commitSha) throw new Error("commit returned no sha");
     stage = "pr";
-    const existing = await port.findOpenPr(branch);
-    if (existing && (existing.headSha !== commitSha || (port.repo !== undefined && existing.headRepo !== port.repo))) {
+    let existing = await port.findOpenPr(branch);
+    if (existing) {
       stage = "merge";
-      throw new Error(`open PR #${existing.number} on ${branch} is not our commit or not from this repo; not merging it`);
+      // GitHub moves a PR's head asynchronously after the ref update: wait briefly for ours.
+      // (The sha pin on merge stays the authoritative check.)
+      for (let waited = 0; existing && existing.headSha !== commitSha && waited < maxWaitMs; waited += pollMs) {
+        await sleep(pollMs);
+        existing = await port.findOpenPr(branch);
+      }
+      if (!existing || existing.headSha !== commitSha || !port.repo || existing.headRepo !== port.repo) {
+        throw new Error(`open PR #${existing?.number ?? "?"} on ${branch} is not our commit or not from this repo; not merging it`);
+      }
     }
     pr = existing ?? (await port.openPr({
       branch,
