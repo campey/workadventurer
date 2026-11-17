@@ -29,6 +29,7 @@ const BASE = {
   stt: false, // WA_STT=1 -> live speech-to-text on inbound peer audio (issue #23, prototype)
   ttsPython: "python3", // WA_TTS_PYTHON -> interpreter for huggingsesame's say.py (issue #7)
   ttsSay: path.join(os.homedir(), "Code", "huggingsesame", "src", "say.py"), // WA_TTS_SAY
+  adapterFile: null, // WA_ADAPTER_FILE / --adapter-file: a candidate adapter file that wins over the catalog and probe
   adapterUpdates: "ask", // WA_ADAPTER_UPDATES: ask | auto | never — downloading adapters (#126)
 };
 
@@ -45,6 +46,7 @@ const ENV_MAP = {
   WA_TTS_PYTHON: "ttsPython",
   WA_TTS_SAY: "ttsSay",
   WA_ADAPTER_UPDATES: "adapterUpdates",
+  WA_ADAPTER_FILE: "adapterFile",
 };
 
 const ADAPTER_UPDATES = ["ask", "auto", "never"];
@@ -77,6 +79,7 @@ export function resolveConfig(flags = {}, configPath = CONFIG_PATH) {
   const merged = { ...BASE, ...fromFile(configPath), ...fromEnv(), ...cleanFlags };
   merged.port = Number(merged.port) || BASE.port;
   merged.stt = merged.stt === true || merged.stt === "1" || merged.stt === "true";
+  merged.adapterFile = merged.adapterFile ? path.resolve(String(merged.adapterFile)) : null;
   if (!ADAPTER_UPDATES.includes(merged.adapterUpdates)) merged.adapterUpdates = BASE.adapterUpdates;
   return merged;
 }
@@ -154,6 +157,7 @@ export function configToEnv(cfg) {
     WA_TTS_PYTHON: cfg.ttsPython,
     WA_TTS_SAY: cfg.ttsSay,
     WA_ADAPTER_UPDATES: cfg.adapterUpdates,
+    ...(cfg.adapterFile ? { WA_ADAPTER_FILE: cfg.adapterFile } : {}),
     ...(cfg.version ? { WA_VERSION: cfg.version } : {}),
   };
 }

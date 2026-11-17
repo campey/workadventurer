@@ -2,9 +2,11 @@
 // exercise the paths that depend on adapter values, print PASS/FAIL/SKIP per
 // step. `wa selfcheck --target production` must stay green across any change.
 //
-//   node scripts/selfcheck.mjs [--target <id>] [--room <url>]
+//   node scripts/selfcheck.mjs [--target <id>] [--room <url>] [--adapter-file <f>]
 
 import { WorkAdventureClient } from "../src/wa-client.mjs";
+import { ADAPTERS } from "../src/adapters/index.mjs";
+import { loadAdapterFile } from "../src/catalog/adapter-file.mjs";
 import { resolveConfig } from "../src/config.mjs";
 import { isVersionRejection } from "../src/server-rejected.mjs";
 import { DefaultWebSocket } from "../world-port/live/proxied-ws.mjs";
@@ -18,7 +20,16 @@ const opt = (name) => {
 // "production" is a friendly alias for the auto-detected prod adapter.
 const rawTarget = opt("target") ?? "auto";
 const target = rawTarget === "production" ? "auto" : rawTarget;
-const cfg = resolveConfig({ target, roomUrl: opt("room") });
+const cfg = resolveConfig({ target, roomUrl: opt("room"), adapterFile: opt("adapter-file") });
+
+// An unreadable or invalid candidate file is a hard error, never a silent fallback.
+let fileAdapter;
+try {
+  fileAdapter = cfg.adapterFile ? loadAdapterFile(cfg.adapterFile, ADAPTERS) : undefined;
+} catch (e) {
+  console.error(`FAIL  adapter file  — ${e.message}`);
+  process.exit(2);
+}
 
 let failed = false;
 const line = (status, step, detail = "") => {
@@ -34,6 +45,7 @@ const client = new WorkAdventureClient({
   target: cfg.target,
   version: cfg.version,
   wokaId: cfg.wokaId,
+  fileAdapter,
 });
 
 const errors = [];

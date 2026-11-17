@@ -33,6 +33,7 @@ import fs from "node:fs";
 import { WorkAdventureClient } from "./wa-client.mjs";
 import { ADAPTERS, matchVersion } from "./adapters/index.mjs";
 import { loadCached } from "./catalog/store.mjs";
+import { loadAdapterFile } from "./catalog/adapter-file.mjs";
 import { recoverAdapter, refusalMessage } from "./catalog/recover.mjs";
 import { catalogUrl } from "./catalog/client.mjs";
 import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
@@ -290,6 +291,15 @@ function state() {
   };
 }
 
+// Fail loudly (before listening) on an unreadable or invalid adapter file; never fall back.
+let fileAdapter;
+try {
+  fileAdapter = cfg.adapterFile ? loadAdapterFile(cfg.adapterFile, ADAPTERS) : undefined;
+} catch (e) {
+  process.stderr.write(`wa-daemon: ${e.message}\n`);
+  process.exit(2);
+}
+
 const newClient = () =>
   new WorkAdventureClient({
     name: cfg.name,
@@ -300,6 +310,8 @@ const newClient = () =>
     wokaId: cfg.wokaId,
     // Catalog adapters downloaded earlier (#126); the client itself never reads the cache.
     cachedFor: (h) => loadCached(h, { builtins: ADAPTERS }),
+    // An explicit candidate adapter file (WA_ADAPTER_FILE); loaded at startup so a bad one is fatal.
+    fileAdapter,
     // A listen-mode ("scribe") instance doesn't publish audio by default —
     // client.micOn is the single source of truth every mic-announce path
     // respects (#10). See wa-audio.mjs for the rest of that invariant.

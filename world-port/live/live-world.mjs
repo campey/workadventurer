@@ -4,13 +4,15 @@ import { EventEmitter } from "node:events";
 import { DefaultWebSocket } from "./proxied-ws.mjs";
 import { WorkAdventureClient } from "../../src/wa-client.mjs";
 import { isVersionRejection } from "../../src/server-rejected.mjs";
+import { ADAPTERS } from "../../src/adapters/index.mjs";
+import { loadAdapterFile } from "../../src/catalog/adapter-file.mjs";
 import { record, save } from "../recorder.mjs";
 
 const info = (p) => ({ userId: p.userId, name: p.name ?? "", x: p.x, y: p.y });
 
 export class LiveWorld extends EventEmitter {
   /** recordTo: array sink for recorded traffic; with RECORD=1 and no sink, saved on close(). */
-  constructor({ roomUrl, name, versionHash = null, recordTo = null, fetch = globalThis.fetch, WebSocketImpl = DefaultWebSocket }) {
+  constructor({ roomUrl, name, versionHash = null, recordTo = null, adapterFile = process.env.WA_ADAPTER_FILE || null, fetch = globalThis.fetch, WebSocketImpl = DefaultWebSocket }) {
     super();
     this.name = name;
     this.closed = false;
@@ -25,6 +27,8 @@ export class LiveWorld extends EventEmitter {
       roomUrl,
       name,
       ...(versionHash ? { version: versionHash } : {}),
+      // WA_ADAPTER_FILE: gate a candidate adapter; throws here (loudly) if the file is bad.
+      ...(adapterFile ? { fileAdapter: loadAdapterFile(adapterFile, ADAPTERS) } : {}),
       fetch: seam.fetch ?? fetch,
       WebSocketImpl: seam.WebSocketImpl ?? WebSocketImpl,
     });

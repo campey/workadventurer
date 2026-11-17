@@ -54,13 +54,15 @@ export async function probeVersion(roomUrl) {
 const shaDrift = (a, b) => !(a.startsWith(b) || b.startsWith(a));
 
 /**
- * Resolve a target adapter. Precedence: explicit override > cached catalog
+ * Resolve a target adapter. Precedence: explicit override (a target other than
+ * "auto") > explicit adapter file (`fileAdapter`, already loaded and built by the
+ * outer layer; no probe is made) > cached catalog
  * adapter for the probed hash > server probe > host allowlist > warned default
  * (wa-1.33). `cachedFor` is injected by the outer layer so the core client
  * never touches the catalog cache; it only runs for a hash no built-in knows.
- * @param {{roomUrl?:string, override?:string, probeFn?:(url:string)=>Promise<any>, cachedFor?:(hash:string)=>Promise<object|null>}} opts
+ * @param {{roomUrl?:string, override?:string, fileAdapter?:object, probeFn?:(url:string)=>Promise<any>, cachedFor?:(hash:string)=>Promise<object|null>}} opts
  */
-export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion, cachedFor } = {}) {
+export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion, cachedFor, fileAdapter } = {}) {
   if (override && override !== "auto") {
     const a = ADAPTERS[override];
     if (!a) {
@@ -69,6 +71,10 @@ export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion
       );
     }
     return { adapter: a, why: `explicit target ${override}` };
+  }
+
+  if (fileAdapter) {
+    return { adapter: fileAdapter, why: `adapter file ${fileAdapter.id} (${fileAdapter.apiVersionHashes?.[0]})` };
   }
 
   const probe = roomUrl ? await probeFn(roomUrl) : null;
