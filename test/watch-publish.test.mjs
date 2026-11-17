@@ -74,15 +74,17 @@ test("fail: a placeholder with version, gate text, issue and commit goes through
   assert.equal(e.file, undefined);
 });
 
-test("placeholder takes the main commit from the port when none is given", async () => {
+test("a placeholder without a code fingerprint is refused (no fallback to main's sha)", async () => {
   const dir = tmpCatalog();
-  await pub({ port: fakePort(), hash: HASH, catalogDir: dir, placeholder: { server: "staging", version: "master@118dd84c", gate: "x" } });
-  assert.equal(readIndex(dir).entries[HASH].commit, "a".repeat(40));
+  const r = await pub({ port: fakePort(), hash: HASH, catalogDir: dir, placeholder: { server: "staging", version: "master@118dd84c", gate: "x" } });
+  assert.equal(r.ok, false);
+  assert.equal(r.stage, "validate");
+  assert.equal(readIndex(dir).entries[HASH], undefined);
 });
 
 test("a later pass replaces the placeholder with an ok entry", async () => {
   const dir = tmpCatalog();
-  await pub({ port: fakePort(), hash: HASH, catalogDir: dir, placeholder: { server: "production", version: "1.34.5", gate: "x", issue: 7 } });
+  await pub({ port: fakePort(), hash: HASH, catalogDir: dir, placeholder: { server: "production", version: "1.34.5", gate: "x", commit: "b".repeat(40), issue: 7 } });
   assert.equal(readIndex(dir).entries[HASH].status, "needs-attention");
   const r = await pub({ port: fakePort(), hash: HASH, adapterFile: adapter(), catalogDir: dir });
   assert.equal(r.ok, true);
@@ -143,7 +145,7 @@ test("a port that throws at any step is reported as a failed result", async () =
 
 test("a placeholder will not overwrite an adapter that already exists", async () => {
   const dir = tmpCatalog();
-  const r = await pub({ port: fakePort(), hash: "23c8eb8c", catalogDir: dir, placeholder: { server: "production", version: "1.34.0", gate: "x" } });
+  const r = await pub({ port: fakePort(), hash: "23c8eb8c", catalogDir: dir, placeholder: { server: "production", version: "1.34.0", gate: "x", commit: "b".repeat(40) } });
   assert.equal(r.ok, false);
   assert.equal(readIndex(dir).entries["23c8eb8c"].status, "ok");
 });
@@ -251,10 +253,10 @@ test("a stale checkout (main moved) fails at stage stale and touches nothing", a
 });
 
 test("placeholder version is sanitised or refused", async () => {
-  const r = await pub({ port: fakePort(), hash: HASH, catalogDir: tmpCatalog(), placeholder: { server: "production", version: "1.34.5 <script>", gate: "x" } });
+  const r = await pub({ port: fakePort(), hash: HASH, catalogDir: tmpCatalog(), placeholder: { server: "production", version: "1.34.5 <script>", gate: "x", commit: "b".repeat(40) } });
   assert.equal(r.ok, false);
   assert.equal(r.stage, "validate");
-  const long = await pub({ port: fakePort(), hash: HASH, catalogDir: tmpCatalog(), placeholder: { server: "production", version: "v" + "1".repeat(60), gate: "x" } });
+  const long = await pub({ port: fakePort(), hash: HASH, catalogDir: tmpCatalog(), placeholder: { server: "production", version: "v" + "1".repeat(60), gate: "x", commit: "b".repeat(40) } });
   assert.equal(long.ok, false);
 });
 

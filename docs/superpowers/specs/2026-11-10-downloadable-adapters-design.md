@@ -197,6 +197,10 @@ Steps of a run, **for each of production and staging**:
    `needs-attention` is **not** re-tested every hour (it would put live avatars on production each time for the same
    answer): it is re-run only on a manual run, or when the repository's code (everything but `catalog/`) has changed since the placeholder recorded its fingerprint,
    or when the server's version string changes (my call).
+   The workflow is two jobs (R12): `gate` runs the third-party gate steps with read-only permissions and no token and
+   uploads a verdict per server; `publish` (the only job with write permissions, running no gate code) treats the
+   verdict as untrusted data, re-reads the server, rebuilds the adapter itself and re-decides. Residual risk: a forged
+   verdict can at worst flip pass/fail for a hash the server really announces at that moment.
 7. A release that is not live yet (the hook case) is **not** gated: the gate needs production to accept the hash, and
    staging runs `master`, not the release. The hook only makes us notice sooner; the gate runs once production switches.
    Gating ahead of the switch against staging is a possible later extension (my call).

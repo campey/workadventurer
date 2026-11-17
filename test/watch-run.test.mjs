@@ -53,6 +53,7 @@ function setup({ pages, gateResults = {}, catalogDir = tmpCatalog(), github = fa
   const synced = [];
   const deps = {
     github,
+    codeFingerprint: () => github.codeFingerprint(),
     loadIndex: () => readIndex(catalogDir),
     readServer: async (t) => (pages[t] === undefined ? null : pages[t]),
     vendorProto: async (server, release) => ({ apiVersionHash: vendorHash?.[server] ?? pages[server].hash, protoBuf: Buffer.from("syntax = 'proto3';") }),
@@ -228,25 +229,43 @@ const wfText = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).p
 let YAML = null;
 try { YAML = (await import("yaml")).default; } catch { /* transitive dependency; fall back to text checks */ }
 
-test("workflow: parses, triggers, permissions, concurrency", { skip: !YAML && "yaml not installed" }, () => {
+test("workflow: parses, triggers, concurrency, two-job split", { skip: !YAML && "yaml not installed" }, () => {
   const wf = YAML.parse(wfText);
   const on = wf.on ?? wf[true];
   assert.ok(on.schedule[0].cron.split(" ")[0] !== "0", "cron minute is off the hour");
   assert.deepEqual(Object.keys(on.workflow_dispatch.inputs).sort(), ["dry_run", "force", "hash", "version"]);
   assert.deepEqual(on.repository_dispatch.types, ["wa-release"]);
-  assert.deepEqual(wf.permissions, { contents: "write", "pull-requests": "write", issues: "write" });
   assert.equal(wf.concurrency.group, "adapter-watch");
   assert.equal(wf.concurrency["cancel-in-progress"], false);
-  const steps = wf.jobs.watch.steps;
-  assert.ok(steps.some((s) => String(s.uses).startsWith("actions/setup-java")));
-  assert.match(wf.jobs.watch.if, /refs\/heads\/main/);
-  assert.ok(wf.jobs.watch["timeout-minutes"] >= 120);
-  assert.equal(steps.find((s) => String(s.uses).startsWith("actions/checkout")).with["persist-credentials"], false);
-  assert.ok(steps.some((s) => s.run === "npm ci --ignore-scripts"));
-  for (const s of steps) {
-    if (!s.run) continue;
-    assert.ok(!/\$\{\{/.test(s.run), `no expression in run: ${s.run}`);
-  }
+  assert.deepEqual(wf.permissions, { contents: "read" });
+  assert.deepEqual(Object.keys(wf.jobs).sort(), ["gate", "publish"]);
+  const { gate, publish } = wf.jobs;
+
+  // gate: third-party code, read-only, no token or secret anywhere in it
+  assert.deepEqual(gate.permissions, { contents: "read" });
+  const gateText = JSON.stringify(gate);
+  assert.ok(!/secrets\.|github\.token|GITHUB_TOKEN|GH_TOKEN/.test(gateText), "no token or secret in the gate job");
+  assert.ok(gate.steps.some((st) => String(st.uses).startsWith("actions/setup-java")));
+  assert.ok(gate.steps.some((st) => /--phase gate/.test(st.run ?? "")));
+  assert.ok(gate.steps.some((st) => String(st.uses).startsWith("actions/upload-artifact")));
+  assert.equal(gate.steps.find((st) => String(st.uses).startsWith("actions/checkout")).with["persist-credentials"], false);
+  assert.ok(gate.steps.some((st) => st.run === "npm ci --ignore-scripts"));
+  assert.match(gate.if, /refs\/heads\/main/);
+
+  // publish: the only writer, runs no gate code
+  assert.deepEqual(publish.permissions, { contents: "write", "pull-requests": "write", issues: "write" });
+  assert.equal(publish.needs, "gate");
+  assert.match(publish.if, /always\(\)/);
+  assert.match(publish.if, /needs\.gate\.result != 'cancelled'/);
+  assert.match(publish.if, /refs\/heads\/main/);
+  assert.ok(publish.steps.some((st) => String(st.uses).startsWith("actions/download-artifact")));
+  assert.ok(!publish.steps.some((st) => /setup-java|setup-gradle/.test(String(st.uses))), "no Java or Gradle in publish");
+  assert.ok(!/gradle|selfcheck|scenarios|--phase (gate|all)/i.test(publish.steps.map((st) => st.run ?? "").join("\n")), "no gate code in publish");
+  assert.ok(publish.steps.some((st) => st.run === "npm ci --ignore-scripts"));
+  assert.ok(publish.steps.some((st) => /--phase publish/.test(st.run ?? "")));
+  assert.equal(publish.steps.find((st) => String(st.uses).startsWith("actions/checkout")).with["persist-credentials"], false);
+  assert.ok(publish["timeout-minutes"] <= 120);
+  for (const job of [gate, publish]) for (const st of job.steps) if (st.run) assert.ok(!/\$\{\{/.test(st.run), `no expression in run: ${st.run}`);
 });
 
 test("workflow: the dispatch payload is never read; no expression in any run script", () => {
@@ -336,4 +355,153 @@ test("main(): config errors, publish only from main, token scrubbed, exit codes"
     assert.equal(await main([], base, { deps: g.deps, procEnv: {}, catalogDir: g.catalogDir }), 0);
   } finally { console.log = quiet; }
   const e = { GITHUB_TOKEN: "a", GH_TOKEN: "b", X: "1" }; scrubEnv(e); assert.deepEqual(e, { X: "1" });
+});
+
+// ---- the two phases ----
+import { runGatePhase, runPublishPhase, validateVerdict, readVerdictFile, writeVerdicts, localCodeFingerprint, VERDICT_MAX_BYTES } from "../scripts/watch/run.mjs";
+import { execFileSync } from "node:child_process";
+
+const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const explode = new Proxy({}, { get: (_, k) => { throw new Error(`gate phase touched github.${String(k)}`); } });
+const verdictOf = (dir, t) => JSON.parse(fs.readFileSync(path.join(dir, `${t}.json`), "utf8"));
+const putVerdict = (dir, t, v) => fs.writeFileSync(path.join(dir, `${t}.json`), typeof v === "string" ? v : JSON.stringify(v));
+
+test("phase gate: writes verdicts, nothing else; zero GitHub use", async () => {
+  const s = setup({ pages: pages(), gateResults: { staging: "selfcheck" } });
+  const dir = tmp("verdicts-");
+  const r = await runWatch({ ...s.deps, github: explode }, { phase: "gate", verdictDir: dir, catalogDir: s.catalogDir });
+  assert.deepEqual(r.faults, []);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ["production.json", "staging.json"]);
+  const p = verdictOf(dir, "production");
+  assert.deepEqual(Object.keys(p).sort(), ["hash", "pass", "server", "steps", "version"]);
+  assert.equal(p.pass, true);
+  assert.equal(verdictOf(dir, "staging").pass, false);
+  assert.deepEqual(s.github.writes, []);
+  assert.equal(readIndex(s.catalogDir).entries[PROD_HASH], undefined); // nothing published
+});
+
+test("phase publish: publishes a pass and a fail from verdict files", async () => {
+  const s = setup({ pages: pages(), gateResults: { staging: "selfcheck" } });
+  const dir = tmp("verdicts-");
+  await runWatch(s.deps, { phase: "gate", verdictDir: dir, catalogDir: s.catalogDir });
+  s.gateCalls.length = 0;
+  const r = await runWatch(s.deps, { phase: "publish", verdictDir: dir, catalogDir: s.catalogDir, runUrl: RUN_URL });
+  assert.deepEqual(r.faults, []);
+  assert.deepEqual(r.results.map((x) => x.outcome), ["pass", "fail"]);
+  assert.equal(s.gateCalls.length, 0, "publish runs no gate");
+  const idx = readIndex(s.catalogDir);
+  assert.equal(idx.entries[PROD_HASH].status, "ok");
+  assert.equal(idx.entries[STAGE_HASH].status, "needs-attention");
+  assert.match(idx.entries[STAGE_HASH].gate, /^selfcheck/);
+  assert.equal(s.github.issues.length, 1);
+});
+
+test("phase publish: no verdict means nothing to do", async () => {
+  const s = setup({ pages: pages() });
+  const r = await runWatch(s.deps, { phase: "publish", verdictDir: tmp("empty-"), catalogDir: s.catalogDir });
+  assert.deepEqual(r.results.map((x) => x.outcome), ["skip", "skip"]);
+  assert.deepEqual(s.github.writes, []);
+});
+
+async function forged(mutate, { raw } = {}) {
+  const s = setup({ pages: { production: pages().production } });
+  const dir = tmp("verdicts-");
+  await runWatch(s.deps, { phase: "gate", verdictDir: dir, targets: ["production"], catalogDir: s.catalogDir });
+  const v = verdictOf(dir, "production");
+  putVerdict(dir, "production", raw ?? (mutate(v) ?? v));
+  const r = await runWatch(s.deps, { phase: "publish", verdictDir: dir, targets: ["production"], catalogDir: s.catalogDir });
+  return { s, r };
+}
+
+test("phase publish rejects forged verdicts and writes nothing", async () => {
+  const cases = {
+    "unknown step": (v) => { v.steps[1].name = "rm-rf"; },
+    "extra field (adapter content)": (v) => { v.adapter = { schema: 1 }; },
+    "pass claimed over a failing step": (v) => { v.steps[0].status = "fail"; },
+    "pass with a missing step": (v) => { v.steps.pop(); },
+    "bad status": (v) => { v.steps[0].status = "great"; },
+    "bad hash": (v) => { v.hash = "../../etc"; },
+    "wrong server": (v) => { v.server = "staging"; },
+    "bad version": (v) => { v.version = "v1;rm"; },
+    "oversized detail": (v) => { v.steps[0].detail = "x".repeat(5000); },
+  };
+  for (const [name, mutate] of Object.entries(cases)) {
+    const { s, r } = await forged(mutate);
+    assert.equal(r.results[0].outcome, "fault", name);
+    assert.deepEqual(s.github.writes, [], name);
+  }
+  const big = await forged(null, { raw: JSON.stringify({ pad: "x".repeat(VERDICT_MAX_BYTES) }) });
+  assert.equal(big.r.results[0].outcome, "fault");
+  assert.match(big.r.faults[0], /too large/);
+  const junk = await forged(null, { raw: "not json" });
+  assert.equal(junk.r.results[0].outcome, "fault");
+  assert.deepEqual(junk.s.github.writes, []);
+});
+
+test("phase publish: a verdict for a hash or version the server no longer announces is skipped", async () => {
+  const s = setup({ pages: pages() });
+  const dir = tmp("verdicts-");
+  await runWatch(s.deps, { phase: "gate", verdictDir: dir, catalogDir: s.catalogDir });
+  s.deps.readServer = async (t) => (t === "production" ? { hash: "33333333", release: "v1.34.9" } : { hash: STAGE_HASH, release: "master@ffffffff00" });
+  const r = await runWatch(s.deps, { phase: "publish", verdictDir: dir, catalogDir: s.catalogDir });
+  assert.deepEqual(r.results.map((x) => x.outcome), ["skip", "skip"]);
+  assert.equal(r.warnings.length, 2);
+  assert.deepEqual(r.faults, []);
+  assert.deepEqual(s.github.writes, []);
+});
+
+test("phase publish ignores adapter content in the artifact: the published file is rebuilt", async () => {
+  const s = setup({ pages: { production: pages().production } });
+  const dir = tmp("verdicts-");
+  await runWatch(s.deps, { phase: "gate", verdictDir: dir, targets: ["production"], catalogDir: s.catalogDir });
+  // an extra "adapter" file next to the verdict is never read
+  fs.writeFileSync(path.join(dir, "adapter.json"), JSON.stringify({ ...baseFile, apiVersionHash: PROD_HASH, movement: { walkPxPerS: 1, runPxPerS: 2 } }));
+  const r = await runWatch(s.deps, { phase: "publish", verdictDir: dir, targets: ["production"], catalogDir: s.catalogDir });
+  assert.deepEqual(r.faults, []);
+  const published = JSON.parse(fs.readFileSync(path.join(s.catalogDir, "adapters", `${PROD_HASH}.json`), "utf8"));
+  assert.deepEqual(published.movement, baseFile.movement);
+});
+
+test("validateVerdict returns a rebuilt minimal object with sanitised detail", () => {
+  const raw = { server: "staging", hash: STAGE_HASH, version: null, pass: false, steps: [{ name: "selfcheck", status: "fail", detail: "bad\u0007text" }] };
+  const v = validateVerdict(raw, { target: "staging" });
+  assert.equal(v.ok, true);
+  assert.notEqual(v.verdict, raw);
+  assert.equal(v.verdict.steps[0].detail, "bad text");
+  assert.equal(validateVerdict(raw, { target: "production" }).ok, false);
+  assert.equal(validateVerdict([], { target: "staging" }).ok, false);
+  assert.throws(() => readVerdictFile(tmp("v-"), "../x"), /unknown target/);
+  const d = tmp("v-");
+  writeVerdicts(d, new Map([["staging", raw]]));
+  assert.deepEqual(readVerdictFile(d, "staging").raw, raw);
+  assert.equal(readVerdictFile(d, "production"), null);
+});
+
+test("localCodeFingerprint matches the API-side fingerprint of the same tree", () => {
+  const repo = tmp("fp-");
+  const git = (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+  git("init", "-q");
+  fs.mkdirSync(path.join(repo, "catalog"));
+  fs.mkdirSync(path.join(repo, "src"));
+  fs.writeFileSync(path.join(repo, "catalog", "i.json"), "{}");
+  fs.writeFileSync(path.join(repo, "src", "a.js"), "1");
+  fs.writeFileSync(path.join(repo, "README.md"), "hi");
+  git("add", "-A"); git("commit", "-qm", "x");
+  const entries = git("ls-tree", "HEAD").trim().split("\n").map((l) => ({ path: l.split("\t")[1], sha: l.split(/\s/)[2] }));
+  const fp = localCodeFingerprint(repo);
+  assert.equal(fp, fingerprintOf(entries));
+  fs.writeFileSync(path.join(repo, "catalog", "i.json"), "{\"a\":1}"); git("add", "-A"); git("commit", "-qm", "y");
+  assert.equal(localCodeFingerprint(repo), fp, "a catalog-only change keeps the fingerprint");
+});
+
+test("main --phase gate needs no token or repo and makes no GitHub call", async () => {
+  const s = setup({ pages: pages() });
+  const dir = tmp("verdicts-");
+  const quiet = console.log; console.log = () => {};
+  try {
+    assert.equal(await main(["--phase", "gate", "--verdict-dir", dir], { GITHUB_REF: "refs/heads/feature" }, { deps: { ...s.deps, github: explode }, procEnv: {}, catalogDir: s.catalogDir }), 0);
+    await assert.rejects(() => main(["--phase", "publish"], { GITHUB_REPOSITORY: "a/b" }), /GITHUB_TOKEN/);
+    await assert.rejects(() => main(["--phase", "bogus"], {}), /phase/);
+  } finally { console.log = quiet; }
+  assert.ok(fs.existsSync(path.join(dir, "production.json")));
 });
