@@ -52,7 +52,7 @@ async function freePort() {
   return port;
 }
 
-async function withSetup(mode, body, { entries = true } = {}) {
+async function withSetup(mode, body, { entries = true, env = {} } = {}) {
   const pusher = await startFakePusher({ acceptHashes: [NEW_HASH] });
   const catalog = await startCatalog({ entries });
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "wa-daemon-recovery-"));
@@ -62,7 +62,7 @@ async function withSetup(mode, body, { entries = true } = {}) {
     env: {
       ...process.env, NODE_USE_ENV_PROXY: "", HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"),
       WA_ROOM: pusher.roomUrl, WA_PUSHER_URL: pusher.url, WA_CATALOG_URL: catalog.url,
-      WA_ADAPTER_UPDATES: mode, WA_DAEMON_PORT: String(port), WA_VERSION: "", WA_TARGET: "auto",
+      WA_ADAPTER_UPDATES: mode, WA_DAEMON_PORT: String(port), WA_VERSION: "", WA_TARGET: "auto", ...env,
     },
   });
   let out = "";
@@ -89,6 +89,12 @@ const until = async (cond, ms = 15000) => {
   return false;
 };
 
+// A timeout that is cleared once the race is decided (a dangling 15 s timer would hold the test process open).
+function raceTimeout(promise, ms) {
+  let t;
+  return Promise.race([promise, new Promise((r) => { t = setTimeout(() => r("timeout"), ms); t.unref?.(); })]).finally(() => clearTimeout(t));
+}
+
 test("auto: a NEW_VERSION refusal fetches the catalog adapter and the daemon joins", async () => {
   await withSetup("auto", async ({ pusher, home, port, output }) => {
     const up = await until(async () => {
@@ -103,7 +109,7 @@ test("auto: a NEW_VERSION refusal fetches the catalog adapter and the daemon joi
 
 test("ask: the daemon cannot prompt, exits REFUSED_EXIT and writes no cache", async () => {
   await withSetup("ask", async ({ home, exited, output }) => {
-    const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r("timeout"), 15000))]);
+    const code = await raceTimeout(exited, 15000);
     assert.equal(code, REFUSED_EXIT, output());
     assert.equal(fs.existsSync(path.join(home, ".workadventurer", "adapters")), false);
     assert.match(output(), /run `wa join` again to check the catalog for an adapter, or set WA_ADAPTER_UPDATES=auto/);
@@ -112,8 +118,26 @@ test("ask: the daemon cannot prompt, exits REFUSED_EXIT and writes no cache", as
 
 test("auto: a catalog with no entry for the hash logs why and exits REFUSED_EXIT", async () => {
   await withSetup("auto", async ({ exited, output }) => {
-    const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r("timeout"), 15000))]);
+    const code = await raceTimeout(exited, 15000);
     assert.equal(code, REFUSED_EXIT, output());
     assert.match(output(), /no adapter for this server version yet/);
   }, { entries: false });
+});
+
+test("auto with an adapter file: a refused candidate is not replaced from the catalog; exits REFUSED_EXIT", async () => {
+  const file = path.join(os.tmpdir(), `wa-cand-${process.pid}.json`);
+  fs.writeFileSync(file, JSON.stringify({
+    schema: 1, id: "cand", waVersion: "9.8", apiVersionHash: "f11e0001", server: "production", protoFamily: "wa-1.34",
+  }));
+  try {
+    await withSetup("auto", async ({ pusher, home, exited, output }) => {
+      const code = await raceTimeout(exited, 15000);
+      assert.equal(code, REFUSED_EXIT, output());
+      assert.match(output(), /refused the candidate adapter file/);
+      assert.equal(fs.existsSync(path.join(home, ".workadventurer", "adapters")), false);
+      assert.deepEqual([...new Set(pusher.stats.versions)], ["f11e0001"], "never retried with another hash");
+    }, { env: { WA_ADAPTER_FILE: file } });
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
 });

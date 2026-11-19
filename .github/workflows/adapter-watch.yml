@@ -1,0 +1,147 @@
+# The adapter watcher (#127): notices a new WorkAdventure server hash (production or staging), runs the gate
+# (proto-diff, selfcheck, live scenarios on production, Kotlin smoke), and publishes the adapter to catalog/
+# through a PR (pass) or records a needs-attention placeholder plus an issue (fail).
+#
+#   hourly                       -> re-reads both home pages; does nothing when every hash is known. Schedule and
+#                                   repository_dispatch runs need the repository variable ADAPTER_WATCH_ENABLED = true
+#                                   (default off: set it after the Task 8 dry run); manual runs always work.
+#   Actions -> "Adapter watch"   -> manual: optional hash/version to narrow to, force a retest, dry run
+#   repository_dispatch wa-release -> an optional hook so a release is noticed sooner. The payload is NEVER
+#                                    trusted or even read: the run re-reads the servers' home pages itself.
+#
+# Two jobs, and the split is the security boundary. `gate` runs third-party code (selfcheck, live scenarios, Gradle)
+# with `contents: read` and NO secret and no write token (only its own read-only token, for public data); it only uploads verdicts/. `publish` holds the
+# write permissions, runs no gate code (npm ci --ignore-scripts, no Gradle) and treats the verdict artifact as
+# untrusted: it validates it, re-reads the servers, rebuilds the candidate adapter itself and re-decides.
+# Residual risk: a forged verdict can at worst flip pass/fail for a hash the server really announces right now.
+#
+# See docs/superpowers/specs/2026-11-10-downloadable-adapters-design.md section 3. Needs "Allow GitHub Actions to
+# create and approve pull requests" and no required status checks on main (the bot PR gets none).
+name: Adapter watch
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      hash:
+        description: "Only gate this api version hash (it must be what a server shows now)"
+        required: false
+        type: string
+      version:
+        description: "Only gate this server version (informational narrowing, e.g. v1.34.5)"
+        required: false
+        type: string
+      force:
+        description: "Retest hashes marked needs-attention even if nothing changed"
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: "Do everything except the PR, the merge and the issue writes"
+        required: false
+        type: boolean
+        default: false
+  repository_dispatch:
+    types: [wa-release]
+
+permissions:
+  contents: read         # per-job permissions below widen this for `publish` only
+
+# One run at a time, ever: two overlapping runs would gate the same hash twice and race on adapter/<hash>.
+concurrency:
+  group: adapter-watch
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # Scheduled and repository_dispatch runs only happen once the repository variable ADAPTER_WATCH_ENABLED is
+    # 'true' (the go-live switch, default off); a manual run is always allowed. Only main publishes (the
+    # orchestrator refuses too); a manual dry run may use any ref.
+    if: ${{ (github.event_name == 'workflow_dispatch' || vars.ADAPTER_WATCH_ENABLED == 'true') && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read     # nothing else: this job runs third-party code
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # No dependency caches in this job: it runs third-party code, and a cache it saved could be restored
+      # into a job with write access (cache poisoning).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm ci --ignore-scripts
+
+      # The Kotlin smoke builds wa-cli.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true   # neither read nor write: see above
+
+      - name: Gate
+        env:
+          # Manual-run inputs travel as environment variables and are validated in code; the repository_dispatch
+          # payload is not used at all.
+          # This job's own token is read-only (permissions: contents: read) and is only used to lift the 60/hour
+          # unauthenticated GitHub API limit when fetching the candidate's upstream proto (public data). It adds
+          # nothing to the R12 boundary: the job can write nothing, and the gate's child processes never get it
+          # (runChild strips it).
+          GITHUB_TOKEN: ${{ github.token }}
+          ADAPTER_WATCH_HASH: ${{ github.event_name == 'workflow_dispatch' && inputs.hash || '' }}
+          ADAPTER_WATCH_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+          ADAPTER_WATCH_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || '' }}
+        run: node scripts/watch/run.mjs --phase gate --verdict-dir verdicts
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adapter-verdicts
+          path: verdicts
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish:
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.result != 'cancelled' && (github.event_name == 'workflow_dispatch' || vars.ADAPTER_WATCH_ENABLED == 'true') && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write        # the catalog commit on adapter/<hash>
+      pull-requests: write   # open and merge that PR
+      issues: write          # the needs-attention issue
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # the token is handed to git only for the one fetch that needs it
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm ci --ignore-scripts
+
+      # No artifact (nothing was gated) is normal.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: adapter-verdicts
+          path: verdicts
+
+      - name: Publish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          ADAPTER_WATCH_HASH: ${{ github.event_name == 'workflow_dispatch' && inputs.hash || '' }}
+          ADAPTER_WATCH_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+          ADAPTER_WATCH_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || '' }}
+          ADAPTER_WATCH_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || '' }}
+        run: node scripts/watch/run.mjs --phase publish --verdict-dir verdicts

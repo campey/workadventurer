@@ -1,6 +1,6 @@
 import { waitFor } from "../port.mjs";
 
-// Re-tests the "When prod bumps" note in docs/field-notes.md: prod accepts
+// Re-tests the "When the watcher says needs attention" (manual bump) note in docs/field-notes.md: prod accepts
 // apiVersionHash 23c8eb8c and answers 05489a87 with errorScreen NEW_VERSION.
 const ACCEPTED = "23c8eb8c";
 const STALE = "05489a87";

@@ -43,7 +43,7 @@ The live side has been run (network reachable; live commands need
 
 **Probes are not the gate; the scenarios run live are.** A probe answers one
 question while we develop. The suite run with `WORLD=live` exercises the whole
-adapter, and that is what accepts a new adapter (#127).
+adapter, and that is what accepts a new adapter (the gate of the adapter watcher, #127; see `docs/field-notes.md`).
 
 The first job of the probes is to re-test what `docs/field-notes.md` already
 says, so scenarios hold only re-tested fact. A `contradicts` verdict means

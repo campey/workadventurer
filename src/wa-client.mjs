@@ -56,6 +56,9 @@ export class WorkAdventureClient extends EventEmitter {
     // Optional hash -> adapter lookup for catalog adapters, supplied by the outer layer
     // (wa-daemon); the core client never imports the catalog itself.
     this._cachedFor = opts.cachedFor ?? undefined;
+    // An already-built adapter from an explicit adapter file (--adapter-file), supplied by the
+    // outer layer like cachedFor; resolveAdapter ranks it above the probe but below a target override.
+    this._fileAdapter = opts.fileAdapter ?? undefined;
     // Driven-port seam: swap the network (recorders, fakes). Defaults are the real ones.
     this._fetch = opts.fetch ?? ((...a) => globalThis.fetch(...a));
     this._WebSocket = opts.WebSocketImpl ?? WebSocket;
@@ -273,6 +276,7 @@ export class WorkAdventureClient extends EventEmitter {
         roomUrl: this.cfg.roomUrl,
         override: this._target,
         cachedFor: this._cachedFor,
+        fileAdapter: this._fileAdapter,
       });
       this.adapter = adapter;
       this.emit("log", `${warn ? "⚠ " : ""}adapter ${adapter.id} (${why})`);

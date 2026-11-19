@@ -121,3 +121,11 @@ test("resolveConfig still reads a broken file leniently", () => {
   assert.equal(resolveConfig({}, file).adapterUpdates, "ask");
   fs.rmSync(dir, { recursive: true });
 });
+
+test("a config file holding JSON null, a number or an array is treated as no config", () => {
+  for (const body of ["null", "42", "[1,2]", '"text"']) {
+    const { file } = tmpConfig({});
+    fs.writeFileSync(file, body);
+    assert.equal(resolveConfig({}, file).adapterUpdates, "ask", body);
+  }
+});

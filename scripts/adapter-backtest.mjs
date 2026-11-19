@@ -21,6 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseQueryValidator } from "./lib/query-validator.mjs";
+import { readKotlinSources, kotlinUses } from "./proto-diff.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const argv = process.argv.slice(2);
@@ -66,18 +67,10 @@ async function get(ref, file) {
 let kotlinFiles = null;
 function androidMentions(items) {
   if (!kotlinFiles) {
-    const files = execFileSync("git", ["ls-files", "android/**/*.kt"], { cwd: root, encoding: "utf8" }).split("\n").filter(Boolean);
-    kotlinFiles = files.filter((f) => !/\/(test|androidTest)\//.test(f)).map((f) => fs.readFileSync(path.join(root, f), "utf8"));
+    kotlinFiles = readKotlinSources(root);
   }
-  const word = (t, n) => new RegExp(`\\b${n}\\b`).test(t);
-  const lc = (n) => n.charAt(0).toLowerCase() + n.slice(1);
   const hits = [];
-  for (const it of items) {
-    const ok = kotlinFiles.some((t) => (it.field
-      ? (word(t, it.msg) && (word(t, it.field) || word(t, lc(it.field))))
-      : (word(t, it.msg) || word(t, lc(it.msg)))));
-    if (ok) hits.push(it.field ? `${it.msg}.${it.field}` : it.msg);
-  }
+  for (const it of items) if (kotlinUses(kotlinFiles, it)) hits.push(it.field ? `${it.msg}.${it.field}` : it.msg);
   return hits;
 }
 
@@ -85,14 +78,17 @@ function protoDiff(prevFile, curFile) {
   const r = spawnSync("node", [path.join(root, "scripts/proto-diff.mjs"), prevFile, curFile], { cwd: root, encoding: "utf8" });
   const out = r.stdout || "";
   const wb = out.match(/== WIRE-BREAKING \((\d+)\)/);
-  const lines = out.split("\n").filter((l) => /^(REMOVED|CHANGED|RENUMBERED|RETYPED|MOVED)/.test(l));
-  const usedNode = lines.filter((l) => l.includes("[USED by src/]"));
+  // Used items carry "[USED by src/] " / "[USED by android/] " prefixes; strip them before matching the item text.
+  const rows = out.split("\n").map((raw) => ({ raw, l: raw.replace(/^(\[USED by [a-z]+\/\] )+/, "") }))
+    .filter(({ l }) => /^(REMOVED|CHANGED|RENUMBERED|RETYPED|MOVED|RENAMED)/.test(l));
+  const lines = rows.map((r) => r.l);
+  const usedNode = rows.filter((r) => r.raw.includes("[USED by src/]")).map((r) => r.l);
   const items = [];
   for (const l of lines) {
     const m = l.match(/^\w+ (?:field|message|enum value|enum)\s+([A-Za-z0-9_]+)(?:\.([A-Za-z0-9_]+))?/);
     if (m) items.push(m[2] ? { msg: m[1], field: m[2] } : { msg: m[1] });
   }
-  return { wireBreaking: wb ? Number(wb[1]) : 0, usedNode: usedNode.map((l) => l.replace(" [USED by src/]", "")), items, sample: lines };
+  return { wireBreaking: wb ? Number(wb[1]) : 0, usedNode, items, sample: lines };
 }
 
 const tags = listTags();

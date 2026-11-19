@@ -13,6 +13,7 @@ import { resolveConfig, configToEnv, explicitPort, writeConfigField } from "../s
 import { ADAPTERS, matchVersion } from "../src/adapters/index.mjs";
 import { recoverAdapter, refusalMessage, alwaysHandler } from "../src/catalog/recover.mjs";
 import { askYesNoAlways } from "../src/catalog/prompt.mjs";
+import { loadAdapterFile } from "../src/catalog/adapter-file.mjs";
 import { REFUSED_EXIT } from "../src/supervise.mjs";
 import { createRegistry, AmbiguousDaemonError } from "../src/daemon-registry.mjs";
 
@@ -22,7 +23,7 @@ const registry = createRegistry();
 
 const USAGE = `wa — WorkAdventure presence control
 
-  wa join [<room-url>] [--detach] [--keep-alive] [--name N] [--port P] [--stt [--transcript <file>]]
+  wa join [<room-url>] [--adapter-file <f>] [--detach] [--keep-alive] [--name N] [--port P] [--stt [--transcript <file>]]
                               --keep-alive restarts the daemon if it is killed (OOM, SIGKILL);
                               a failed first connect or a server refusal still exits
   wa leave
@@ -40,7 +41,7 @@ const USAGE = `wa — WorkAdventure presence control
   wa chat <text…>             send a chat message to whoever's currently nearby
                               (proximity bubble or meeting-room area — not Matrix)
   wa wait-emote [player]      block until a player emotes  [--emote <match>] [--timeout <ms>]
-  wa selfcheck                smoke-test a version target  [--target <id>] [--room <url>]
+  wa selfcheck                smoke-test a version target  [--target <id>] [--room <url>] [--adapter-file <f>]
 
   global: --json  --if-running (no-op if the daemon isn't up)  --port <P>
 `;
@@ -60,6 +61,7 @@ try {
     room: { type: "string" },
     name: { type: "string" },
     target: { type: "string" },
+    "adapter-file": { type: "string" }, // candidate adapter file (gate); wins over catalog and probe
     emote: { type: "string" },
     timeout: { type: "string" },
     run: { type: "boolean" },
@@ -85,7 +87,7 @@ if (!cmd || flags.help) {
 }
 
 // Resolved against the CLI's cwd: the daemon (often detached) runs elsewhere.
-const cfg = resolveConfig({ port: flags.port, roomUrl: flags.room, name: flags.name, stt: flags.stt, transcript: flags.transcript ? path.resolve(flags.transcript) : undefined });
+const cfg = resolveConfig({ port: flags.port, roomUrl: flags.room, name: flags.name, stt: flags.stt, transcript: flags.transcript ? path.resolve(flags.transcript) : undefined, adapterFile: flags["adapter-file"] });
 const die = (msg, code = 1) => { process.stderr.write(`wa: ${msg}\n`); process.exit(code); };
 if (flags.transcript && !cfg.stt) die("--transcript needs --stt (it records what the listener hears)", 2);
 const note = (msg) => { if (!flags.json) process.stderr.write(`wa: ${msg}\n`); };
@@ -211,12 +213,15 @@ async function needDaemon() {
 switch (cmd) {
   case "join": {
     const roomUrl = args[0];
+    if (cfg.adapterFile) {
+      try { loadAdapterFile(cfg.adapterFile, ADAPTERS); } catch (e) { die(e.message, 2); }
+    }
     if (await daemonReachable()) {
       note("already joined");
       process.exit(0);
     }
     // Unknown server hash? Offer the catalog's adapter before the daemon starts (#126).
-    if (!cfg.version && cfg.target === "auto") {
+    if (!cfg.version && cfg.target === "auto" && !cfg.adapterFile) {
       const outcome = await recoverAdapter({
         roomUrl: roomUrl ?? cfg.roomUrl, mode: cfg.adapterUpdates, ask: askYesNoAlways,
         onAlways: alwaysHandler(cfg, writeConfigField), timeoutMs: 3000, // pre-flight: a black-holed page must not stall every join
@@ -360,6 +365,7 @@ switch (cmd) {
     const scArgs = [];
     if (flags.target) scArgs.push("--target", flags.target);
     if (flags.room) scArgs.push("--room", flags.room);
+    if (flags["adapter-file"]) scArgs.push("--adapter-file", flags["adapter-file"]);
     const r = spawnSync(
       process.execPath,
       [new URL("../scripts/selfcheck.mjs", import.meta.url).pathname, ...scArgs],

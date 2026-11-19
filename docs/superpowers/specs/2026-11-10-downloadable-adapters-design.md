@@ -90,10 +90,14 @@ behaves as it does today.
   (dwell 1500 / linger 2500, no walk/run), so it ignores the behaviour numbers. This keeps a first download from
   changing how the app behaves. Applying them is a later change to the app, not to the catalog.
 - A **placeholder** is an index entry with `status: "needs-attention"`, no `file`, and `gate` holding the failure summary.
+  It also carries `server`, `version` (display form, `v1.34.5` / `master@<8 hex>`), `issue` (number or null), and `commit`
+  (a code fingerprint: sha1 over `main`'s root tree entries that can change gate behaviour (`bin`, `src`, `scripts`, `world-port`, `android`, `proto`, `package.json`, `package-lock.json`), so it changes when that code changes but not when the watcher publishes or docs change; the watcher re-tests when it differs). `gate` is a single sanitised,
+  200-character-capped string (`gateDetail`), not an object. `fetchIndex` keeps all of these and strips `file`/`sha256`;
+  `rebuildIndex` keeps placeholders verbatim until an adapter file for that hash appears and replaces them with an `ok` entry.
 - URL: `https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json` (my call; a client setting
   `WA_CATALOG_URL` / an app setting overrides it, which the gate and tests use).
 - Seeded with the hashes we already know and have verified (production v1.34.0, .1, .2, .4; staging `d2d82672`; v1.34.3 is left out because it was never seen live). Staging is already past its seed entry: the watcher's first run produces the current one.
-- **Staging entries are pruned**: the catalog keeps the newest five staging entries, because staging produces a new hash every few days and old ones are never asked for again. Production entries are kept forever. Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
+- **Staging entries should be pruned (NOT implemented yet, follow-up)**: the catalog keeps the newest five staging entries, because staging produces a new hash every few days and old ones are never asked for again. Production entries are kept forever. Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
 
 ### Handshake parameters
 
@@ -165,7 +169,7 @@ Steps of a run, **for each of production and staging**:
    against the protocol family in use, take the newest `ok` entry as the base for behaviour numbers.
 3. **Gate**, all must pass: (a) the proto diff has no wire change the clients use: `proto-diff` today scans only
    `src/`, so it must also scan `android/` and be run against both the proto family the Node client uses and the
-   wa-1.33 proto the Android app has built in (additive changes only); (b) the CLI
+   wa-1.33 proto the Android app has built in (additive changes only: a wire-breaking item fails only if Kotlin uses it, meaning the message name and the field name occur together in one `android/**/*.kt` file); (b) the CLI
    `selfcheck` against production with the candidate (join, move, bubble, area meeting); (c) the live scenario suite
    (`WORLD=live`) with the candidate; (d) a Kotlin smoke with the candidate's hash (`wa-cli`: join and walk to an area).
    For (b) to (d) the clients need to take a candidate from a file or flag without it being in the catalog:
@@ -191,8 +195,12 @@ Steps of a run, **for each of production and staging**:
    open issue, not one per hash** (my call): "Staging needs attention" is updated to name the newest failing hash and
    closed when a staging hash passes, because staging's hash churns and per-hash issues would flood. A hash already marked
    `needs-attention` is **not** re-tested every hour (it would put live avatars on production each time for the same
-   answer): it is re-run only on a manual run, or when `main` has changed since the placeholder recorded its commit,
+   answer): it is re-run only on a manual run, or when the repository's gate-relevant code (see the fingerprint above) has changed since the placeholder recorded its fingerprint,
    or when the server's version string changes (my call).
+   The workflow is two jobs (R12): `gate` runs the third-party gate steps with read-only permissions and no write token (a read-only token reaches only the gate-phase step, R16) and
+   uploads a verdict per server; `publish` (the only job with write permissions, running no gate code) treats the
+   verdict as untrusted data, re-reads the server, rebuilds the adapter itself and re-decides. Residual risk: a forged
+   verdict can at worst flip pass/fail for a hash the server really announces at that moment.
 7. A release that is not live yet (the hook case) is **not** gated: the gate needs production to accept the hash, and
    staging runs `master`, not the release. The hook only makes us notice sooner; the gate runs once production switches.
    Gating ahead of the switch against staging is a possible later extension (my call).

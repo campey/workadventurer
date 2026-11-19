@@ -189,3 +189,7 @@ OBSERVE_MINUTES=8 node world-port/probes/run.mjs observe-humans --world "afrolab
 ### Intermittent "same meeting" after an accepted invite (2026-10-12)
 
 The full live suite failed once on `An invitation is received, accepted and brings both avatars together` (`timed out waiting for meetingJoined` at the "same meeting" step), then the invites feature alone failed 1 of 4 runs. Likely cause: `LiveWorld.acceptInvite` walked to the sender in a straight line (`walkTo`), which can end against a wall so the proximity meeting never forms, and it ignored the result. It now paths with `navTo` like `moveTo` and throws if it doesn't arrive. After the change: invites feature 6 of 6 passes, full live suite 24 scenarios, 21 passed, 3 skipped, 0 failed (2m21s). The sample is small, so treat the cause as likely, not proven: if it recurs, the new error message names the reason.
+
+### Probe recordings and `WA_ADAPTER_FILE`
+
+`WA_ADAPTER_FILE` applies to probe recordings too (LiveWorld reads it), so a recording made with it set is not production behaviour.
