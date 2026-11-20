@@ -65,11 +65,13 @@ fun main(args: Array<String>): Unit = runBlocking<Unit> {
         )
         exitProcess(2)
     }
-    val cfg = RoomConfig(
-        name = name,
-        roomUrl = opt(args, "--room") ?: Wa133.DEFAULT_ROOM,
-        pusherUrl = opt(args, "--pusher") ?: Wa133.DEFAULT_PUSHER,
-        apiVersionHash = opt(args, "--api-version") ?: Wa133.API_VERSION_HASHES[0],
+    // A staging room gets the staging pusher and woka from forRoom (a prod woka id is refused there with "invalid
+    // character texture"); the explicit flags still override. For any other room this is the old prod default.
+    val room = opt(args, "--room")
+    val base = if (room != null) RoomConfig.forRoom(name, room) else RoomConfig(name = name)
+    val cfg = base.copy(
+        pusherUrl = opt(args, "--pusher") ?: base.pusherUrl,
+        apiVersionHash = opt(args, "--api-version") ?: base.apiVersionHash,
     )
     val seconds = opt(args, "--seconds")?.toInt() ?: 30
     val conn = PusherConnection(OkHttpClient(), cfg, cacheDir = File(System.getProperty("java.io.tmpdir"), "wa-cli-nav"))
