@@ -28,8 +28,8 @@ suspend fun anonymLogin(http: OkHttpClient, cfg: RoomConfig): Login = withContex
     }
 }
 
-fun wsUrl(cfg: RoomConfig, tabId: String): HttpUrl =
-    cfg.pusherUrl.toHttpUrl().newBuilder()
+fun wsUrl(cfg: RoomConfig, tabId: String): HttpUrl {
+    val b = cfg.pusherUrl.toHttpUrl().newBuilder()
         .encodedPath("/ws/room")
         .addQueryParameter("roomId", cfg.roomUrl)
         .addQueryParameter("characterTextureIds", cfg.wokaId)
@@ -40,4 +40,17 @@ fun wsUrl(cfg: RoomConfig, tabId: String): HttpUrl =
         .addQueryParameter("screenSharingState", "false")
         .addQueryParameter("chatID", "")
         .addQueryParameter("tabId", tabId)
-        .build()
+    // Adapter-supplied extras (same rules as Node `_wsUrl()`): never override a parameter set above, forbidden names
+    // dropped case-insensitively, `{tabId}` / `{uuid}` substituted per connection (each `{uuid}` gets its own value).
+    val base = b.build()
+    val sent = HashSet<String>((0 until base.querySize).map { base.queryParameterName(it) })
+    for ((name, value) in cfg.handshakeQuery) {
+        if (name in sent || name.lowercase() in HANDSHAKE_FORBIDDEN) continue
+        b.addQueryParameter(
+            name,
+            value.replace("{tabId}", tabId).replace(Regex("\\{uuid\\}")) { java.util.UUID.randomUUID().toString() },
+        )
+        sent.add(name)
+    }
+    return b.build()
+}

@@ -64,7 +64,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
-class JoinFailed(message: String) : Exception(message)
+open class JoinFailed(message: String) : Exception(message)
+
+/** The server refused our apiVersionHash (error screen code NEW_VERSION). The message is the server's text. */
+class NewVersionRefused(message: String) : JoinFailed(message)
 data class Closed(val code: Int, val reason: String)
 
 /**
@@ -408,8 +411,8 @@ open class PusherConnection(
         return PositionMessage(x = x, y = y, direction = state.myPose.value.facing.toDirection(), moving = moving)
     }
 
-    private fun fail(reason: String) {
-        if (!joined.isCompleted) joined.completeExceptionally(JoinFailed(reason))
+    private fun fail(reason: String, typed: JoinFailed = JoinFailed(reason)) {
+        if (!joined.isCompleted) joined.completeExceptionally(typed)
     }
 
     private val listener = object : WebSocketListener() {
@@ -511,7 +514,12 @@ open class PusherConnection(
         m.joinSpaceRequestMessage?.let { joinSpace(it.spaceName, it.propertiesToSync); return }
         m.leaveSpaceRequestMessage?.let { leaveSpace(it.spaceName); return }
         m.answerMessage?.let { pendingQueries.remove(it.id)?.complete(it); return }
-        m.errorScreenMessage?.let { fail("server error screen: ${it.title} / ${it.details}"); return }
+        m.errorScreenMessage?.let {
+            val text = "server error screen: ${it.title} / ${it.details}"
+            // Same rule as the Node client (isVersionRejection): key on the code, not the text.
+            fail(text, if (it.code == "NEW_VERSION") NewVersionRefused(text) else JoinFailed(text))
+            return
+        }
         if (m.invalidCharacterTextureMessage != null) { fail("invalid character texture"); return }
         if (m.tokenExpiredMessage != null) { fail("token expired"); return }
         m.errorMessage?.let { _log.tryEmit("errorMessage: ${it.message}") }
