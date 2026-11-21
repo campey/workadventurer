@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -60,6 +61,7 @@ fun JoinScreen(
     wokaPicks: Int = 0,
     onWoka: (roomUrl: String) -> Unit = {},
     onJoin: (name: String, room: String) -> Unit,
+    onSettings: () -> Unit = {},
 ) {
     var name by rememberSaveable { mutableStateOf(initialName) }
     var room by rememberSaveable { mutableStateOf(Wa133.DEFAULT_ROOM) }
@@ -67,7 +69,7 @@ fun JoinScreen(
     val focus = LocalFocusManager.current
     val urlFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    val joining = connection is Connection.Connecting
+    val joining = connection is Connection.Connecting || connection is Connection.NeedsConsent
 
     Column(Modifier.fillMaxSize()) {
         Column(
@@ -123,6 +125,7 @@ fun JoinScreen(
             description = if (joining) "Joining the world" else "Join the world as ${name.trim()}",
             enabled = canJoin(name, room, joining),
         )
+        TextButton(onClick = onSettings, modifier = Modifier.align(Alignment.CenterHorizontally).heightIn(min = 48.dp)) { Text("Settings") }
         Spacer(Modifier.padding(bottom = 12.dp))
     }
 }

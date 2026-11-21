@@ -13,12 +13,17 @@ import app.workadventurer.protocol.Group
 import app.workadventurer.protocol.Invite
 import app.workadventurer.protocol.InviteOutcome
 import app.workadventurer.protocol.JoinFailed
+import app.workadventurer.protocol.NewVersionRefused
+import app.workadventurer.protocol.catalog.AdapterAnswer
+import app.workadventurer.protocol.catalog.AdapterOffer
+import app.workadventurer.protocol.catalog.RecoverOutcome
 import app.workadventurer.protocol.Player
 import app.workadventurer.protocol.PusherConnection
 import app.workadventurer.protocol.RoomConfig
 import app.workadventurer.protocol.Texture
 import app.workadventurer.protocol.toFacing
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -42,6 +47,9 @@ sealed interface Command {
     data class WalkToArea(val areaKey: String) : Command // Area.id ?: Area.name
     data object StopMoving : Command
 
+    /** The answer to the "download an adapter?" question ([Connection.NeedsConsent]). Ignored when none is open. */
+    data class AnswerAdapter(val answer: AdapterAnswer) : Command
+
     /** Leave the bubble or meeting area we are in. The protocol has no such message, so this walks out of it. */
     data object LeaveConversation : Command
 
@@ -60,6 +68,9 @@ sealed interface Connection {
     data object Connected : Connection
     data class Reconnecting(val attempt: Int, val inMs: Long) : Connection
     data class Failed(val message: String) : Connection
+
+    /** The server refused our version and a downloadable adapter exists: waiting for the user's answer ([Command.AnswerAdapter]). */
+    data class NeedsConsent(val offer: AdapterOffer) : Connection
 }
 
 /** What the avatar is doing about movement right now. */
@@ -153,6 +164,8 @@ class WaSession(
     private val voiceHost: VoiceHost = { object : VoiceHandle { override fun setMuted(muted: Boolean) {}; override fun close() {} } },
     /** Why connections drop or fail (messages only: no ids, no uuids). Goes to logcat in the app. */
     private val log: (String) -> Unit = {},
+    /** Asked once per NEW_VERSION refusal for an adapter; null means no recovery (the refusal is just shown). */
+    private val recovery: AdapterRecovery? = null,
 ) {
     private val _state = MutableStateFlow(SessionState())
     val state: StateFlow<SessionState> = _state.asStateFlow()
@@ -164,6 +177,7 @@ class WaSession(
     private var moveJob: Job? = null
     private var moveSeq = 0
     private var voiceHandle: VoiceHandle? = null
+    private var consent: CompletableDeferred<AdapterAnswer>? = null
 
     /** Caller holds [lock]. The mic follows the mute choice on both the connection (announcements) and the voice (capture). */
     private fun applyMute(muted: Boolean) {
@@ -233,6 +247,7 @@ class WaSession(
                     if (live) applyMute(cmd.muted)
                 }
                 Command.StopMoving -> stopMovement()
+                is Command.AnswerAdapter -> consent?.complete(cmd.answer) // the first answer wins; later ones find it complete
                 is Command.InvitePlayer -> {
                     val c = conn
                     val p = c?.state?.players?.value?.get(cmd.userId)
@@ -257,6 +272,7 @@ class WaSession(
     private fun restart(): Int {
         generation++
         job?.cancel(); job = null
+        consent?.cancel(); consent = null
         conn?.close(); conn = null
         stopMovement()
         return generation
@@ -344,17 +360,72 @@ class WaSession(
         if (gen != generation) false else { conn = c; true }
     }
 
-    private suspend fun run(cfg: RoomConfig, gen: Int) {
+    private fun isCurrent(gen: Int) = synchronized(lock) { gen == generation }
+
+    /** The consent question as state: [Connection.NeedsConsent] until [Command.AnswerAdapter] (or a Leave/Join) ends it. */
+    private suspend fun askConsent(gen: Int, offer: AdapterOffer): AdapterAnswer {
+        val d = CompletableDeferred<AdapterAnswer>()
+        val open = synchronized(lock) {
+            if (gen != generation) false else { consent = d; _state.update { it.copy(connection = Connection.NeedsConsent(offer)) }; true }
+        }
+        if (!open) return AdapterAnswer.NO
+        try {
+            return d.await()
+        } finally {
+            synchronized(lock) {
+                if (consent === d) consent = null
+                if (gen == generation && _state.value.connection is Connection.NeedsConsent) _state.update { it.copy(connection = Connection.Connecting) }
+            }
+        }
+    }
+
+    private sealed interface Recovered {
+        data class Retry(val cfg: RoomConfig) : Recovered
+        data class Fail(val message: String) : Recovered
+        data object Superseded : Recovered
+    }
+
+    /** One recovery for one refusal: ask the port, turn its outcome into a config to retry with or a message to show. */
+    private suspend fun recoverFor(cfg: RoomConfig, original: String, gen: Int): Recovered {
+        val port = recovery ?: return Recovered.Fail(original)
+        val outcome = try {
+            port.recover(cfg.roomUrl) { offer -> askConsent(gen, offer) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log("adapter recovery failed: ${e.javaClass.simpleName}")
+            RecoverOutcome.Unavailable("recovery failed")
+        }
+        if (!isCurrent(gen)) return Recovered.Superseded // a Leave/Join happened meanwhile: never connect with this config
+        log("adapter recovery: ${outcome.javaClass.simpleName}")
+        val next = when (outcome) {
+            is RecoverOutcome.Applied -> cfg.copy(apiVersionHash = outcome.hash, handshakeQuery = outcome.handshakeQuery)
+            is RecoverOutcome.Known -> cfg.copy(apiVersionHash = outcome.hash, handshakeQuery = outcome.handshakeQuery)
+            else -> null
+        }
+        // A Known that changes nothing (a built-in hash the server refused anyway) would only repeat the refusal.
+        if (next != null && next != cfg) return Recovered.Retry(next)
+        return Recovered.Fail(recoveryFailureMessage(outcome, original))
+    }
+
+    private suspend fun run(initial: RoomConfig, gen: Int) {
+        var cfg = initial
         var attempt = 0
         var everConnected = false
+        // Recovery runs at most once per stretch without a successful connect: a refusal that persists with the adapted
+        // config is shown (the original message), never retried through recovery again.
+        var recoveryTried = false
+        var firstRefusal: String? = null
         while (true) {
             val c = factory(cfg)
             if (!adopt(gen, c)) { c.close(); return }
             var upAt = -1L
             var voice: VoiceHandle? = null
+            var refusal: NewVersionRefused? = null
             try {
                 c.connect()
                 everConnected = true
+                recoveryTried = false; firstRefusal = null
                 upAt = nowMs()
                 setState(gen) { it.copy(connection = Connection.Connected, areas = c.state.areas) }
                 voice = try { voiceHost(c) } catch (e: Exception) { null } // voice must never take presence down with it
@@ -370,6 +441,15 @@ class WaSession(
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: NewVersionRefused) {
+                if (!recoveryTried) {
+                    refusal = e // handled below, once this connection is closed
+                } else if (!everConnected) {
+                    setState(gen) { it.copy(connection = Connection.Failed(firstRefusal ?: e.message ?: "join failed")) }
+                    return
+                } else {
+                    log("version refused again after recovery, retrying: ${e.message}")
+                }
             } catch (e: JoinFailed) {
                 if (!everConnected) {
                     setState(gen) { it.copy(connection = Connection.Failed(e.message ?: "join failed")) }
@@ -386,6 +466,23 @@ class WaSession(
                 try { voice?.close() } catch (e: Exception) { /* never let voice cleanup break the reconnect loop */ }
                 c.close()
                 c.state.clear()
+            }
+            val r = refusal
+            if (r != null) {
+                recoveryTried = true
+                val original = r.message ?: "join failed"
+                firstRefusal = original
+                when (val rec = recoverFor(cfg, original, gen)) {
+                    is Recovered.Retry -> { cfg = rec.cfg; continue }
+                    Recovered.Superseded -> return
+                    is Recovered.Fail -> {
+                        if (!everConnected) {
+                            setState(gen) { it.copy(connection = Connection.Failed(rec.message)) }
+                            return
+                        }
+                        log("version refused after an earlier success and no adapter applied, retrying: ${rec.message}")
+                    }
+                }
             }
             if (upAt >= 0 && nowMs() - upAt >= stableAfterMs) attempt = 0
             attempt++

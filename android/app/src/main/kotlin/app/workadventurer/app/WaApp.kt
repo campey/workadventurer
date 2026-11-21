@@ -108,6 +108,19 @@ class WaApp : Application() {
         )
     }
 
+    /** Whether a newer server's adapter may be downloaded: ask (default), automatically, or never. */
+    val adapterUpdates by lazy { AdapterUpdatesSetting(PrefsStore(this)) }
+
+    /** Adapters downloaded for server versions this build predates; private to the app, a corrupt file is ignored and overwritten. */
+    private val adapterRecovery by lazy {
+        app.workadventurer.app.session.CatalogAdapterRecovery(
+            settings = adapterUpdates,
+            store = app.workadventurer.protocol.catalog.FileAdapterStore(File(filesDir, "adapters")),
+            client = http,
+            indexUrl = BuildConfig.CATALOG_URL,
+        )
+    }
+
     val session: WaSession by lazy {
         val s = WaSession(
             scope = appScope,
@@ -121,6 +134,7 @@ class WaApp : Application() {
             },
             voiceHost = MeshVoiceHost(this, callLog, audioRouter, netHub),
             log = { callLog.i("WaSession", it) },
+            recovery = adapterRecovery,
         )
         // Our own picture arrives in the room-joined message; keep it for the Join screen's preview.
         appScope.launch {

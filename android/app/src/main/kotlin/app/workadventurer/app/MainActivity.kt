@@ -23,6 +23,7 @@ import app.workadventurer.protocol.Texture
 class MainActivity : ComponentActivity() {
     private val notice = mutableStateOf<String?>(null)
     private val micWanted = mutableStateOf(false)
+    private val adapterUpdates = mutableStateOf(app.workadventurer.protocol.catalog.AdapterUpdates.ASK)
     private var pendingJoin: Pair<String, String>? = null
     private val prefs by lazy { PrefsStore(this) }
     private val lastName by lazy { LastName(prefs) }
@@ -42,6 +43,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         micWanted.value = lastMic.isOn()
+        adapterUpdates.value = (application as WaApp).adapterUpdates.updates
         val session = (application as WaApp).session
         setContent {
             WorkAdventurerTheme {
@@ -75,6 +77,8 @@ class MainActivity : ComponentActivity() {
                     // While the sheet is open the call links are read every second; opening also refreshes straight away.
                     onNetworkWatching = { open -> netHub.wanted = open; if (open) netHub.tick() },
                     onNetworkReset = netHub::resetAllTime,
+                    adapterUpdates = adapterUpdates.value,
+                    onAdapterUpdates = { m -> (application as WaApp).adapterUpdates.updates = m; adapterUpdates.value = m },
                     // Movement goes straight to the session; only Join/Leave go through the foreground service.
                     onCommand = { session.dispatch(it) },
                 )
@@ -89,7 +93,8 @@ class MainActivity : ComponentActivity() {
         (application as WaApp).session.let { s ->
             if (s.state.value.connection !is app.workadventurer.app.session.Connection.Disconnected &&
                 s.state.value.connection !is app.workadventurer.app.session.Connection.Failed &&
-                s.state.value.connection !is app.workadventurer.app.session.Connection.Connecting
+                s.state.value.connection !is app.workadventurer.app.session.Connection.Connecting &&
+                s.state.value.connection !is app.workadventurer.app.session.Connection.NeedsConsent
             ) s.dispatch(Command.SetMuted(muted))
         }
     }

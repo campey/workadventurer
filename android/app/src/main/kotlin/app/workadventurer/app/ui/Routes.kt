@@ -59,5 +59,5 @@ fun parseRoute(path: String): Route? {
  */
 fun routeFor(connection: Connection): Route = when (connection) {
     Connection.Connected, is Connection.Reconnecting -> Route.Users
-    Connection.Disconnected, Connection.Connecting, is Connection.Failed -> Route.Join
+    Connection.Disconnected, Connection.Connecting, is Connection.NeedsConsent, is Connection.Failed -> Route.Join
 }

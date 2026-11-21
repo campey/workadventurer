@@ -30,6 +30,7 @@ class CallLog(
             Connection.Connecting -> { files.start(roomUrl, header(roomUrl)); i(TAG, "connecting") }
             Connection.Connected -> i(TAG, "connected")
             is Connection.Reconnecting -> i(TAG, "reconnecting (attempt ${connection.attempt}, in ${connection.inMs} ms)")
+            is Connection.NeedsConsent -> i(TAG, "waiting for the answer to an adapter download")
             is Connection.Failed -> { i(TAG, "failed: ${connection.message}"); files.end() }
             Connection.Disconnected -> {
                 if (files.isOpen) { i(TAG, "disconnected"); files.end() } else logcat(TAG, "disconnected")
