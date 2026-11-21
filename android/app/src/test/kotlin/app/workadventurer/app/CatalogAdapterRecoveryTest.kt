@@ -34,6 +34,8 @@ class CatalogAdapterRecoveryTest {
         kv.put("adapter_updates", "AUTO "); assertEquals(AdapterUpdates.ASK, s.updates)
         s.updates = AdapterUpdates.AUTO; assertEquals(AdapterUpdates.AUTO, s.updates)
         s.updates = AdapterUpdates.NEVER; assertEquals(AdapterUpdates.NEVER, s.updates)
+        assertEquals(AdapterUpdates.NEVER, s.flow.value)
+        assertEquals(AdapterUpdates.NEVER, AdapterUpdatesSetting(kv).updates) // persisted
     }
 
     @Test
@@ -49,6 +51,7 @@ class CatalogAdapterRecoveryTest {
             RecoverOutcome.Declined("deadbeef")
         }
         r.recover("https://x/") { AdapterAnswer.ALWAYS }
+        assertEquals(AdapterUpdates.AUTO, settings.flow.value) // the Settings sheet follows this
         assertEquals(AdapterUpdates.ASK, seenMode)
         assertEquals(AdapterUpdates.AUTO, settings.updates)
         assertNotEquals(callerThread, seenThread, "recovery must not run on the caller's thread")
@@ -66,6 +69,5 @@ class CatalogAdapterRecoveryTest {
         r.recover("https://x/") { AdapterAnswer.YES }
         r.recover("https://x/") { AdapterAnswer.NO }
         assertEquals(AdapterUpdates.ASK, settings.updates)
-        assertTrue(true)
     }
 }

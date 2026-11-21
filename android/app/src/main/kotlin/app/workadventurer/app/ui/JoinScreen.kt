@@ -125,7 +125,7 @@ fun JoinScreen(
             description = if (joining) "Joining the world" else "Join the world as ${name.trim()}",
             enabled = canJoin(name, room, joining),
         )
-        TextButton(onClick = onSettings, modifier = Modifier.align(Alignment.CenterHorizontally).heightIn(min = 48.dp)) { Text("Settings") }
+        TextButton(onClick = onSettings, enabled = !joining, modifier = Modifier.align(Alignment.CenterHorizontally).heightIn(min = 48.dp)) { Text("Settings") }
         Spacer(Modifier.padding(bottom = 12.dp))
     }
 }

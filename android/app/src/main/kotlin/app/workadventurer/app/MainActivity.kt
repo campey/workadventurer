@@ -23,7 +23,6 @@ import app.workadventurer.protocol.Texture
 class MainActivity : ComponentActivity() {
     private val notice = mutableStateOf<String?>(null)
     private val micWanted = mutableStateOf(false)
-    private val adapterUpdates = mutableStateOf(app.workadventurer.protocol.catalog.AdapterUpdates.ASK)
     private var pendingJoin: Pair<String, String>? = null
     private val prefs by lazy { PrefsStore(this) }
     private val lastName by lazy { LastName(prefs) }
@@ -43,7 +42,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         micWanted.value = lastMic.isOn()
-        adapterUpdates.value = (application as WaApp).adapterUpdates.updates
         val session = (application as WaApp).session
         setContent {
             WorkAdventurerTheme {
@@ -51,6 +49,7 @@ class MainActivity : ComponentActivity() {
                 val audioRouter = (application as WaApp).audioRouter
                 val audio by audioRouter.route.collectAsStateWithLifecycle()
                 val netHub = (application as WaApp).netHub
+                val adapterUpdates by (application as WaApp).adapterUpdates.flow.collectAsStateWithLifecycle()
                 val net by netHub.snapshot.collectAsStateWithLifecycle()
                 AppRoot(
                     state = state,
@@ -77,8 +76,8 @@ class MainActivity : ComponentActivity() {
                     // While the sheet is open the call links are read every second; opening also refreshes straight away.
                     onNetworkWatching = { open -> netHub.wanted = open; if (open) netHub.tick() },
                     onNetworkReset = netHub::resetAllTime,
-                    adapterUpdates = adapterUpdates.value,
-                    onAdapterUpdates = { m -> (application as WaApp).adapterUpdates.updates = m; adapterUpdates.value = m },
+                    adapterUpdates = adapterUpdates,
+                    onAdapterUpdates = { m -> (application as WaApp).adapterUpdates.updates = m },
                     // Movement goes straight to the session; only Join/Leave go through the foreground service.
                     onCommand = { session.dispatch(it) },
                 )

@@ -82,3 +82,6 @@ fun consentMessage(offer: AdapterOffer): String {
     return "This server runs $which of WorkAdventure, which this app doesn't know yet. " +
         "Download a small compatibility update from the app's public catalog? Only the version it speaks is changed."
 }
+
+/** A Connecting that follows the consent question is the same join carrying on, not a new call: logs and traffic totals must not restart. */
+fun startsNewCall(previous: Connection?, now: Connection): Boolean = now == Connection.Connecting && previous !is Connection.NeedsConsent

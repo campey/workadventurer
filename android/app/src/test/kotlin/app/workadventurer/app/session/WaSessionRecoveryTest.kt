@@ -217,24 +217,58 @@ class WaSessionRecoveryTest {
         assertEquals("u", s.state.value.myName)
     }
 
-    @Test
-    fun refusalAfterAnEarlierSuccessRecoversOnceAndThenRetriesWithBackoff() = runTest {
+    private fun TestScope.afterSuccess(rec: AdapterRecovery, configs: MutableList<RoomConfig>): WaSession {
         var n = 0
-        val configs = mutableListOf<RoomConfig>()
-        val rec = FakeRecovery(RecoverOutcome.Applied("deadbeef", emptyMap(), "v9"))
-        val s = WaSession(backgroundScope, { c ->
+        return WaSession(backgroundScope, { c ->
             configs += c
             val i = n++
-            Conn(c) {
-                if (i == 0) fakeClosed.complete(Closed(1006, "x")) else throw NewVersionRefused("server says: refresh")
-            }
+            Conn(c) { if (i == 0) fakeClosed.complete(Closed(1006, "x")) else throw NewVersionRefused("server says: refresh") }
         }, recovery = rec)
+    }
+
+    @Test
+    fun refusalAfterAnEarlierSuccessRecoversOnceThenFailsWithTheOriginalRefusal() = runTest {
+        val configs = mutableListOf<RoomConfig>()
+        val rec = FakeRecovery(RecoverOutcome.Applied("deadbeef", emptyMap(), "v9"))
+        val s = afterSuccess(rec, configs)
         s.dispatch(Command.Join(cfg)); runCurrent()
-        advanceTimeBy(30_000); runCurrent()
-        assertEquals(1, rec.calls) // refused again with the adapted config: no second recovery
-        assertTrue(configs.size >= 3)
+        advanceTimeBy(60_000); runCurrent()
+        assertEquals(Connection.Failed("server says: refresh"), s.state.value.connection)
+        assertEquals(1, rec.calls)
+        assertEquals(3, configs.size) // connected, refused, refused with the adapted config: then it stops
         assertEquals("deadbeef", configs[2].apiVersionHash)
-        assertTrue(s.state.value.connection is Connection.Reconnecting || s.state.value.connection is Connection.Connecting)
+    }
+
+    @Test
+    fun refusalAfterAnEarlierSuccessThatRecoveryCannotFixFailsWithItsMessage() = runTest {
+        val configs = mutableListOf<RoomConfig>()
+        val rec = FakeRecovery(RecoverOutcome.NoEntry("deadbeef"))
+        val s = afterSuccess(rec, configs)
+        s.dispatch(Command.Join(cfg)); runCurrent()
+        advanceTimeBy(60_000); runCurrent()
+        assertTrue("no adapter" in assertIs<Connection.Failed>(s.state.value.connection).message)
+        assertEquals(1, rec.calls)
+        assertEquals(2, configs.size)
+    }
+
+    @Test
+    fun answeringTheDialogRestoresThePreAskStateAtOnce() = runTest {
+        val world = World(acceptHash = "deadbeef")
+        val rec = FakeRecovery(RecoverOutcome.Applied("deadbeef", emptyMap(), "v9"), asks = true)
+        val s = session(world, rec)
+        s.dispatch(Command.Join(cfg)); runCurrent()
+        assertIs<Connection.NeedsConsent>(s.state.value.connection)
+        s.dispatch(Command.AnswerAdapter(AdapterAnswer.YES))
+        assertEquals(Connection.Connecting, s.state.value.connection) // before the run even resumes
+    }
+
+    @Test
+    fun startsNewCallIgnoresTheTransitionOutOfNeedsConsent() {
+        val ask = Connection.NeedsConsent(AdapterOffer("deadbeef", null))
+        assertTrue(!startsNewCall(ask, Connection.Connecting))
+        assertTrue(startsNewCall(null, Connection.Connecting))
+        assertTrue(startsNewCall(Connection.Failed("x"), Connection.Connecting))
+        assertTrue(startsNewCall(Connection.Disconnected, Connection.Connecting))
     }
 
     @Test

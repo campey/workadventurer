@@ -178,6 +178,7 @@ class WaSession(
     private var moveSeq = 0
     private var voiceHandle: VoiceHandle? = null
     private var consent: CompletableDeferred<AdapterAnswer>? = null
+    private var consentBefore: Connection = Connection.Connecting // the state to go back to once the question is answered
 
     /** Caller holds [lock]. The mic follows the mute choice on both the connection (announcements) and the voice (capture). */
     private fun applyMute(muted: Boolean) {
@@ -247,7 +248,10 @@ class WaSession(
                     if (live) applyMute(cmd.muted)
                 }
                 Command.StopMoving -> stopMovement()
-                is Command.AnswerAdapter -> consent?.complete(cmd.answer) // the first answer wins; later ones find it complete
+                is Command.AnswerAdapter -> consent?.let { d ->
+                    // The first answer wins; the dialog goes away now, back to the state we were in (never a fresh Connecting).
+                    if (d.complete(cmd.answer) && _state.value.connection is Connection.NeedsConsent) _state.update { it.copy(connection = consentBefore) }
+                }
                 is Command.InvitePlayer -> {
                     val c = conn
                     val p = c?.state?.players?.value?.get(cmd.userId)
@@ -366,7 +370,7 @@ class WaSession(
     private suspend fun askConsent(gen: Int, offer: AdapterOffer): AdapterAnswer {
         val d = CompletableDeferred<AdapterAnswer>()
         val open = synchronized(lock) {
-            if (gen != generation) false else { consent = d; _state.update { it.copy(connection = Connection.NeedsConsent(offer)) }; true }
+            if (gen != generation) false else { consent = d; consentBefore = _state.value.connection; _state.update { it.copy(connection = Connection.NeedsConsent(offer)) }; true }
         }
         if (!open) return AdapterAnswer.NO
         try {
@@ -374,7 +378,7 @@ class WaSession(
         } finally {
             synchronized(lock) {
                 if (consent === d) consent = null
-                if (gen == generation && _state.value.connection is Connection.NeedsConsent) _state.update { it.copy(connection = Connection.Connecting) }
+                if (gen == generation && _state.value.connection is Connection.NeedsConsent) _state.update { it.copy(connection = consentBefore) }
             }
         }
     }
@@ -444,11 +448,10 @@ class WaSession(
             } catch (e: NewVersionRefused) {
                 if (!recoveryTried) {
                     refusal = e // handled below, once this connection is closed
-                } else if (!everConnected) {
+                } else {
+                    // Refused again with the adapted config: show the original refusal, never loop (also after an earlier success).
                     setState(gen) { it.copy(connection = Connection.Failed(firstRefusal ?: e.message ?: "join failed")) }
                     return
-                } else {
-                    log("version refused again after recovery, retrying: ${e.message}")
                 }
             } catch (e: JoinFailed) {
                 if (!everConnected) {
@@ -476,11 +479,8 @@ class WaSession(
                     is Recovered.Retry -> { cfg = rec.cfg; continue }
                     Recovered.Superseded -> return
                     is Recovered.Fail -> {
-                        if (!everConnected) {
-                            setState(gen) { it.copy(connection = Connection.Failed(rec.message)) }
-                            return
-                        }
-                        log("version refused after an earlier success and no adapter applied, retrying: ${rec.message}")
+                        setState(gen) { it.copy(connection = Connection.Failed(rec.message)) }
+                        return
                     }
                 }
             }
