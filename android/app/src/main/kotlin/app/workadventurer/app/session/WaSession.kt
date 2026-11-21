@@ -401,7 +401,8 @@ class WaSession(
             RecoverOutcome.Unavailable("recovery failed")
         }
         if (!isCurrent(gen)) return Recovered.Superseded // a Leave/Join happened meanwhile: never connect with this config
-        log("adapter recovery: ${outcome.javaClass.simpleName}")
+        // The Unavailable reason is already sanitised and capped by the library; it says why a check failed (timeout, redirect, no meta tag, bad sha256...).
+        log("adapter recovery: ${outcome.javaClass.simpleName}" + ((outcome as? RecoverOutcome.Unavailable)?.let { ": ${it.reason}" } ?: ""))
         val next = when (outcome) {
             is RecoverOutcome.Applied -> cfg.copy(apiVersionHash = outcome.hash, handshakeQuery = outcome.handshakeQuery)
             is RecoverOutcome.Known -> cfg.copy(apiVersionHash = outcome.hash, handshakeQuery = outcome.handshakeQuery)

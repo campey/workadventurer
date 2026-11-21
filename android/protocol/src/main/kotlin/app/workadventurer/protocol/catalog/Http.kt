@@ -18,7 +18,7 @@ internal sealed class Got {
     class Fail(val reason: String) : Got()
 }
 
-private fun failure(e: Exception): Got.Fail {
+private fun failure(e: Throwable): Got.Fail {
     if (e is InterruptedIOException && e !is SocketTimeoutException && e.message == "interrupted") {
         Thread.currentThread().interrupt()
         return Got.Fail("interrupted")
@@ -68,7 +68,7 @@ internal suspend fun getCapped(client: OkHttpClient, url: String, timeoutMs: Lon
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { cont.resume(failure(e)) }
             override fun onResponse(call: Call, response: Response) {
-                val got = try { response.use { readBody(it, req.url, maxBytes, truncate) } } catch (e: Exception) { failure(e) }
+                val got = try { response.use { readBody(it, req.url, maxBytes, truncate) } } catch (e: Throwable) { failure(e) }
                 cont.resume(got)
             }
         })
