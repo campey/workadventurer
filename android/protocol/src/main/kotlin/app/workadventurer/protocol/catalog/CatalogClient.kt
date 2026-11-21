@@ -27,16 +27,16 @@ object CatalogClient {
     const val MAX_INDEX_BYTES = 1024L * 1024
     const val MAX_FILE_BYTES = 64L * 1024
     const val DEFAULT_TIMEOUT_MS = 8000L
+    private val FILE_RE = Regex("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
     private val SHA256_RE = Regex("^[0-9a-f]{64}$")
 
-    fun fetchIndex(client: OkHttpClient, url: String = DEFAULT_CATALOG_URL, timeoutMs: Long = DEFAULT_TIMEOUT_MS): Fetched<CatalogIndex> {
+    suspend fun fetchIndex(client: OkHttpClient, url: String = DEFAULT_CATALOG_URL, timeoutMs: Long = DEFAULT_TIMEOUT_MS): Fetched<CatalogIndex> {
         val got = getCapped(client, url, timeoutMs, MAX_INDEX_BYTES)
         if (got is Got.Fail) return Fetched.Fail("index: ${got.reason}")
         val parsed = parseJsonBytes((got as Got.Bytes).bytes)
         if (parsed !is Parsed.Value) return Fetched.Fail("index: not valid JSON")
         val raw = parsed.json as? JsonObject
-        val schema = raw?.get("schema") as? JsonPrimitive
-        if (raw == null || schema == null || schema.isString || schema.content.toDoubleOrNull() != 1.0) {
+        if (raw == null || !isOne(raw["schema"])) {
             return Fetched.Fail("index: schema must be 1")
         }
         val rawEntries = raw["entries"] as? JsonObject ?: return Fetched.Fail("index: entries must be an object")
@@ -59,7 +59,7 @@ object CatalogClient {
     private fun sameOrigin(a: HttpUrl, b: HttpUrl) = a.scheme == b.scheme && a.host == b.host && a.port == b.port
 
     /** Fetch and fully verify one adapter file; returns the validated file and its raw text (for the cache). */
-    fun fetchAdapterFile(
+    suspend fun fetchAdapterFile(
         client: OkHttpClient, indexUrl: String, hash: String, entry: IndexEntry.Ok, timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     ): Fetched<Pair<AdapterFile, String>> {
         val fileUrl: HttpUrl = try {
@@ -68,6 +68,10 @@ object CatalogClient {
             if (!sameOrigin(base, resolved)) return Fetched.Fail("file URL is not on the index's origin (${resolved.scheme}://${resolved.host}:${resolved.port})")
             val dir = base.encodedPath.substring(0, base.encodedPath.lastIndexOf('/') + 1)
             if (!resolved.encodedPath.startsWith(dir)) return Fetched.Fail("file URL is outside the index's directory")
+            if (!FILE_RE.matches(entry.file) || entry.file.split('/').any { it == ".." || it == "." }) return Fetched.Fail("file path is not allowed")
+            if (resolved.username.isNotEmpty() || resolved.password.isNotEmpty() || resolved.query != null || resolved.fragment != null) {
+                return Fetched.Fail("file URL must be a plain path")
+            }
             resolved
         } catch (e: Exception) {
             return Fetched.Fail("file URL is invalid")

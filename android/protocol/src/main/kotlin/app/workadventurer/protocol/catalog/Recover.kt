@@ -2,6 +2,9 @@ package app.workadventurer.protocol.catalog
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -14,6 +17,7 @@ enum class AdapterAnswer { YES, NO, ALWAYS }
 data class AdapterOffer(val hash: String, val release: String?)
 
 sealed class RecoverOutcome {
+    /** [reason] is sanitised (no control/format characters, capped). */
     data class Unavailable(val reason: String) : RecoverOutcome()
     /** A built-in adapter or a loadable cached file covers this hash; [handshakeQuery] is the cached file's (empty for built-ins). */
     data class Known(val hash: String, val handshakeQuery: Map<String, String> = emptyMap()) : RecoverOutcome()
@@ -24,24 +28,22 @@ sealed class RecoverOutcome {
     data class Applied(val hash: String, val handshakeQuery: Map<String, String>, val waVersion: String) : RecoverOutcome()
 }
 
-private const val MAX_DETAIL = 200
-
-/** One line out of a needs-attention placeholder's `gate`: control characters become spaces, length capped. */
+/** One line out of a needs-attention placeholder's `gate` (a string or an object summary), sanitised and capped. */
 fun gateDetail(gate: JsonElement?): String? {
     if (gate == null || gate.toString() == "null") return null
-    val raw = if (gate is JsonPrimitive && gate.isString) gate.content else gate.toString()
-    val text = raw.map { if (it.code <= 0x1f || it.code in 0x7f..0x9f) ' ' else it }.joinToString("")
-    if (text.length <= MAX_DETAIL) return text
-    var end = MAX_DETAIL
-    if (text[end - 1].isHighSurrogate()) end--
-    return text.substring(0, end) + "…"
+    return sanitizeText(if (gate is JsonPrimitive && gate.isString) gate.content else gate.toString())
 }
+
+private fun unavailable(reason: String) = RecoverOutcome.Unavailable(sanitizeText(reason))
 
 /**
  * Recover an adapter for a server hash nothing built in knows: read the server's hash, look it up in
  * the catalog and (with consent) download, verify and cache the adapter file. Never throws (except
- * coroutine cancellation) and never hangs: any failure to read the page or the catalog is [RecoverOutcome.Unavailable].
+ * coroutine cancellation, which also cancels the in-flight HTTP call and stops before any download or
+ * cache write) and never hangs: any failure to read the page or the catalog is [RecoverOutcome.Unavailable].
  * Android applies any `ok` entry, but only its hash and handshake query.
+ *
+ * [ask] runs on the caller's dispatcher (it may show UI); only exact YES / ALWAYS is consent.
  */
 suspend fun recoverAdapter(
     roomUrl: String,
@@ -54,45 +56,60 @@ suspend fun recoverAdapter(
     indexUrl: String = DEFAULT_CATALOG_URL,
     timeoutMs: Long = CatalogClient.DEFAULT_TIMEOUT_MS,
 ): RecoverOutcome = try {
-    withContext(Dispatchers.IO) {
-        val version = ServerVersionReader.read(client, roomUrl, timeoutMs)
-        val hash = version?.hash ?: return@withContext RecoverOutcome.Unavailable("could not read the server's version hash")
-        if (hash in builtinHashes) return@withContext RecoverOutcome.Known(hash)
-        store.load(hash)?.let { return@withContext RecoverOutcome.Known(hash, it.handshakeQuery) }
-
-        val idx = when (val r = CatalogClient.fetchIndex(client, indexUrl, timeoutMs)) {
-            is Fetched.Fail -> return@withContext RecoverOutcome.Unavailable(r.reason)
-            is Fetched.Ok -> r.value
-        }
-        val entry = idx.entries[hash] ?: return@withContext RecoverOutcome.NoEntry(hash)
-        if (entry is IndexEntry.NeedsAttention) return@withContext RecoverOutcome.NeedsAttention(hash, gateDetail(entry.gate))
-        entry as IndexEntry.Ok
-        if (mode == AdapterUpdates.NEVER) return@withContext RecoverOutcome.Never(hash)
-
-        if (mode == AdapterUpdates.ASK) {
-            // Fail closed: only an exact YES or ALWAYS is consent; an ask that throws is a no.
-            val answer = try {
-                ask(AdapterOffer(hash, version.release))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                null
-            }
-            if (answer != AdapterAnswer.YES && answer != AdapterAnswer.ALWAYS) return@withContext RecoverOutcome.Declined(hash)
-            if (answer == AdapterAnswer.ALWAYS) {
-                try { onAlways() } catch (e: Exception) { /* could not remember the choice; still applies once */ }
-            }
-        }
-
-        val (file, text) = when (val r = CatalogClient.fetchAdapterFile(client, idx.url, hash, entry, timeoutMs)) {
-            is Fetched.Fail -> return@withContext RecoverOutcome.Unavailable(r.reason)
-            is Fetched.Ok -> r.value
-        }
-        store.save(hash, text)
-        RecoverOutcome.Applied(hash, file.handshakeQuery, file.waVersion)
+    val version = ServerVersionReader.read(client, roomUrl, timeoutMs)
+    val hash = version?.hash
+    if (hash == null) {
+        unavailable("could not read the server's version hash")
+    } else if (hash in builtinHashes) {
+        RecoverOutcome.Known(hash)
+    } else {
+        val cached = withContext(Dispatchers.IO) { store.load(hash) }
+        if (cached != null) RecoverOutcome.Known(hash, cached.handshakeQuery) else recoverFromCatalog(
+            hash, version.release, mode, ask, onAlways, store, client, indexUrl, timeoutMs,
+        )
     }
 } catch (e: CancellationException) {
     throw e
 } catch (e: Throwable) {
-    RecoverOutcome.Unavailable(e.message ?: e.javaClass.simpleName)
+    unavailable(e.message ?: e.javaClass.simpleName)
+}
+
+private suspend fun recoverFromCatalog(
+    hash: String, release: String?, mode: AdapterUpdates, ask: suspend (AdapterOffer) -> AdapterAnswer, onAlways: () -> Unit,
+    store: AdapterStore, client: OkHttpClient, indexUrl: String, timeoutMs: Long,
+): RecoverOutcome {
+    val idx = when (val r = CatalogClient.fetchIndex(client, indexUrl, timeoutMs)) {
+        is Fetched.Fail -> return unavailable(r.reason)
+        is Fetched.Ok -> r.value
+    }
+    val entry = idx.entries[hash] ?: return RecoverOutcome.NoEntry(hash)
+    if (entry is IndexEntry.NeedsAttention) return RecoverOutcome.NeedsAttention(hash, gateDetail(entry.gate))
+    entry as IndexEntry.Ok
+    if (mode == AdapterUpdates.NEVER) return RecoverOutcome.Never(hash)
+
+    if (mode == AdapterUpdates.ASK) {
+        // Fail closed: only an exact YES or ALWAYS is consent; an ask that throws is a no.
+        val answer = try {
+            ask(AdapterOffer(hash, release))
+        } catch (e: CancellationException) {
+            // Our own cancellation propagates; a CancellationException thrown by the ask itself (e.g. a timeout) is a no.
+            if (!currentCoroutineContext().isActive) throw e
+            null
+        } catch (e: Throwable) {
+            null
+        }
+        if (answer != AdapterAnswer.YES && answer != AdapterAnswer.ALWAYS) return RecoverOutcome.Declined(hash)
+        if (answer == AdapterAnswer.ALWAYS) {
+            try { onAlways() } catch (e: Exception) { /* could not remember the choice; still applies once */ }
+        }
+    }
+
+    currentCoroutineContext().ensureActive()
+    val (file, text) = when (val r = CatalogClient.fetchAdapterFile(client, idx.url, hash, entry, timeoutMs)) {
+        is Fetched.Fail -> return unavailable(r.reason)
+        is Fetched.Ok -> r.value
+    }
+    currentCoroutineContext().ensureActive()
+    withContext(Dispatchers.IO) { store.save(hash, text) }
+    return RecoverOutcome.Applied(hash, file.handshakeQuery, file.waVersion)
 }

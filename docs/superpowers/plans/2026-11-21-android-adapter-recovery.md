@@ -49,8 +49,8 @@ Spec: `docs/superpowers/specs/2026-11-10-downloadable-adapters-design.md`, secti
 - `catalog/` package: `ServerVersion.read(roomUrl)` (home page, `<meta name="wa-api-version" content="<8 hex>">` and
   release string, size/time capped), `CatalogClient` (index + adapter file per the constraints above), `AdapterStore`
   interface plus a file implementation (atomic write, never throws on read, ignores a corrupt file), and
-  `recoverAdapter(roomUrl, mode, ask, onAlways, ...)` returning `Unavailable | Known | Unsupported | Never | Declined |
-  NoEntry | NeedsAttention(gate) | Applied(hash, handshakeQuery)` — mirror `src/catalog/recover.mjs` outcomes.
+  `recoverAdapter(roomUrl, mode, ask, onAlways, ...)` returning `Unavailable | Known | NoEntry | NeedsAttention(hash, detail) | Never |
+  Declined | Applied(hash, handshakeQuery, waVersion)` — mirror `src/catalog/recover.mjs` outcomes.
 - HTTP through the OkHttp client already used by `:protocol` (injected, so tests use MockWebServer).
 - Tests: every outcome; each failure mode (404, timeout, 3xx, oversize, bad sha256, hash mismatch, wrong schema, cross-origin
   file, bad handshake names/values, forbidden names, corrupt cache); consent fails closed; built-in hash wins;

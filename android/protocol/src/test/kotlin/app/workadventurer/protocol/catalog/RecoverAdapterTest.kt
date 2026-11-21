@@ -1,6 +1,13 @@
 package app.workadventurer.protocol.catalog
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
+import kotlin.coroutines.coroutineContext
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -374,9 +381,122 @@ class RecoverAdapterTest {
 
     @Test fun serverVersionReadsHashAndRelease() {
         serve("/", home())
-        val v = ServerVersionReader.read(client, roomUrl)
+        val v = runBlocking { ServerVersionReader.read(client, roomUrl) }
         assertEquals(ServerVersion(H, "v1.40.0"), v)
         serve("/", """<meta content="$H" name='wa-api-version'><p>master@118dd84c""")
-        assertEquals(ServerVersion(H, "master@118dd84c"), ServerVersionReader.read(client, roomUrl))
+        assertEquals(ServerVersion(H, "master@118dd84c"), runBlocking { ServerVersionReader.read(client, roomUrl) })
+    }
+
+    // ---- review fixes
+
+    @Test fun cancellingMidPageReadStopsTheCallAndCachesNothing() {
+        happy()
+        routes["/"] = { MockResponse().setBody(home()).setBodyDelay(3, java.util.concurrent.TimeUnit.SECONDS) }
+        runBlocking {
+            val job = launch(Dispatchers.Default) {
+                recoverAdapter(roomUrl, AdapterUpdates.AUTO, { error("no") }, {}, emptySet(), store, client, indexUrl, 10_000)
+            }
+            delay(400)
+            val t0 = System.currentTimeMillis()
+            job.cancelAndJoin()
+            assertTrue(System.currentTimeMillis() - t0 < 2000)
+        }
+        Thread.sleep(300)
+        assertEquals(listOf("/"), hits)
+        assertEquals(0, dir.list()!!.size)
+    }
+
+    @Test fun cancellingDuringConsentNeverDownloadsOrCaches() {
+        happy()
+        runBlocking {
+            val job = launch {
+                recoverAdapter(roomUrl, AdapterUpdates.ASK, { coroutineContext.job.cancel(); AdapterAnswer.YES }, {}, emptySet(), store, client, indexUrl, 3000)
+            }
+            job.join()
+        }
+        assertFalse(hits.any { it.contains("adapters") })
+        assertEquals(0, dir.list()!!.size)
+    }
+
+    @Test fun anAskThrowingItsOwnCancellationWhileActiveIsDeclined() {
+        happy()
+        assertEquals(RecoverOutcome.Declined(H), recover(AdapterUpdates.ASK, ask = { throw CancellationException("ask timeout") }))
+        assertFalse(hits.any { it.contains("adapters") })
+    }
+
+    @Test fun hostileMetaPageIsLinearAndANormalOneStillParses() {
+        serve("/", "<meta ".repeat(85_000))
+        var t0 = System.currentTimeMillis()
+        assertNull(runBlocking { ServerVersionReader.read(client, roomUrl) })
+        assertTrue(System.currentTimeMillis() - t0 < 2000)
+        serve("/", "<meta ".repeat(40_000) + "x>" + home())
+        t0 = System.currentTimeMillis()
+        assertEquals(H, runBlocking { ServerVersionReader.read(client, roomUrl) }?.hash)
+        assertTrue(System.currentTimeMillis() - t0 < 2000)
+        assertEquals(H, ServerVersionReader.matchApiHash("<metadata name=\"wa-api-version\" content=\"00000000\"><meta name=\"wa-api-version\" content=\"$H\">"))
+    }
+
+    @Test fun theHomePageIsCappedAt512KiB() {
+        serve("/", " ".repeat(512 * 1024 + 100) + home())
+        assertUnavailable(recover())
+        serve("/", home() + " ".repeat(600 * 1024))
+        happy().also { serve("/", home() + " ".repeat(600 * 1024)) }
+        assertIs<RecoverOutcome.Applied>(recover())
+    }
+
+    @Test fun aHomePageRedirectIsRefusedWithAClearReason() {
+        routes["/"] = { MockResponse().setResponseCode(301).setHeader("Location", "/elsewhere") }
+        serve("/elsewhere", home())
+        val o = assertIs<RecoverOutcome.Unavailable>(recover())
+        assertEquals("could not read the server's version hash", o.reason)
+        assertFalse(hits.contains("/elsewhere"))
+    }
+
+    @Test fun unavailableReasonsAreSanitised() {
+        serve("/", home())
+        routes["/catalog/index.json"] = { MockResponse().setResponseCode(500).setStatus("HTTP/1.1 500 bad") }
+        val o = assertIs<RecoverOutcome.Unavailable>(recover())
+        assertTrue(o.reason.none { it.code < 0x20 })
+        assertEquals("a b c d e", sanitizeText("a\u202Eb\u2028c\u200Bd\u0007e"))
+        assertEquals(201, sanitizeText("y".repeat(500)).length)
+    }
+
+    @Test fun gateTextStripsBidiAndSeparators() {
+        serve("/", home())
+        serve("/catalog/index.json", index(""""$H":{"status":"needs-attention","gate":"ab\u202Ec\u2028d\u200Be\u2029f"}"""))
+        assertEquals("ab c d e f", (recover() as RecoverOutcome.NeedsAttention).detail)
+    }
+
+    @Test fun schemaMustBeExactlyTheNumberOne() {
+        for (s in listOf("1.0", "1e0", "\"1\"", "true", "0x1", "1d", "10", "null")) {
+            happy(adapter(schema = s)); assertFileFails("schema")
+            routes.clear()
+        }
+        serve("/", home()); serve("/catalog/index.json", index("").replace("\"schema\":1", "\"schema\":1.0"))
+        assertUnavailable(recover())
+    }
+
+    @Test fun filePathsAreWhitelisted() {
+        for (f in listOf("adapters/%2e%2e/$H.json", "adapters%2F$H.json", "adapters%5C$H.json", "adapters\\$H.json",
+            "adapters/$H.json?x=1", "adapters/$H.json#f", "http://u:p@127.0.0.1:${server.port}/catalog/adapters/$H.json", "./adapters/$H.json", "adapters//$H.json")) {
+            happy(entriesBuilder = { okEntry(file = f.replace("\\", "\\\\"), sha256 = it) })
+            assertFileFails()
+            routes.clear(); hits.clear()
+        }
+    }
+
+    @Test fun duplicateKeysDoNotCrash() {
+        happy("""{"schema":1,"id":"a","waVersion":"1","apiVersionHash":"$H","server":"staging","protoFamily":"p","handshake":{"query":{"A":"x","A":"y"}}}""")
+        val o = recover()
+        assertTrue(o is RecoverOutcome.Applied || o is RecoverOutcome.Unavailable)
+    }
+
+    @Test fun oversizeCacheFileIsIgnored() {
+        File(dir, "$H.json").writeText(adapter(extra = ""","pad":"${"x".repeat(70 * 1024)}""""))
+        assertNull(store.load(H))
+    }
+
+    @Test fun aProtoFamilyThatIsNotAStringIsRejected() {
+        happy(adapter().replace(""""protoFamily":"wa-9.99"""", """"protoFamily":3""")); assertFileFails("protoFamily")
     }
 }

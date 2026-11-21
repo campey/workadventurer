@@ -52,14 +52,16 @@ fun parseJsonBytes(bytes: ByteArray): Parsed = try {
     Parsed.Error("not valid JSON")
 }
 
+/** Exactly the JSON number 1 (not 1.0, 1e0, a string, ...). */
+internal fun isOne(e: JsonElement?): Boolean = e is JsonPrimitive && !e.isString && e.content == "1"
+
 private fun JsonElement.str(): String? = (this as? JsonPrimitive)?.takeIf { it.isString }?.content
 
 /** Check an adapter file (already parsed). */
 fun validateAdapterFile(json: JsonElement): Checked {
     fun bad(r: String) = Checked.Bad(r)
     val o = json as? JsonObject ?: return bad("file must be an object")
-    val schema = o["schema"] as? JsonPrimitive
-    if (schema == null || schema.isString || schema.content.toDoubleOrNull() != 1.0) return bad("schema must be 1")
+    if (!isOne(o["schema"])) return bad("schema must be 1")
     val id = o["id"]?.str()
     if (id == null || !LABEL_RE.matches(id)) return bad("id is invalid")
     val wa = o["waVersion"]?.str()

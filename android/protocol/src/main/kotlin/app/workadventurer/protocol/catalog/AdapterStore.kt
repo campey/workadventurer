@@ -19,7 +19,9 @@ class FileAdapterStore(private val dir: File) : AdapterStore {
     override fun load(hash: String): AdapterFile? {
         if (!HASH_RE.matches(hash)) return null
         return try {
-            val parsed = parseJsonBytes(File(dir, "$hash.json").readBytes()) as? Parsed.Value ?: return null
+            val f = File(dir, "$hash.json")
+            if (f.length() > CatalogClient.MAX_FILE_BYTES) return null
+            val parsed = parseJsonBytes(f.readBytes()) as? Parsed.Value ?: return null
             val checked = validateAdapterFile(parsed.json) as? Checked.Ok ?: return null
             checked.file.takeIf { it.apiVersionHash == hash }
         } catch (e: Exception) {

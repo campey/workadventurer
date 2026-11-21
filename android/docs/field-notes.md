@@ -500,3 +500,11 @@ Emulator: Pixel-class AVD `Medium_Phone_API_35` (Android 15), debug APK, 2026-10
 ## Prod bump to v1.34.1 broke the APK (2026-10-13) [live]
 
 The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when prod moved to v1.34.1 (hash `23c8eb8c` -> `b82fc568`, same `messages.proto`) the app showed "couldn't join... please refresh" (the server's NEW_VERSION error screen). Fixed by putting `b82fc568` first. Verified with `wa-cli` against prod: login, join, nav grid, walk to "Red Table" (ARRIVED). This is exactly what the downloadable adapter (#126) removes: the app should fetch the hash for the server's version instead of shipping one.
+
+## Adapter recovery, catalog client (#188, `:protocol` `catalog` package) [code]
+
+- The server's home page (`/` on the room's origin) is read for `<meta name="wa-api-version">` and the release string. A redirect
+  there is **refused on purpose** (any 3xx is a failure, as for the index and adapter file): the hash must come from the server
+  itself, so a redirecting server is "unavailable" and the app behaves as before.
+- Cancelling the coroutine cancels the in-flight HTTP call; a cancelled recovery never downloads or writes the cache.
+- Text from the catalog (`gate`, failure reasons) is stripped of control and format characters and capped at 200 chars.
