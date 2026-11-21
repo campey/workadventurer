@@ -12,6 +12,7 @@ fun statusText(c: Connection): String = when (c) {
     Connection.Connecting -> "Connecting…"
     Connection.Connected -> "Connected"
     is Connection.Reconnecting -> "Reconnecting (attempt ${c.attempt}) in ${c.inMs / 1000}s"
+    is Connection.NeedsConsent -> "Waiting for your answer: download an adapter update?"
     is Connection.Failed -> "Couldn't join: ${c.message}"
 }
 

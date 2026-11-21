@@ -675,6 +675,10 @@ A route's waypoints are tile **centres**, so it ends up to about 22 px from the 
 
 **With the catalog (#126).**
 
+- **Android does the same** (#188): a typed NEW_VERSION refusal triggers one recovery attempt that applies the catalog adapter's hash
+  and handshake query (nothing else), with an ask/auto/never setting and a Download / Don't ask again / Cancel dialog; see
+  `android/docs/field-notes.md` "How the app recovers".
+
 - **Candidate adapter from a file.** `--adapter-file <f>` (`wa join`, `wa selfcheck`,
   `scripts/selfcheck.mjs`), `WA_ADAPTER_FILE` (also used by `LiveWorld`, so
   `WORLD=live npm run scenarios` gates it) or the `adapterFile` config key loads an
