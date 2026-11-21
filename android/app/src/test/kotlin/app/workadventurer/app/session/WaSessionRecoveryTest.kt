@@ -278,10 +278,4 @@ class WaSessionRecoveryTest {
         s.dispatch(Command.Join(cfg)); runCurrent()
         assertTrue("couldn't check" in assertIs<Connection.Failed>(s.state.value.connection).message)
     }
-
-    @Test
-    fun consentMessageOnlyShowsAPlainVersion() {
-        assertTrue("v1.2.3" in consentMessage(AdapterOffer("deadbeef", "v1.2.3")))
-        assertTrue("<b>" !in consentMessage(AdapterOffer("deadbeef", "<b>hi</b> evil")))
-    }
 }

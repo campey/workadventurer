@@ -7,6 +7,7 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import java.security.MessageDigest
+import java.time.Instant
 
 const val DEFAULT_CATALOG_URL = "https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json"
 
@@ -15,7 +16,8 @@ sealed class IndexEntry {
     data class NeedsAttention(val gate: JsonElement?) : IndexEntry()
 }
 
-data class CatalogIndex(val url: String, val entries: Map<String, IndexEntry>)
+/** [updated] is the index's top-level `updated` (ISO-8601 instant), kept only if it parses; null otherwise. */
+data class CatalogIndex(val url: String, val entries: Map<String, IndexEntry>, val updated: String? = null)
 
 sealed class Fetched<out T> {
     data class Ok<T>(val value: T) : Fetched<T>()
@@ -53,16 +55,15 @@ object CatalogClient {
                 if (file != null && sha != null && SHA256_RE.matches(sha)) entries[hash] = IndexEntry.Ok(file, sha)
             }
         }
-        return Fetched.Ok(CatalogIndex(url, entries))
+        val updated = (raw["updated"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.length <= 64 && runCatching { Instant.parse(it) }.isSuccess }
+        return Fetched.Ok(CatalogIndex(url, entries, updated))
     }
 
     private fun sameOrigin(a: HttpUrl, b: HttpUrl) = a.scheme == b.scheme && a.host == b.host && a.port == b.port
 
-    /** Fetch and fully verify one adapter file; returns the validated file and its raw text (for the cache). */
-    suspend fun fetchAdapterFile(
-        client: OkHttpClient, indexUrl: String, hash: String, entry: IndexEntry.Ok, timeoutMs: Long = DEFAULT_TIMEOUT_MS,
-    ): Fetched<Pair<AdapterFile, String>> {
-        val fileUrl: HttpUrl = try {
+    /** The URL [fetchAdapterFile] would fetch for [entry], or why it is refused (other origin, outside the index's directory, odd path). */
+    fun resolveAdapterUrl(indexUrl: String, entry: IndexEntry.Ok): Fetched<HttpUrl> {
+        return try {
             val base = indexUrl.toHttpUrl()
             val resolved = base.resolve(entry.file) ?: return Fetched.Fail("file URL is invalid")
             if (!sameOrigin(base, resolved)) return Fetched.Fail("file URL is not on the index's origin (${resolved.scheme}://${resolved.host}:${resolved.port})")
@@ -72,9 +73,23 @@ object CatalogClient {
             if (resolved.username.isNotEmpty() || resolved.password.isNotEmpty() || resolved.query != null || resolved.fragment != null) {
                 return Fetched.Fail("file URL must be a plain path")
             }
-            resolved
+            Fetched.Ok(resolved)
         } catch (e: Exception) {
-            return Fetched.Fail("file URL is invalid")
+            Fetched.Fail("file URL is invalid")
+        }
+    }
+
+    /** The validated adapter URL to show in the consent dialog: only when it passes [resolveAdapterUrl] and is https; else null. */
+    fun displayAdapterUrl(indexUrl: String, entry: IndexEntry.Ok): String? =
+        (resolveAdapterUrl(indexUrl, entry) as? Fetched.Ok)?.value?.takeIf { it.isHttps }?.toString()
+
+    /** Fetch and fully verify one adapter file; returns the validated file and its raw text (for the cache). */
+    suspend fun fetchAdapterFile(
+        client: OkHttpClient, indexUrl: String, hash: String, entry: IndexEntry.Ok, timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+    ): Fetched<Pair<AdapterFile, String>> {
+        val fileUrl: HttpUrl = when (val r = resolveAdapterUrl(indexUrl, entry)) {
+            is Fetched.Fail -> return r
+            is Fetched.Ok -> r.value
         }
         val got = getCapped(client, fileUrl.toString(), timeoutMs, MAX_FILE_BYTES)
         if (got is Got.Fail) return Fetched.Fail("adapter $hash: ${got.reason}")

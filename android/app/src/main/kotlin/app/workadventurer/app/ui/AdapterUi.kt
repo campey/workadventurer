@@ -8,14 +8,12 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,9 +21,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import app.workadventurer.app.session.consentMessage
-import app.workadventurer.protocol.catalog.AdapterAnswer
-import app.workadventurer.protocol.catalog.AdapterOffer
 import app.workadventurer.protocol.catalog.AdapterUpdates
 
 const val SETTINGS_SHEET_TITLE = "Settings"
@@ -40,23 +35,6 @@ fun adapterUpdatesHelp(m: AdapterUpdates): String = when (m) {
     AdapterUpdates.ASK -> "When a server is newer than this app, ask before downloading its adapter."
     AdapterUpdates.AUTO -> "When a server is newer than this app, download its adapter without asking."
     AdapterUpdates.NEVER -> "Never download adapters. Newer servers won't work until the app is updated."
-}
-
-/** The question behind [app.workadventurer.app.session.Connection.NeedsConsent]: Download (once), Don't ask again (always), Cancel. */
-@Composable
-fun AdapterConsentDialog(offer: AdapterOffer, onAnswer: (AdapterAnswer) -> Unit) {
-    AlertDialog(
-        onDismissRequest = { onAnswer(AdapterAnswer.NO) },
-        title = { Text("Download an update?") },
-        text = { Text(consentMessage(offer)) },
-        confirmButton = {
-            Column {
-                TextButton(onClick = { onAnswer(AdapterAnswer.YES) }) { Text("Download") }
-                TextButton(onClick = { onAnswer(AdapterAnswer.ALWAYS) }) { Text("Don't ask again") }
-            }
-        },
-        dismissButton = { TextButton(onClick = { onAnswer(AdapterAnswer.NO) }) { Text("Cancel") } },
-    )
 }
 
 /** Settings, in the style of the Network sheet: one group of radio choices for the adapter-updates preference. */

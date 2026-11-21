@@ -13,8 +13,12 @@ import okhttp3.OkHttpClient
 enum class AdapterUpdates { ASK, AUTO, NEVER }
 enum class AdapterAnswer { YES, NO, ALWAYS }
 
-/** What the consent question is about: the server's hash and release string (e.g. `v1.35.0`), if the page had one. */
-data class AdapterOffer(val hash: String, val release: String?)
+/**
+ * What the consent question is about: the server's hash and release string (e.g. `v1.35.0`), if the page had one.
+ * [adapterUrl] is the https URL the library would fetch (set only when it passed the same-origin / under-directory checks) and
+ * [catalogUpdated] the index's top-level `updated` instant (only if it parsed). The catalog has no per-entry date.
+ */
+data class AdapterOffer(val hash: String, val release: String?, val adapterUrl: String? = null, val catalogUpdated: String? = null)
 
 sealed class RecoverOutcome {
     /** [reason] is sanitised (no control/format characters, capped). */
@@ -90,7 +94,7 @@ private suspend fun recoverFromCatalog(
     if (mode == AdapterUpdates.ASK) {
         // Fail closed: only an exact YES or ALWAYS is consent; an ask that throws is a no.
         val answer = try {
-            ask(AdapterOffer(hash, release))
+            ask(AdapterOffer(hash, release, CatalogClient.displayAdapterUrl(idx.url, entry), idx.updated))
         } catch (e: CancellationException) {
             // Our own cancellation propagates; a CancellationException thrown by the ask itself (e.g. a timeout) is a no.
             if (!currentCoroutineContext().isActive) throw e

@@ -517,8 +517,16 @@ The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when pro
   catalog hash and handshake query and retries once. If that is refused again, or recovery has nothing to apply, the session ends in
   `Connection.Failed` with a specific message (no adapter for this server version yet / needs attention / updates turned off /
   declined / couldn't check). That includes a refusal after an earlier successful connect (ruling A2: no bounded retries).
-- **Consent.** Setting `ask | auto | never` (default ask; Settings on the Join screen). With `ask` the session shows a dialog: **Download**
-  (apply once), **Don't ask again** (persists `auto`, applies), **Cancel** (a "no": nothing is downloaded). Only an exact yes
+- **Consent.** Setting `ask | auto | never` (default ask; Settings on the Join screen). With `ask` the session shows a dialog
+  ("Compatibility update available", `ui/AdapterConsent.kt`, text/rows built by `session/ConsentFormat.kt`): one plain sentence (only the
+  version the app speaks to this server changes; no code is downloaded or run), then key/value rows: **Server version** (release string if
+  the page had a plain one, else "unknown"), **Server hash** (monospace), **Catalog updated** (local `dd MMM HH:mm`, else "unknown") and the
+  **Adapter file** URL the library would fetch (monospace, selectable, with a "View on GitHub" link). The URL is only offered when it passed
+  the same-origin / under-directory checks and is https; the date is the index's top-level `updated`, kept only if it parses.
+  **Limitation:** the catalog has no per-entry date, so this is when the catalog was last updated, not when this adapter was published.
+  Buttons: **Download** (filled pill) and **Cancel** (outlined pill). A checkbox **"Auto-download next time"** ("Applies when you tap Download.
+  Change this in Settings."): ticked + Download persists `auto` and applies (ALWAYS), unticked + Download applies once (YES);
+  Cancel / Back / outside tap is a no and ignores the checkbox (nothing is remembered). Only an exact yes
   or always counts; the pre-ask connection state is restored on answering, so the answer is not treated as a new Join (no new
   call log, no net-totals reset).
 - **What it applies.** Only the `apiVersionHash` and the adapter's handshake query, for that server and room (never persisted as if

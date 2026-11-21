@@ -171,7 +171,34 @@ class RecoverAdapterTest {
         var offer: AdapterOffer? = null
         val o = recover(AdapterUpdates.ASK, ask = { offer = it; AdapterAnswer.YES })
         assertIs<RecoverOutcome.Applied>(o)
+        // MockWebServer is http, so the https-only adapterUrl is withheld; the date is absent from this index.
         assertEquals(AdapterOffer(H, "v1.40.0"), offer)
+    }
+
+    @Test fun askReceivesTheCatalogDateAndAnHttpsAdapterUrlOnly() {
+        val bytes = happy()
+        serve("/catalog/index.json", """{"schema":1,"updated":"2026-11-21T14:05:09Z","entries":{${okEntry(sha256 = sha(bytes))}}}""")
+        var offer: AdapterOffer? = null
+        recover(AdapterUpdates.ASK, ask = { offer = it; AdapterAnswer.NO })
+        assertEquals("2026-11-21T14:05:09Z", offer!!.catalogUpdated)
+        assertNull(offer!!.adapterUrl) // http origin: not offered for display
+    }
+
+    @Test fun aMalformedUpdatedIsIgnored() {
+        val bytes = happy()
+        serve("/catalog/index.json", """{"schema":1,"updated":"last tuesday","entries":{${okEntry(sha256 = sha(bytes))}}}""")
+        var offer: AdapterOffer? = null
+        recover(AdapterUpdates.ASK, ask = { offer = it; AdapterAnswer.NO })
+        assertNull(offer!!.catalogUpdated)
+    }
+
+    @Test fun displayAdapterUrlIsHttpsAndValidatedOnly() {
+        val e = IndexEntry.Ok("adapters/$H.json", "0".repeat(64))
+        val idx = "https://raw.example.com/o/r/main/catalog/index.json"
+        assertEquals("https://raw.example.com/o/r/main/catalog/adapters/$H.json", CatalogClient.displayAdapterUrl(idx, e))
+        assertNull(CatalogClient.displayAdapterUrl("http://raw.example.com/catalog/index.json", e))
+        assertNull(CatalogClient.displayAdapterUrl(idx, IndexEntry.Ok("https://evil.example.org/x.json", "0".repeat(64))))
+        assertNull(CatalogClient.displayAdapterUrl(idx, IndexEntry.Ok("../x.json", "0".repeat(64))))
     }
 
     @Test fun askNoIsDeclinedAndDownloadsNothing() {
