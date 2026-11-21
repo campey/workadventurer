@@ -12,6 +12,9 @@ object WaStaging {
     const val API_VERSION_HASH = "d2d82672"
 }
 
+/** Identity and room selection: never settable from a downloaded adapter (lowercase; compared case-insensitively). */
+val HANDSHAKE_FORBIDDEN: Set<String> = setOf("roomid", "version", "charactertextureids", "token")
+
 data class RoomConfig(
     val roomUrl: String = Wa133.DEFAULT_ROOM,
     val pusherUrl: String = Wa133.DEFAULT_PUSHER,
@@ -27,6 +30,12 @@ data class RoomConfig(
      */
     val viewportHalfWidth: Int = 8000,
     val viewportHalfHeight: Int = 6000,
+    /**
+     * Extra constant handshake query parameters from a downloaded adapter (#126/#188). Values may carry `{tabId}` and
+     * `{uuid}`, substituted per connection. [wsUrl] never lets these override a parameter the client sends and drops
+     * [HANDSHAKE_FORBIDDEN] names.
+     */
+    val handshakeQuery: Map<String, String> = emptyMap(),
 ) {
     companion object {
         /** The config for [roomUrl]: staging rooms get the staging pusher and woka, everything else is prod. A chosen [wokaId] replaces the default. */

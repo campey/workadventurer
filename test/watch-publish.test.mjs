@@ -276,6 +276,8 @@ test("REST adapter: merge 405/409 reject (publish reports them), sends the pinne
     const port = createGithubPort({ repo: "campey/workadventurer", token: TOKEN, fetch: restFetch(({ json }) => json({ message: "Head branch was modified" }, status), calls) });
     await assert.rejects(port.merge(9, { expectedHeadSha: "c".repeat(40) }), new RegExp(String(status)));
     assert.equal(calls.at(-1).body.sha, "c".repeat(40));
+    // this repo disallows squash merges (the first real run got a 405 for them); a plain merge commit is what it allows
+    assert.equal(calls.at(-1).body.merge_method, "merge");
     await assert.rejects(port.merge(9), /expectedHeadSha/);
   }
 });

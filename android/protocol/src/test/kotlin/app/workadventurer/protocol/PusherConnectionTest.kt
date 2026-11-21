@@ -251,6 +251,33 @@ class PusherConnectionTest {
         }
     }
 
+    private fun refusal(m: ErrorScreenMessage) = runBlocking {
+        val fake = Fake(onOpen = { ws -> ws.send(s2c(ServerToClientMessage(errorScreenMessage = m))) }, onFrame = { _, _ -> })
+        server(fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s))
+            assertFailsWith<JoinFailed> { withTimeout(5_000) { conn.connect() } }
+        }
+    }
+
+    @Test
+    fun aNewVersionErrorScreenIsATypedRefusalCarryingTheText() {
+        val e = refusal(ErrorScreenMessage(type = "retry", code = "NEW_VERSION", title = "Please refresh", details = "A new version is available"))
+        assertTrue(e is NewVersionRefused, e.toString())
+        assertTrue(e.message!!.contains("Please refresh") && e.message!!.contains("A new version"), e.message)
+    }
+
+    @Test
+    fun otherErrorScreensStayPlainJoinFailed() {
+        for (m in listOf(
+            ErrorScreenMessage(title = "Nope", details = "full"),
+            ErrorScreenMessage(code = "ROOM_FULL", title = "Nope"),
+            ErrorScreenMessage(type = "NEW_VERSION", title = "type is not the code"),
+        )) {
+            val e = refusal(m)
+            assertTrue(e !is NewVersionRefused, e.toString())
+        }
+    }
+
     @Test
     fun failedJoinClosesTheSocketInsteadOfLeavingItOpen() = runBlocking<Unit> {
         val fake = Fake(
