@@ -508,3 +508,28 @@ The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when pro
   itself, so a redirecting server is "unavailable" and the app behaves as before.
 - Cancelling the coroutine cancels the in-flight HTTP call; a cancelled recovery never downloads or writes the cache.
 - Text from the catalog (`gate`, failure reasons) is stripped of control and format characters and capped at 200 chars.
+
+### How the app recovers (session and UI, #188) [code]
+
+- Only a typed `NewVersionRefused` (error-screen code `NEW_VERSION`) starts recovery; any other join failure behaves as before.
+  A built-in hash always wins: the catalog is consulted only after that refusal.
+- **One attempt per refusal, no loop.** `Applied` (or a `Known` cached adapter with a handshake query) rebuilds the `RoomConfig` with the
+  catalog hash and handshake query and retries once. If that is refused again, or recovery has nothing to apply, the session ends in
+  `Connection.Failed` with a specific message (no adapter for this server version yet / needs attention / updates turned off /
+  declined / couldn't check). That includes a refusal after an earlier successful connect (ruling A2: no bounded retries).
+- **Consent.** Setting `ask | auto | never` (default ask; Settings on the Join screen). With `ask` the session shows a dialog: **Download**
+  (apply once), **Don't ask again** (persists `auto`, applies), **Cancel** (a "no": nothing is downloaded). Only an exact yes
+  or always counts; the pre-ask connection state is restored on answering, so the answer is not treated as a new Join (no new
+  call log, no net-totals reset).
+- **What it applies.** Only the `apiVersionHash` and the adapter's handshake query, for that server and room (never persisted as if
+  built in). Behaviour numbers (`meeting`, `movement`) and `protoFamily` are ignored: the app has its own behaviour, and the
+  watcher's gate (proto-diff against wa-1.33 plus a Kotlin smoke with the hash) is what keeps a hash-only adapter safe on the
+  compiled-in wa-1.33 wire.
+- **Cache** is `filesDir/adapters/<hash>.json`; the catalog URL is `DEFAULT_CATALOG_URL` (`raw.githubusercontent.com/.../catalog/index.json`);
+  debug builds may override it with `-PcatalogUrl=https://...` (release builds cannot be redirected).
+- **Testing.** `:protocol:test` (MockWebServer: every outcome and failure mode) and `:app:testDebugUnitTest` (`WaSessionRecoveryTest`
+  with a fake recovery port). On a device: point a debug build at a local catalog (`-PcatalogUrl`), run a fake pusher that refuses
+  the built-in hash, and watch the dialog. The dialog and the Settings sheet are only compile-checked; they have not been
+  exercised on a device yet.
+- Known gaps: `startsNewCall` infers "same call" from the previous state, so a Join sent while the dialog is open would not open
+  a new call log (the UI makes that unlikely); while asking after an earlier success the route shows Join and then goes back.
