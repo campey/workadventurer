@@ -831,7 +831,7 @@ into `catalog/index.json` and opens or updates an issue. Both go through branch
 - **Repo settings it needs.** Settings, Actions, General: "Allow GitHub Actions to create and
   approve pull requests" ticked; `main` requires a PR with 0 approvals but **no required status checks** (a
   PR opened with the default token starts no workflows, so a required check would never
-  report); squash merging allowed (the watcher merges with it); label `adapter-watch`
+  report); a plain merge commit allowed (the watcher merges with `merge`; this repo disallows squash merges: found on the first real run); label `adapter-watch`
   created. Permissions are per job in the workflow: `publish` has `contents`,
   `pull-requests` and `issues` write; there are no other secrets (the default
   `GITHUB_TOKEN` only). The token reaches the one `git fetch` that syncs the checkout

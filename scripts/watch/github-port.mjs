@@ -150,7 +150,7 @@ export function createGithubPort({ repo, token, fetch: fetchFn = globalThis.fetc
     },
     async merge(number, { expectedHeadSha } = {}) {
       if (!expectedHeadSha) throw new Error("merge needs expectedHeadSha");
-      const { data } = await api("PUT", `/pulls/${number}/merge`, { merge_method: "squash", sha: expectedHeadSha });
+      const { data } = await api("PUT", `/pulls/${number}/merge`, { merge_method: "merge", sha: expectedHeadSha });
       return { merged: data?.merged === true };
     },
     async findIssues({ label, state = "open" } = {}) {
