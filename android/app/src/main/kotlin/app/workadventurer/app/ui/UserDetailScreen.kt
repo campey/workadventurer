@@ -108,9 +108,11 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
                 description = if (isMe) "Open the conversation you are in" else "Open the conversation you are in with $name", quiet = true,
             )
         } else {
+            // What stops each action: a locked bubble, a silent area, or a status that keeps them out of every conversation (#111).
+            val blocks = actionBlocks(where, status)
             Column(Modifier.padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(
-                    onClick = { onCommand(Command.InvitePlayer(userId)) }, enabled = canMove,
+                    onClick = { onCommand(Command.InvitePlayer(userId)) }, enabled = canMove && blocks.invite == null,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).heightIn(min = 56.dp).semantics { contentDescription = "Invite $name to a meeting" },
                     shape = RoundedCornerShape(28.dp),
                 ) {
@@ -118,8 +120,12 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
                     Spacer(Modifier.width(10.dp))
                     Text("Invite", style = MaterialTheme.typography.titleMedium)
                 }
-                // A locked bubble lets nobody else in: say so rather than walk over and stand next to it (#111).
-                val blocked = walkBlockReason(where)
+                // Say why, rather than let you walk over and stand next to them. When only Invite is stopped its reason goes under it.
+                val blocked = blocks.walk
+                if (blocks.invite != null && blocked == null) Text(
+                    blocks.invite, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                )
                 PrimaryAction(
                     label = if (walking) "Walking over…" else "Walk over",
                     explainer = if (walking) "Your avatar is on its way to them" else blocked ?: explainer,

@@ -3,8 +3,8 @@ package app.workadventurer.app.ui
 import app.workadventurer.app.session.Activity
 import app.workadventurer.app.session.SessionState
 
-/** Where the conversation screen's action is: join, on the way, in it, on the way out, a Jitsi area we cannot join, or a locked bubble nobody can. */
-enum class Phase { CanJoin, Walking, Joined, Leaving, Jitsi, Locked }
+/** Where the conversation screen's action is: join, on the way, in it, on the way out, a Jitsi area we cannot join, a locked bubble, or a silent area (nobody can talk in either). */
+enum class Phase { CanJoin, Walking, Joined, Leaving, Jitsi, Locked, Silent }
 
 /**
  * What the screen for one bubble or area shows. Joining and leaving are done by walking (the protocol has no message for
@@ -38,6 +38,7 @@ fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScree
     val the = if (isBubble) "the bubble" else c.title
     val area = (key as? ConversationKey.AreaKey)?.let { k -> s.areas.firstOrNull { (it.id ?: it.name) == k.key } }
     val jitsi = area?.isJitsi() == true
+    val silentArea = area?.isSilent() == true && !jitsi
     val others = c.members.filter { !it.isMe }
     val walking = when (val a = s.activity) {
         is Activity.WalkingTo -> if (isBubble) others.any { it.name.ifBlank { "Unnamed player" } == a.label } else a.label == c.title
@@ -49,16 +50,18 @@ fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScree
         leaving -> Phase.Leaving
         c.joined -> Phase.Joined
         c.locked -> Phase.Locked
+        silentArea -> Phase.Silent
         walking -> Phase.Walking
         else -> Phase.CanJoin
     }
     return ConversationScreenModel(
         title = c.title, noun = noun, members = c.members, phase = phase,
         strip = if (c.joined) "You are in this $noun" else "You are not in this $noun",
-        joinLabel = if (jitsi) "Join in Jitsi" else if (c.locked) "This bubble is locked" else "Join the $noun",
+        joinLabel = if (jitsi) "Join in Jitsi" else if (c.locked) "This bubble is locked" else if (silentArea) "This area is silent" else "Join the $noun",
         explainer = when {
             jitsi -> JITSI_NOT_SUPPORTED_MESSAGE
             c.locked -> "The people in it have locked it, so nobody else can join"
+            silentArea -> "Conversations don't work in a silent area"
             isBubble -> "Walk your avatar over to talk to them"
             else -> "Walk your avatar into the area to talk to them"
         },

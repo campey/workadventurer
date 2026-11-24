@@ -48,6 +48,9 @@ const val LOCKED_BUBBLE_TITLE = "🔒 locked bubble"
 
 private fun Area.key() = id ?: name
 
+/** A silent area: the web client puts everyone in it on SILENT, so no conversation works there (#111). */
+fun Area.isSilent() = "silent" in propertyTypes
+
 /** An area you can talk in: a LiveKit meeting room, or a Jitsi one. */
 fun Area.isMeeting() = meetingRoom != null || "jitsiRoomProperty" in propertyTypes
 

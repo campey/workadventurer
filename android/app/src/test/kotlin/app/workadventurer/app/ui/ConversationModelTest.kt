@@ -114,4 +114,14 @@ class ConversationModelTest {
         assertEquals(Phase.Joined, m.phase)
         assertEquals("Leave the bubble", m.leaveLabel)
     }
+
+    // #111: a map area with the `silent` property: the web client sets everyone in it to SILENT, so no conversation works there.
+    @Test
+    fun aSilentAreaCannotBeJoinedAndSaysWhy() {
+        val quiet = area("quiet", "Quiet corner", setOf("silent"), meeting = false)
+        val m = conversationScreen(ConversationKey.AreaKey("quiet"), state(areas = listOf(quiet)))!!
+        assertEquals(Phase.Silent, m.phase)
+        assertEquals("This area is silent", m.joinLabel)
+        assertEquals("Conversations don't work in a silent area", m.explainer)
+    }
 }

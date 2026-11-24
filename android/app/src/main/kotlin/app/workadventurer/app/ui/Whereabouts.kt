@@ -9,6 +9,8 @@ sealed interface Whereabouts {
         val key: ConversationKey.AreaKey, val areaName: String, val meeting: Boolean, val others: List<String>, val withYou: Boolean,
         /** A Jitsi room: we can't be in that call, so it is never "together" and there is nothing to join. */
         val jitsi: Boolean = false,
+        /** A silent area: nobody in it can be in a conversation (#111). */
+        val silent: Boolean = false,
     ) : Whereabouts
     data object OnTheMap : Whereabouts
 
@@ -54,7 +56,7 @@ fun whereIsOrNull(userId: Int, s: SessionState): Whereabouts? {
         return Whereabouts.InArea(
             ConversationKey.AreaKey(key), area.name, area.isMeeting(), others,
             withYou = s.inAreas.any { (it.id ?: it.name) == key },
-            jitsi = area.isJitsi(),
+            jitsi = area.isJitsi(), silent = area.isSilent(),
         )
     }
     return Whereabouts.OnTheMap
@@ -76,7 +78,7 @@ fun whereAmI(s: SessionState): Whereabouts {
     if (area != null) {
         val others = s.players.filter { area.contains(it.x, it.y) }.map { it.name }.sortedBy { it.lowercase() }
         return Whereabouts.InArea(
-            ConversationKey.AreaKey(area.id ?: area.name), area.name, area.isMeeting(), others, withYou = true, jitsi = area.isJitsi(),
+            ConversationKey.AreaKey(area.id ?: area.name), area.name, area.isMeeting(), others, withYou = true, jitsi = area.isJitsi(), silent = area.isSilent(),
         )
     }
     return Whereabouts.OnTheMap
@@ -130,8 +132,24 @@ fun walkExplainer(w: Whereabouts): String? = when {
 }
 
 /**
- * Why walking over to them would get you nowhere, or null when it could work. A locked bubble you are not in lets nobody else in
- * (the server just leaves you standing next to it, with no error), so the screen says so instead (#111).
+ * Why walking over to them would get you nowhere, or null when it could work: a locked bubble you are not in lets nobody else in (the
+ * server just leaves you standing next to it, with no error), and neither does a silent area (#111).
  */
-fun walkBlockReason(w: Whereabouts): String? =
-    if (w is Whereabouts.InBubble && w.locked && !w.withYou) "Their bubble is locked, so nobody else can join it" else null
+fun walkBlockReason(w: Whereabouts): String? = when {
+    w is Whereabouts.InBubble && w.locked && !w.withYou -> "Their bubble is locked, so nobody else can join it"
+    w is Whereabouts.InArea && w.silent && !w.meeting -> "That area is silent, so a conversation can't start there"
+    else -> null
+}
+
+/** What stops each action on a person's screen: [invite] and [walk] hold the reason, or null when it can go ahead. */
+data class ActionBlocks(val invite: String?, val walk: String?)
+
+/**
+ * Their status keeps them out of every conversation ([unavailableReason]), which blocks Invite whatever else; Walk over is blocked too
+ * unless they are in a meeting area, since walking into the area puts you in the same meeting however their status reads.
+ */
+fun actionBlocks(w: Whereabouts, status: app.workadventurer.proto.AvailabilityStatus): ActionBlocks {
+    val unavailable = unavailableReason(status)
+    val walk = walkBlockReason(w) ?: unavailable.takeUnless { w is Whereabouts.InArea && w.meeting }
+    return ActionBlocks(invite = unavailable, walk = walk)
+}

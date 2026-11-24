@@ -70,6 +70,16 @@ per-gate sections below have the measurements; this section is the summary to st
   but the cap (`MAX_PER_GROUP`) is a server setting that clients never see, so "full" can't be shown. Testing it: two CLI avatars
   that spawn beside the phone form a bubble that pulls the phone in too, so leave it first, then the lock is seen from outside.
 
+- **Statuses that keep someone out of a bubble** (#111) [live 2026-11-25, code v1.35.1]: back/src/Model/User.ts `silent` is true for
+  `DO_NOT_DISTURB`, `BACK_IN_A_MOMENT`, `DENY_PROXIMITY_MEETING`, `SILENT`, `SOUND_BLOCKED`, `SPEAKER`, `LISTENER`, `JITSI`, `BBB` and
+  `LIVEKIT`: the server never puts such a person in a bubble and takes them out of the one they are in. Seen live: a CLI avatar that
+  announced `DO_NOT_DISTURB` (`setPlayerDetailsMessage.availabilityStatus = 9`) spawned beside the phone and no bubble formed, where two
+  online avatars had formed one at once. `BUSY` and `AWAY` are not silent (the web client only prompts those people). The app blocks
+  Invite and Walk over for the first seven; a meeting status is left to the area flow, since walking into the area is how you join it.
+- **Silent areas** [live, code]: the `silent` area property (`SilentPropertyData`, `type: "silent"`) is enforced by each client setting
+  its own status to `SILENT` while inside; the server only sees the status. Prod's Afrolabs room has several (Pop Bench, ...), campus
+  has two, staging's village has many (even a `start` area). The Conversation screen of such an area says it is silent.
+
 ### Roles and signalling
 - **Who offers** [live, code]: the server tells the user who was already watching the space to offer (`initiator=true`); the
   phone nearly always is that user, so the phone must be able to offer. If nobody offers, the browser times out after ~20 s,

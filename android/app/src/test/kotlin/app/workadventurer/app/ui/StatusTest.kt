@@ -63,4 +63,25 @@ class StatusTest {
         for ((k, same) in shown) assertEquals(true, same.size >= 1, k.toString())
         assertEquals(statusLabel(AvailabilityStatus.AWAY) != statusLabel(AvailabilityStatus.BUSY), true)
     }
+
+    // #111: with these statuses the server never puts someone in a bubble (back/src/Model/User.ts `silent`), so inviting them or
+    // walking over to them gets nowhere. Busy and away are only prompts on the web client; a meeting is handled by its own area.
+    @Test
+    fun someStatusesKeepSomeoneOutOfEveryConversationAndSayWhy() {
+        assertEquals("They are on do not disturb, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.DO_NOT_DISTURB))
+        assertEquals("They will be back in a moment, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.BACK_IN_A_MOMENT))
+        assertEquals("Their sound is blocked, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.SOUND_BLOCKED))
+        assertEquals("They are in a silent area, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.SILENT))
+        assertEquals("They are not taking part in proximity meetings, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.DENY_PROXIMITY_MEETING))
+        assertEquals("They are using the megaphone, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.SPEAKER))
+        assertEquals("They are listening to a megaphone, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.LISTENER))
+    }
+
+    @Test
+    fun otherStatusesDoNotBlockAnything() {
+        for (s in listOf(AvailabilityStatus.ONLINE, AvailabilityStatus.UNCHANGED, AvailabilityStatus.AWAY, AvailabilityStatus.BUSY,
+            AvailabilityStatus.JITSI, AvailabilityStatus.BBB, AvailabilityStatus.LIVEKIT)) {
+            assertEquals(null, unavailableReason(s), s.name)
+        }
+    }
 }
