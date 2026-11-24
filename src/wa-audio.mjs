@@ -33,6 +33,8 @@ import {
   RtpPacket,
   RtpHeader,
   useVP8,
+  useVP9,
+  useH264,
 } from "werift";
 import {
   Room,
@@ -88,6 +90,16 @@ const OPUS = new RTCRtpCodecParameters({
   channels: 2,
   payloadType: 111,
 });
+
+// Local codec list for every P2P peer connection. Video is never sent or read,
+// but werift throws "negotiate codecs failed" when an offered m=video section
+// shares no codec with ours -- killing the connection before the audio section
+// is reached. Browsers have varied what they offer (older: VP8 included; now
+// H264 + VP9 only, seen live 2026-11), so declare every common one.
+export const PEER_CODECS = {
+  audio: [OPUS],
+  video: [useVP8(), useVP9(), useH264()],
+};
 
 const rnd32 = () => Math.floor(Math.random() * 0xffffffff) >>> 0;
 
@@ -526,7 +538,7 @@ export class WaAudio extends EventEmitter {
       // our previous `{ audio: [OPUS] }` override had silently dropped it.
       // The resulting video transceiver stays recvonly and untouched — nothing
       // downstream reads from it.
-      codecs: { audio: [OPUS], video: [useVP8()] },
+      codecs: PEER_CODECS,
       iceServers: this.iceServers,
       bundlePolicy: "max-bundle",
     });
