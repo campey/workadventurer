@@ -120,7 +120,7 @@ fun WorldInfo(details: WorldDetails, plain: Boolean = false, modifier: Modifier 
                 Column { words() }
             }
         } else {
-            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
                 icon()
                 Column(Modifier.weight(1f)) { words() }
             }

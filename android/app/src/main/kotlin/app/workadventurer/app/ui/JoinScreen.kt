@@ -26,10 +26,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.ImageBitmap
 import app.workadventurer.protocol.WorldMeta
-import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -78,24 +76,7 @@ fun JoinScreen(
     val keyboard = LocalSoftwareKeyboardController.current
     val joining = connection is Connection.Connecting || connection is Connection.NeedsConsent
     // Look the world up a moment after the address stops changing; its words and picture then appear in the tile. Joining never waits.
-    var meta by remember { mutableStateOf<WorldMeta?>(null) }
-    var picture by remember { mutableStateOf<ImageBitmap?>(null) }
-    var looking by remember { mutableStateOf(false) }
-    val lookup = worldLookupUrl(room)
-    LaunchedEffect(lookup) {
-        meta = null
-        picture = null
-        looking = lookup != null
-        if (lookup != null) {
-            delay(LOOKUP_DELAY_MS)
-            val found = loadWorldMeta(lookup)
-            val image = found?.thumbnail?.let { loadPicture(it) }
-            // All together, with nothing suspending between: the words and the map appear in one step.
-            meta = found
-            picture = image
-            looking = false
-        }
-    }
+    val world = rememberWorldLookup(room, LOOKUP_DELAY_MS, loadWorldMeta, loadPicture)
 
     Column(Modifier.fillMaxSize()) {
         Column(
@@ -130,7 +111,7 @@ fun JoinScreen(
                 }
             }
             WorldInfo(worldDetails(room))
-            WorldPreview(meta?.description, picture, loading = looking)
+            WorldPreview(world.meta?.description, world.picture, loading = world.looking)
         }
         // Pinned to the Join button, outside the scrolling world tile: the tile's picture and text arriving or changing size never move them.
         Column(Modifier.padding(horizontal = 20.dp).padding(top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
