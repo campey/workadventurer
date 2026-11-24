@@ -273,4 +273,20 @@ class RoomStateTest {
         s.clear()
         assertEquals(true, s.spaces.value.isEmpty() && s.spaceUserNames.value.isEmpty())
     }
+
+    // #111: the server re-sends a bubble with `locked` when someone locks or unlocks it; a locked bubble lets nobody else in.
+    @Test
+    fun aBubblesLockIsTrackedAndAMembersOnlyUpdateKeepsIt() {
+        val s = RoomState()
+        s.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 1, position = PointMessage(x = 1, y = 2), userIds = listOf(2, 3))))
+        assertEquals(false, s.groups.value.getValue(1).locked) // a bubble starts open
+        s.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 1, position = PointMessage(x = 1, y = 2), locked = true, userIds = listOf(2, 3))))
+        assertEquals(true, s.groups.value.getValue(1).locked)
+        s.applySub(SubMessage(groupUsersUpdateMessage = GroupUsersUpdateMessage(groupId = 1, userIds = listOf(2, 3, 4))))
+        assertEquals(true, s.groups.value.getValue(1).locked) // members changed, still locked
+        s.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 1, position = PointMessage(x = 5, y = 6), userIds = listOf(2, 3, 4))))
+        assertEquals(true, s.groups.value.getValue(1).locked) // an update that says nothing about the lock does not unlock it
+        s.applySub(SubMessage(groupUpdateMessage = GroupUpdateMessage(groupId = 1, position = PointMessage(x = 5, y = 6), locked = false, userIds = listOf(2, 3, 4))))
+        assertEquals(false, s.groups.value.getValue(1).locked)
+    }
 }

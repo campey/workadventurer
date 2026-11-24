@@ -188,4 +188,21 @@ class WhereaboutsTest {
         assertEquals("You are already in Red Table together", togetherNote(whereIs(2, inArea)))
         assertNull(togetherNote(Whereabouts.OnTheMap))
     }
+
+    @Test
+    fun someoneInALockedBubbleCannotBeWalkedOverTo() {
+        val s = state(listOf(player(2, "Maya"), player(3, "Sam")), groups = listOf(Group(5, 0, 0, listOf(2, 3), locked = true)))
+        val w = whereIs(2, s)
+        assertEquals(Whereabouts.InBubble(ConversationKey.Bubble(5), others = listOf("Sam"), withYou = false, locked = true), w)
+        assertEquals("Their bubble is locked, so nobody else can join it", walkBlockReason(w))
+    }
+
+    @Test
+    fun nothingBlocksWalkingToSomeoneInAnOpenBubbleOrWhenYouAreInTheLockedOne() {
+        val open = state(listOf(player(2, "Maya"), player(3, "Sam")), groups = listOf(Group(5, 0, 0, listOf(2, 3))))
+        assertNull(walkBlockReason(whereIs(2, open)))
+        val together = state(listOf(player(2, "Maya"), player(3, "Sam")), groups = listOf(Group(5, 0, 0, listOf(1, 2, 3), locked = true)), myGroupId = 5)
+        assertNull(walkBlockReason(whereIs(2, together))) // you are already in it
+        assertNull(walkBlockReason(Whereabouts.OnTheMap))
+    }
 }

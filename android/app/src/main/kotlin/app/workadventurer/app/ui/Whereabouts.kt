@@ -4,7 +4,7 @@ import app.workadventurer.app.session.SessionState
 
 /** Where a person is right now, for their screen: in a bubble, in an area, or on the map. [others] are names we can see. */
 sealed interface Whereabouts {
-    data class InBubble(val key: ConversationKey.Bubble, val others: List<String>, val withYou: Boolean) : Whereabouts
+    data class InBubble(val key: ConversationKey.Bubble, val others: List<String>, val withYou: Boolean, val locked: Boolean = false) : Whereabouts
     data class InArea(
         val key: ConversationKey.AreaKey, val areaName: String, val meeting: Boolean, val others: List<String>, val withYou: Boolean,
         /** A Jitsi room: we can't be in that call, so it is never "together" and there is nothing to join. */
@@ -43,7 +43,7 @@ fun whereIsOrNull(userId: Int, s: SessionState): Whereabouts? {
     val bubble = s.groups.sortedBy { it.groupId }.firstOrNull { userId in it.userIds }
     if (bubble != null) {
         val others = bubble.userIds.filter { it != userId && it != s.myUserId }.mapNotNull { names[it] }.sortedBy { it.lowercase() }
-        return Whereabouts.InBubble(ConversationKey.Bubble(bubble.groupId), others, withYou = s.myUserId != null && s.myUserId in bubble.userIds)
+        return Whereabouts.InBubble(ConversationKey.Bubble(bubble.groupId), others, withYou = s.myUserId != null && s.myUserId in bubble.userIds, locked = bubble.locked)
     }
 
     val areas = s.areas.filter { it.contains(person.x, person.y) }.sortedBy { it.name.lowercase() }
@@ -69,7 +69,7 @@ fun whereAmI(s: SessionState): Whereabouts {
     if (bubble != null) {
         val names = s.players.associate { it.userId to it.name }
         val others = bubble.userIds.filter { it != me }.mapNotNull { names[it] }.sortedBy { it.lowercase() }
-        return Whereabouts.InBubble(ConversationKey.Bubble(bubble.groupId), others, withYou = true)
+        return Whereabouts.InBubble(ConversationKey.Bubble(bubble.groupId), others, withYou = true, locked = bubble.locked)
     }
     val areas = s.inAreas.sortedBy { it.name.lowercase() }
     val area = areas.firstOrNull { it.isMeeting() } ?: areas.firstOrNull()
@@ -128,3 +128,10 @@ fun walkExplainer(w: Whereabouts): String? = when {
     w is Whereabouts.InArea && w.meeting && w.others.isNotEmpty() -> "Go to them and join the conversation"
     else -> "Go to them and start a conversation"
 }
+
+/**
+ * Why walking over to them would get you nowhere, or null when it could work. A locked bubble you are not in lets nobody else in
+ * (the server just leaves you standing next to it, with no error), so the screen says so instead (#111).
+ */
+fun walkBlockReason(w: Whereabouts): String? =
+    if (w is Whereabouts.InBubble && w.locked && !w.withYou) "Their bubble is locked, so nobody else can join it" else null

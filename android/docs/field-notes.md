@@ -63,6 +63,13 @@ per-gate sections below have the measurements; this section is the summary to st
 - A new connection id for a peer we already have a link to **replaces** the old link (the server restarts connections with a new
   id). Keyed on (space, peer). [code]
 
+- **Locked bubbles** (#111) [live 2026-11-25, code v1.35.1]: when someone in a bubble locks it, the server re-sends the group as a
+  `GroupUpdateMessage` with `locked = true`; an update that doesn't mention it (a members-only update, or a plain re-send) must not unlock
+  it. A locked bubble lets nobody else in: `Group.searchForNearbyUsers` and `GameRoom` both skip it, so walking next to one leaves you
+  standing there with no error from the server. The app greys out Join and Walk over and says why. A full bubble is refused the same way,
+  but the cap (`MAX_PER_GROUP`) is a server setting that clients never see, so "full" can't be shown. Testing it: two CLI avatars
+  that spawn beside the phone form a bubble that pulls the phone in too, so leave it first, then the lock is seen from outside.
+
 ### Roles and signalling
 - **Who offers** [live, code]: the server tells the user who was already watching the space to offer (`initiator=true`); the
   phone nearly always is that user, so the phone must be able to offer. If nobody offers, the browser times out after ~20 s,

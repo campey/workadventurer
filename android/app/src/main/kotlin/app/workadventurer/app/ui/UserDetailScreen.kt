@@ -118,13 +118,15 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
                     Spacer(Modifier.width(10.dp))
                     Text("Invite", style = MaterialTheme.typography.titleMedium)
                 }
+                // A locked bubble lets nobody else in: say so rather than walk over and stand next to it (#111).
+                val blocked = walkBlockReason(where)
                 PrimaryAction(
                     label = if (walking) "Walking over…" else "Walk over",
-                    explainer = if (walking) "Your avatar is on its way to them" else explainer,
+                    explainer = if (walking) "Your avatar is on its way to them" else blocked ?: explainer,
                     onClick = { onCommand(Command.WalkToPlayer(userId)) },
                     description = if (walking) "Walking over to $name" else "Walk over to $name and ${if (explainer.contains("join")) "join the conversation" else "start a conversation"}",
-                    enabled = canMove && !walking,
-                    quiet = walking,
+                    enabled = canMove && !walking && blocked == null,
+                    quiet = walking || blocked != null,
                 )
             }
         }

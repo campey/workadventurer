@@ -3,8 +3,8 @@ package app.workadventurer.app.ui
 import app.workadventurer.app.session.Activity
 import app.workadventurer.app.session.SessionState
 
-/** Where the conversation screen's action is: join, on the way, in it, on the way out, or a Jitsi area we cannot join. */
-enum class Phase { CanJoin, Walking, Joined, Leaving, Jitsi }
+/** Where the conversation screen's action is: join, on the way, in it, on the way out, a Jitsi area we cannot join, or a locked bubble nobody can. */
+enum class Phase { CanJoin, Walking, Joined, Leaving, Jitsi, Locked }
 
 /**
  * What the screen for one bubble or area shows. Joining and leaving are done by walking (the protocol has no message for
@@ -48,15 +48,17 @@ fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScree
         jitsi -> Phase.Jitsi
         leaving -> Phase.Leaving
         c.joined -> Phase.Joined
+        c.locked -> Phase.Locked
         walking -> Phase.Walking
         else -> Phase.CanJoin
     }
     return ConversationScreenModel(
         title = c.title, noun = noun, members = c.members, phase = phase,
         strip = if (c.joined) "You are in this $noun" else "You are not in this $noun",
-        joinLabel = if (jitsi) "Join in Jitsi" else "Join the $noun",
+        joinLabel = if (jitsi) "Join in Jitsi" else if (c.locked) "This bubble is locked" else "Join the $noun",
         explainer = when {
             jitsi -> JITSI_NOT_SUPPORTED_MESSAGE
+            c.locked -> "The people in it have locked it, so nobody else can join"
             isBubble -> "Walk your avatar over to talk to them"
             else -> "Walk your avatar into the area to talk to them"
         },

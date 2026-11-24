@@ -28,7 +28,8 @@ data class Player(
 }
 
 /** A proximity bubble the server told us about: where it is (map pixels) and who is in it. */
-data class Group(val groupId: Int, val x: Int, val y: Int, val userIds: List<Int>)
+/** A bubble. [locked] means its members closed it: the server lets nobody else in (#111); a bubble starts open. */
+data class Group(val groupId: Int, val x: Int, val y: Int, val userIds: List<Int>, val locked: Boolean = false)
 
 /** Our own avatar: position in (fractional) map pixels, rounded only when it goes on the wire. */
 data class Pose(val x: Double, val y: Double, val facing: Facing)
@@ -112,7 +113,8 @@ class RoomState {
         }
         sub.userLeftMessage?.let { l -> _players.update { it - l.userId } }
         sub.groupUpdateMessage?.let { g ->
-            _groups.update { it + (g.groupId to Group(g.groupId, g.position?.x ?: 0, g.position?.y ?: 0, g.userIds)) }
+            // The server re-sends a bubble with `locked` when it is (un)locked; an update that says nothing about it leaves the lock as it was.
+            _groups.update { it + (g.groupId to Group(g.groupId, g.position?.x ?: 0, g.position?.y ?: 0, g.userIds, locked = g.locked ?: it[g.groupId]?.locked ?: false)) }
             followMyGroup(g.groupId, g.userIds)
         }
         sub.groupUsersUpdateMessage?.let { g ->

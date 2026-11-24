@@ -97,4 +97,21 @@ class ConversationModelTest {
         assertNull(conversationScreen(bubbleKey, state()))
         assertNull(conversationScreen(ConversationKey.AreaKey("nope"), state()))
     }
+
+    // #111: a locked bubble lets nobody else in, so offering to walk over would only leave you standing next to it.
+    @Test
+    fun aLockedBubbleYouAreNotInCannotBeJoinedAndSaysWhy() {
+        val m = conversationScreen(bubbleKey, state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(2), locked = true))))!!
+        assertEquals(Phase.Locked, m.phase)
+        assertEquals("This bubble is locked", m.joinLabel)
+        assertEquals("The people in it have locked it, so nobody else can join", m.explainer)
+        assertEquals("You are not in this bubble", m.strip)
+    }
+
+    @Test
+    fun aLockedBubbleYouAreInIsStillJoinedAndCanBeLeft() {
+        val m = conversationScreen(bubbleKey, state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(1, 2), locked = true)), myGroupId = 3))!!
+        assertEquals(Phase.Joined, m.phase)
+        assertEquals("Leave the bubble", m.leaveLabel)
+    }
 }

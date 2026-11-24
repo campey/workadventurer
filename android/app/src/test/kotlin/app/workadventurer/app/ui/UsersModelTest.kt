@@ -196,4 +196,11 @@ class UsersModelTest {
         assertEquals(listOf("Beta", "Alpha"), order(emptyMap())) // nearest first
         assertEquals(listOf("Alpha", "Beta"), order(mapOf("a" to 4))) // but where you go often comes first
     }
+
+    @Test
+    fun aLockedBubbleIsMarkedLockedInItsTitle() {
+        val m = usersModel(state(players = listOf(player(2, "Ada")), groups = listOf(Group(5, 0, 0, listOf(2), locked = true), Group(6, 0, 0, listOf(2)))))
+        assertEquals(listOf(LOCKED_BUBBLE_TITLE, BUBBLE_TITLE), m.bubbles.map { it.title })
+        assertEquals(listOf(true, false), m.bubbles.map { it.locked })
+    }
 }
