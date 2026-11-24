@@ -244,4 +244,11 @@ class WhereaboutsTest {
         assertEquals(true, (w as Whereabouts.InArea).silent)
         assertEquals("That area is silent, so a conversation can't start there", actionBlocks(w, app.workadventurer.proto.AvailabilityStatus.ONLINE).walk)
     }
+
+    @Test
+    fun yourOwnDoNotDisturbBlocksBothActionsWhoeverTheyAre() {
+        val why = "You are on do not disturb, so you can't join conversations"
+        val blocks = actionBlocks(Whereabouts.OnTheMap, app.workadventurer.proto.AvailabilityStatus.ONLINE, mine = app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB)
+        assertEquals(ActionBlocks(invite = why, walk = why), blocks)
+    }
 }

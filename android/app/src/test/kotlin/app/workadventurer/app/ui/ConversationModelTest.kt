@@ -124,4 +124,18 @@ class ConversationModelTest {
         assertEquals("This area is silent", m.joinLabel)
         assertEquals("Conversations don't work in a silent area", m.explainer)
     }
+
+    @Test
+    fun whileYouAreOnDoNotDisturbYouCannotJoinABubbleAndItSaysWhy() {
+        val s = state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(2)))).copy(myStatus = app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB)
+        val m = conversationScreen(bubbleKey, s)!!
+        assertEquals(Phase.Unavailable, m.phase)
+        assertEquals("You are on do not disturb, so you can't join conversations", m.explainer)
+    }
+
+    @Test
+    fun busyDoesNotStopYouJoining() {
+        val s = state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(2)))).copy(myStatus = app.workadventurer.proto.AvailabilityStatus.BUSY)
+        assertEquals(Phase.CanJoin, conversationScreen(bubbleKey, s)!!.phase)
+    }
 }

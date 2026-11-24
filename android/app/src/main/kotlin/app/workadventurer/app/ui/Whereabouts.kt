@@ -148,7 +148,12 @@ data class ActionBlocks(val invite: String?, val walk: String?)
  * Their status keeps them out of every conversation ([unavailableReason]), which blocks Invite whatever else; Walk over is blocked too
  * unless they are in a meeting area, since walking into the area puts you in the same meeting however their status reads.
  */
-fun actionBlocks(w: Whereabouts, status: app.workadventurer.proto.AvailabilityStatus): ActionBlocks {
+fun actionBlocks(
+    w: Whereabouts, status: app.workadventurer.proto.AvailabilityStatus,
+    /** Your own status: on do not disturb nothing works, whoever they are. */
+    mine: app.workadventurer.proto.AvailabilityStatus = app.workadventurer.proto.AvailabilityStatus.ONLINE,
+): ActionBlocks {
+    yourStatusReason(mine)?.let { return ActionBlocks(invite = it, walk = it) }
     val unavailable = unavailableReason(status)
     val walk = walkBlockReason(w) ?: unavailable.takeUnless { w is Whereabouts.InArea && w.meeting }
     return ActionBlocks(invite = unavailable, walk = walk)

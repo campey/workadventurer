@@ -1065,4 +1065,43 @@ class PusherConnectionTest {
             conn.close()
         }
     }
+
+    // #111: your status is what other people's clients (and the server's bubble rules) see, so a join announces the one you chose,
+    // and changing it in the room sends the same field the web client does.
+    @Test
+    fun aJoinAnnouncesTheChosenStatusAndItCanBeChangedInTheRoom() = runBlocking {
+        val fake = Fake(
+            onOpen = { ws -> ws.send(s2c(ServerToClientMessage(roomConnectedMessage = RoomConnectedMessage()))) },
+            onFrame = { ws, msg ->
+                if (msg.joinRoomFrontMessage != null) ws.send(s2c(ServerToClientMessage(roomJoinedMessage = RoomJoinedMessage(currentUserId = 7))))
+            },
+        )
+        server(fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s).copy(availabilityStatus = app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            val join = generateSequence { fake.received.poll(2, TimeUnit.SECONDS) }.first { it.joinRoomFrontMessage != null }.joinRoomFrontMessage!!
+            assertEquals(app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB, join.availabilityStatus)
+            conn.setAvailabilityStatus(app.workadventurer.proto.AvailabilityStatus.BUSY)
+            val details = generateSequence { fake.received.poll(2, TimeUnit.SECONDS) }.first { it.setPlayerDetailsMessage != null }.setPlayerDetailsMessage!!
+            assertEquals(app.workadventurer.proto.AvailabilityStatus.BUSY, details.availabilityStatus)
+            conn.close()
+        }
+    }
+
+    @Test
+    fun aJoinWithNoChosenStatusAnnouncesOnline() = runBlocking {
+        val fake = Fake(
+            onOpen = { ws -> ws.send(s2c(ServerToClientMessage(roomConnectedMessage = RoomConnectedMessage()))) },
+            onFrame = { ws, msg ->
+                if (msg.joinRoomFrontMessage != null) ws.send(s2c(ServerToClientMessage(roomJoinedMessage = RoomJoinedMessage(currentUserId = 7))))
+            },
+        )
+        server(fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            withTimeout(5_000) { conn.connect() }
+            val join = generateSequence { fake.received.poll(2, TimeUnit.SECONDS) }.first { it.joinRoomFrontMessage != null }.joinRoomFrontMessage!!
+            assertEquals(app.workadventurer.proto.AvailabilityStatus.ONLINE, join.availabilityStatus)
+            conn.close()
+        }
+    }
 }

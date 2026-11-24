@@ -80,6 +80,13 @@ per-gate sections below have the measurements; this section is the summary to st
   its own status to `SILENT` while inside; the server only sees the status. Prod's Afrolabs room has several (Pop Bench, ...), campus
   has two, staging's village has many (even a `start` area). The Conversation screen of such an area says it is silent.
 
+- **Setting your own status** (#111) [live 2026-11-25]: `joinRoomFrontMessage.availabilityStatus` announces it on join and
+  `setPlayerDetailsMessage { availabilityStatus }` changes it in the room (the same field the CLI uses for LiveKit areas). The app offers
+  the web client's four: online, busy, back in a moment, do not disturb. Seen live, both ways: with the phone on do not disturb an
+  online avatar spawned beside it and no bubble formed; 0.3 s after the phone went back to online the server put it in the bubble
+  (`GameRoom` re-checks a user who stops being silent). The server also takes you out of your current bubble when you go silent.
+  Kept in the session, not on disk: it survives leaving, rejoining and reconnects, but not the app being killed.
+
 ### Roles and signalling
 - **Who offers** [live, code]: the server tells the user who was already watching the space to offer (`initiator=true`); the
   phone nearly always is that user, so the phone must be able to offer. If nobody offers, the browser times out after ~20 s,

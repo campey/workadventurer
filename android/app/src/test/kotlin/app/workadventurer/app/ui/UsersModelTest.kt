@@ -203,4 +203,11 @@ class UsersModelTest {
         assertEquals(listOf(LOCKED_BUBBLE_TITLE, BUBBLE_TITLE), m.bubbles.map { it.title })
         assertEquals(listOf(true, false), m.bubbles.map { it.locked })
     }
+
+    // #111: your row in the list shows the status you chose, not a fixed "Online".
+    @Test
+    fun yourOwnRowShowsYourOwnStatus() {
+        val m = usersModel(state().copy(myStatus = AvailabilityStatus.DO_NOT_DISTURB))
+        assertEquals(AvailabilityStatus.DO_NOT_DISTURB, m.onMap.first { it.isMe }.status)
+    }
 }

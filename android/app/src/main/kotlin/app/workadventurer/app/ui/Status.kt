@@ -48,6 +48,23 @@ fun unavailableReason(s: AvailabilityStatus): String? {
     return "$why, so they can't be in a conversation right now"
 }
 
+/** A status you can pick for yourself, with what it means (#111). The web client's menu offers these four. */
+data class StatusChoice(val status: AvailabilityStatus, val hint: String)
+
+val SELECTABLE_STATUSES = listOf(
+    StatusChoice(AvailabilityStatus.ONLINE, "Anyone can talk to you"),
+    StatusChoice(AvailabilityStatus.BUSY, "Others see you are busy, but you can still talk"),
+    StatusChoice(AvailabilityStatus.BACK_IN_A_MOMENT, "Nobody can join you, and you can't join anyone"),
+    StatusChoice(AvailabilityStatus.DO_NOT_DISTURB, "Nobody can join you, and you can't join anyone"),
+)
+
+/** Why your own status stops you joining conversations (the server keeps these two out of every bubble), or null when it doesn't. */
+fun yourStatusReason(s: AvailabilityStatus): String? = when (s) {
+    AvailabilityStatus.DO_NOT_DISTURB -> "You are on do not disturb, so you can't join conversations"
+    AvailabilityStatus.BACK_IN_A_MOMENT -> "You said you will be back in a moment, so you can't join conversations"
+    else -> null
+}
+
 /** Not in a world: the protocol has no such status, but the web client says "Offline" and shows a grey dot. */
 const val OFFLINE_LABEL = "Offline"
 const val OFFLINE_COLOR = 0xFF6B7A90L

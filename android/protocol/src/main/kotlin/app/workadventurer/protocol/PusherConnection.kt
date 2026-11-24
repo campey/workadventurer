@@ -9,6 +9,7 @@ import app.workadventurer.proto.AnswerMessage
 import app.workadventurer.proto.AskPositionMessage
 import app.workadventurer.proto.AvailabilityStatus
 import app.workadventurer.proto.ClientToServerMessage
+import app.workadventurer.proto.SetPlayerDetailsMessage
 import app.workadventurer.proto.FilterType
 import app.workadventurer.proto.IceServersQuery
 import app.workadventurer.proto.JoinSpaceQuery
@@ -210,6 +211,15 @@ open class PusherConnection(
     @Volatile var micOn = false
         private set
     private val micTimers = ConcurrentHashMap<String, Job>()
+
+    /**
+     * Announce a new status (online, busy, back in a moment, do not disturb). With some of them the server takes us out of our bubble and
+     * keeps us out of every one (#111), so this is the one thing that must go out when the person chooses.
+     */
+    open fun setAvailabilityStatus(status: AvailabilityStatus) {
+        _log.tryEmit("status: ${status.name}")
+        send(ClientToServerMessage(setPlayerDetailsMessage = SetPlayerDetailsMessage(availabilityStatus = status)))
+    }
 
     /** Tell every space we are in whether our mic is live; while it is on, repeat the announcement (see [micReannounceMs]). */
     open fun setMicOn(on: Boolean) {
@@ -474,7 +484,7 @@ open class PusherConnection(
                 name = cfg.name,
                 positionMessage = positionMessage(false),
                 viewportMessage = viewport(),
-                availabilityStatus = AvailabilityStatus.ONLINE,
+                availabilityStatus = cfg.availabilityStatus,
             )))
             return
         }

@@ -84,4 +84,22 @@ class StatusTest {
             assertEquals(null, unavailableReason(s), s.name)
         }
     }
+
+    // #111 slice 3: the statuses you can pick for yourself (the web client's menu), and what two of them cost you.
+    @Test
+    fun youCanPickOnlineBusyBackInAMomentOrDoNotDisturb() {
+        assertEquals(
+            listOf(AvailabilityStatus.ONLINE, AvailabilityStatus.BUSY, AvailabilityStatus.BACK_IN_A_MOMENT, AvailabilityStatus.DO_NOT_DISTURB),
+            SELECTABLE_STATUSES.map { it.status },
+        )
+        assertEquals("Nobody can join you, and you can't join anyone", SELECTABLE_STATUSES.first { it.status == AvailabilityStatus.DO_NOT_DISTURB }.hint)
+    }
+
+    @Test
+    fun doNotDisturbAndBackInAMomentStopYouJoiningConversations() {
+        assertEquals("You are on do not disturb, so you can't join conversations", yourStatusReason(AvailabilityStatus.DO_NOT_DISTURB))
+        assertEquals("You said you will be back in a moment, so you can't join conversations", yourStatusReason(AvailabilityStatus.BACK_IN_A_MOMENT))
+        assertEquals(null, yourStatusReason(AvailabilityStatus.ONLINE))
+        assertEquals(null, yourStatusReason(AvailabilityStatus.BUSY)) // busy is only a signal to others
+    }
 }

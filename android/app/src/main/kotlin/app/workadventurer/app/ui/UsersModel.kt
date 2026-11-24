@@ -68,7 +68,7 @@ private fun areaOrder(s: SessionState, visits: Map<String, Int>, populated: (Are
 }
 
 fun usersModel(s: SessionState, visits: Map<String, Int> = emptyMap()): UsersModel {
-    val me = Participant(s.myUserId, s.myName.ifBlank { "You" }, true, AvailabilityStatus.ONLINE, s.myTextures)
+    val me = Participant(s.myUserId, s.myName.ifBlank { "You" }, true, s.myStatus, s.myTextures)
     val others = s.players.associateBy { it.userId }.mapValues { (_, p) ->
         Participant(p.userId, p.name, false, p.availabilityStatus, p.textures)
     }

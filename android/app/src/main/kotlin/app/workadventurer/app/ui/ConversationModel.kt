@@ -4,7 +4,7 @@ import app.workadventurer.app.session.Activity
 import app.workadventurer.app.session.SessionState
 
 /** Where the conversation screen's action is: join, on the way, in it, on the way out, a Jitsi area we cannot join, a locked bubble, or a silent area (nobody can talk in either). */
-enum class Phase { CanJoin, Walking, Joined, Leaving, Jitsi, Locked, Silent }
+enum class Phase { CanJoin, Walking, Joined, Leaving, Jitsi, Locked, Silent, Unavailable }
 
 /**
  * What the screen for one bubble or area shows. Joining and leaving are done by walking (the protocol has no message for
@@ -39,6 +39,7 @@ fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScree
     val area = (key as? ConversationKey.AreaKey)?.let { k -> s.areas.firstOrNull { (it.id ?: it.name) == k.key } }
     val jitsi = area?.isJitsi() == true
     val silentArea = area?.isSilent() == true && !jitsi
+    val myBlock = yourStatusReason(s.myStatus) // your own do not disturb / back in a moment comes first: nothing else would work
     val others = c.members.filter { !it.isMe }
     val walking = when (val a = s.activity) {
         is Activity.WalkingTo -> if (isBubble) others.any { it.name.ifBlank { "Unnamed player" } == a.label } else a.label == c.title
@@ -49,6 +50,7 @@ fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScree
         jitsi -> Phase.Jitsi
         leaving -> Phase.Leaving
         c.joined -> Phase.Joined
+        myBlock != null -> Phase.Unavailable
         c.locked -> Phase.Locked
         silentArea -> Phase.Silent
         walking -> Phase.Walking
@@ -60,6 +62,7 @@ fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScree
         joinLabel = if (jitsi) "Join in Jitsi" else if (c.locked) "This bubble is locked" else if (silentArea) "This area is silent" else "Join the $noun",
         explainer = when {
             jitsi -> JITSI_NOT_SUPPORTED_MESSAGE
+            myBlock != null -> myBlock
             c.locked -> "The people in it have locked it, so nobody else can join"
             silentArea -> "Conversations don't work in a silent area"
             isBubble -> "Walk your avatar over to talk to them"
