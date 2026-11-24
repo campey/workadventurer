@@ -54,4 +54,24 @@ class WorldDetailsTest {
         assertEquals(WorldDetails("Unknown world", "", ""), worldDetails(""))
         assertEquals("Unknown world", worldDetails("https://play.workadventu.re").name) // a host with no room
     }
+
+    @Test
+    fun aWorldIsLookedUpOnlyOnceTheAddressIsARoom() {
+        assertEquals(
+            "https://play.workadventu.re/@/levelup-npc/lean-iterator/campus",
+            worldLookupUrl("  https://play.workadventu.re/@/levelup-npc/lean-iterator/campus  "),
+        )
+        assertEquals(null, worldLookupUrl("")) // nothing typed yet
+        assertEquals(null, worldLookupUrl("https://play.workadventu.re")) // a host with no room
+        assertEquals(null, worldLookupUrl("ftp://play.workadventu.re/@/a/b/c")) // not a web address
+    }
+
+    @Test
+    fun aQueryOrFragmentIsNotSentWhenLookingAWorldUp() {
+        assertEquals(
+            "https://play.workadventu.re/@/a/b/c",
+            worldLookupUrl("https://play.workadventu.re/@/a/b/c?token=secret#x"),
+        )
+    }
 }
+

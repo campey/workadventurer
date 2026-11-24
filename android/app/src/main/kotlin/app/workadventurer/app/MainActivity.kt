@@ -68,6 +68,8 @@ class MainActivity : ComponentActivity() {
                     visitsFor = { room -> (application as WaApp).areaVisits.counts(room) },
                     chosenWokaFor = { room -> (application as WaApp).chosenWoka.get(room) },
                     loadWokas = { room -> (application as WaApp).wokaCatalogue(room) },
+                    loadWorldMeta = { room -> (application as WaApp).worldMeta(room) },
+                    loadPicture = { url -> (application as WaApp).pictureLoader.load(url) },
                     onChooseWoka = { room, woka -> (application as WaApp).chosenWoka.choose(room, Texture(woka.id, woka.url)) },
                     onMicChoice = ::chooseMic,
                     audio = audio,

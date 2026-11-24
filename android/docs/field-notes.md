@@ -123,6 +123,14 @@ per-gate sections below have the measurements; this section is the summary to st
   world panel open left the app). A no-action-bar theme is needed or the system title bar shows above the app's own top bar.
 - **World icon**: every room we know shows the default WorkAdventure coffee cup. A custom icon can only come from the
   server's `metatags.favIcons` (admin API); none of our rooms sets one, so it isn't read yet.
+- **A world's own words and picture** (#108) [live, 2026-11-24]: the room's `.wam` (found through `GET {pusher}/map?playUri=`, the
+  same fetch as the areas) has a `metadata` object with `name`, `description` (can hold blank lines and line breaks) and
+  `thumbnail` (a public https picture address on the map author's own host). Prod's Afrolabs and campus rooms and staging's village
+  have a thumbnail; staging's has no description. `/map` itself carries no `metatags` for any of these, and the room page's
+  `<link rel="icon">` is only WorkAdventure's own default, so the icon is still not read. The Join screen looks the world up 600 ms
+  after the address stops changing, shows a placeholder tile, then the description (on glass over the bottom of the map) and the
+  picture together. Joining never waits for it: a failed lookup shows nothing extra. The picture is fetched https-only, at most 4 MB,
+  and shrunk to about 720 px wide; the lookup sends the address without its query or fragment (they can carry a token).
 
 ### Choosing a woka (#108)
 - **The catalogue** [live, code]: `GET {pusher}/woka/list?roomUrl=<urlencoded room>` with the login token bare in `Authorization`

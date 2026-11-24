@@ -26,6 +26,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.ImageBitmap
+import app.workadventurer.protocol.WorldMeta
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -60,6 +64,9 @@ fun JoinScreen(
     chosenFor: (roomUrl: String) -> Texture? = { null },
     wokaPicks: Int = 0,
     onWoka: (roomUrl: String) -> Unit = {},
+    /** What the world says about itself and its picture (#108): looked up once the address is a room, never needed to join. */
+    loadWorldMeta: suspend (roomUrl: String) -> WorldMeta? = { null },
+    loadPicture: suspend (url: String) -> ImageBitmap? = { null },
     onJoin: (name: String, room: String) -> Unit,
     onSettings: () -> Unit = {},
 ) {
@@ -70,6 +77,25 @@ fun JoinScreen(
     val urlFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val joining = connection is Connection.Connecting || connection is Connection.NeedsConsent
+    // Look the world up a moment after the address stops changing; its words and picture then appear in the tile. Joining never waits.
+    var meta by remember { mutableStateOf<WorldMeta?>(null) }
+    var picture by remember { mutableStateOf<ImageBitmap?>(null) }
+    var looking by remember { mutableStateOf(false) }
+    val lookup = worldLookupUrl(room)
+    LaunchedEffect(lookup) {
+        meta = null
+        picture = null
+        looking = lookup != null
+        if (lookup != null) {
+            delay(LOOKUP_DELAY_MS)
+            val found = loadWorldMeta(lookup)
+            val image = found?.thumbnail?.let { loadPicture(it) }
+            // All together, with nothing suspending between: the words and the map appear in one step.
+            meta = found
+            picture = image
+            looking = false
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Column(
@@ -104,6 +130,14 @@ fun JoinScreen(
                 }
             }
             WorldInfo(worldDetails(room))
+            WorldPreview(meta?.description, picture, loading = looking)
+        }
+        // Pinned to the Join button, outside the scrolling world tile: the tile's picture and text arriving or changing size never move them.
+        Column(Modifier.padding(horizontal = 20.dp).padding(top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // A failed join says so just above the name, so the name and woka stay where they are, next to Join.
+            if (connection is Connection.Failed) {
+                Text("Couldn't join: ${connection.message}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            }
             // Your name, and how you will look: the woka the server last gave you, as it appears in the top bar.
             // Bottom-aligned, and the same height as the name box (56 dp), so their tops and bottoms line up.
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -113,9 +147,6 @@ fun JoinScreen(
                 )
                 val layers = remember(room, wokaPicks) { chosenFor(room)?.let { listOf(it) } ?: texturesFor(room) }
                 WokaTile(layers, name, onClick = { onWoka(room.trim()) }, description = wokaTileDescription(offline = true), offline = true)
-            }
-            if (connection is Connection.Failed) {
-                Text("Couldn't join: ${connection.message}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
         }
         PrimaryAction(
@@ -129,3 +160,6 @@ fun JoinScreen(
         Spacer(Modifier.padding(bottom = 12.dp))
     }
 }
+
+/** How long the address must stay unchanged before the world is looked up, so typing doesn't fetch for every letter. */
+private const val LOOKUP_DELAY_MS = 600L
