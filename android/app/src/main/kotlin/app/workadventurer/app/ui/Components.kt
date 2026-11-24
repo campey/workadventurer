@@ -13,7 +13,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -86,29 +89,88 @@ fun PrimaryAction(
 
 /**
  * A world's icon, name, domain and path. [plain] drops the card (border, background, padding) for a surface that already is
- * the right colour, such as the world panel; the Join screen uses the bordered tile.
+ * the right colour, such as the world panel (icon above its words); the Join screen uses the bordered tile, with the words
+ * beside the icon.
  */
 @Composable
 fun WorldInfo(details: WorldDetails, plain: Boolean = false, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(16.dp)
-    val card = if (plain) Modifier else Modifier
-        .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+    val card = if (plain) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outline, shape)
+    val icon: @Composable () -> Unit = {
+        Box(
+            Modifier.size(64.dp).border(3.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(18.dp)),
+            contentAlignment = Alignment.Center,
+        ) { Icon(WaIcons.WorldDefault, contentDescription = null, modifier = Modifier.size(34.dp)) }
+    }
+    val words: @Composable () -> Unit = {
+        Text(details.name, style = MaterialTheme.typography.titleLarge)
+        if (details.host.isNotEmpty()) {
+            Text(details.host, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+            Text(details.path, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+        }
+    }
     Surface(
         modifier = modifier.fillMaxWidth().then(card),
         shape = shape,
         color = if (plain) androidx.compose.ui.graphics.Color.Transparent else MaterialTheme.colorScheme.surface,
     ) {
-        Column(Modifier.padding(if (plain) 0.dp else 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(
-                Modifier.size(64.dp).border(3.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(18.dp)),
-                contentAlignment = Alignment.Center,
-            ) { Icon(WaIcons.WorldDefault, contentDescription = null, modifier = Modifier.size(34.dp)) }
-            Column {
-                Text(details.name, style = MaterialTheme.typography.titleLarge)
-                if (details.host.isNotEmpty()) {
-                    Text(details.host, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
-                    Text(details.path, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
-                }
+        if (plain) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                icon()
+                Column { words() }
+            }
+        } else {
+            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                icon()
+                Column(Modifier.weight(1f)) { words() }
+            }
+        }
+    }
+}
+
+/**
+ * What a world says about itself under its title tile (#108), shown only once it is all there: while [loading] a placeholder tile
+ * stands in. Its map [picture] is a tile of its own, with the [description] on dark
+ * translucent glass over the bottom of it. A world with a description but no picture gets the description in a plain tile; one with
+ * neither gets nothing. The Join screen scrolls this above its pinned name and Join, so its size changing moves nothing else.
+ */
+@Composable
+fun WorldPreview(
+    description: String?, picture: androidx.compose.ui.graphics.ImageBitmap?, modifier: Modifier = Modifier,
+    /** True while the world is being looked up: a placeholder tile stands in, and the real one replaces it in one step. */
+    loading: Boolean = false,
+) {
+    val shape = RoundedCornerShape(16.dp)
+    if (loading) {
+        Box(
+            modifier.fillMaxWidth().height(180.dp).clip(shape).border(1.dp, MaterialTheme.colorScheme.outline, shape)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                .semantics { contentDescription = "Loading the world's preview" },
+            contentAlignment = Alignment.Center,
+        ) { androidx.compose.material3.CircularProgressIndicator(Modifier.size(32.dp), strokeWidth = 3.dp) }
+        return
+    }
+    if (picture == null) {
+        if (description != null) Text(
+            description, style = MaterialTheme.typography.bodyMedium,
+            modifier = modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline, shape).padding(16.dp),
+        )
+        return
+    }
+    Box(modifier.fillMaxWidth().heightIn(min = 180.dp).clip(shape).border(1.dp, MaterialTheme.colorScheme.outline, shape)) {
+        androidx.compose.foundation.Image(
+            picture, contentDescription = "Preview of the world", modifier = Modifier.matchParentSize(),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+        )
+        if (description != null) {
+            // The map shows above; the words sit on glass below it. Dark enough to read over a bright or a busy map.
+            Column(Modifier.fillMaxWidth()) {
+                Spacer(Modifier.height(140.dp))
+                Text(
+                    description, style = MaterialTheme.typography.bodyMedium, color = androidx.compose.ui.graphics.Color.White,
+                    modifier = Modifier.fillMaxWidth().padding(8.dp).clip(RoundedCornerShape(10.dp))
+                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.76f)).padding(12.dp),
+                )
             }
         }
     }

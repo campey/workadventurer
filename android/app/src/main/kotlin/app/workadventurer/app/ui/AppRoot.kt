@@ -38,6 +38,8 @@ import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.SessionState
 import app.workadventurer.protocol.Texture
 import app.workadventurer.protocol.WokaCatalogue
+import app.workadventurer.protocol.WorldMeta
+import androidx.compose.ui.graphics.ImageBitmap
 import app.workadventurer.protocol.WokaTexture
 import kotlinx.coroutines.launch
 
@@ -73,6 +75,9 @@ fun AppRoot(
     chosenWokaFor: (roomUrl: String) -> Texture? = { null },
     loadWokas: suspend (roomUrl: String) -> Result<WokaCatalogue> = { Result.failure(IllegalStateException("no catalogue")) },
     onChooseWoka: (roomUrl: String, woka: WokaTexture) -> Unit = { _, _ -> },
+    /** What a world says about itself, and its picture, for the Join screen's world tile (#108); null when unavailable. */
+    loadWorldMeta: suspend (roomUrl: String) -> WorldMeta? = { null },
+    loadPicture: suspend (url: String) -> ImageBitmap? = { null },
     /** The Network sheet's numbers (#171); [onNetworkWatching] tells when the sheet is open, so the call links are only read then. */
     net: NetSnapshot = NetSnapshot(),
     onNetworkWatching: (Boolean) -> Unit = {},
@@ -172,6 +177,7 @@ fun AppRoot(
                         JoinScreen(
                             state.connection, initialName, texturesFor,
                             chosenFor = chosenWokaFor, wokaPicks = wokaPicks,
+                            loadWorldMeta = loadWorldMeta, loadPicture = loadPicture,
                             onWoka = { room -> wokaRoom = room; nav.navigate(Route.Woka.path) },
                             onJoin = onJoin,
                         )

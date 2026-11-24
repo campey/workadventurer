@@ -30,3 +30,10 @@ fun worldDetails(roomUrl: String): WorldDetails {
         .trim().replaceFirstChar { it.uppercase() }.ifEmpty { UNKNOWN_WORLD }
     return WorldDetails(name, host, path)
 }
+
+/**
+ * The address to look a world up by (its description and picture on the Join screen), or null while what is typed isn't yet a room on
+ * the web. Scheme, host and path only: a query or fragment can carry a token and is not sent.
+ */
+fun worldLookupUrl(roomUrl: String): String? =
+    shareableRoomUrl(roomUrl).takeIf { it.startsWith("https://") || it.startsWith("http://") }
