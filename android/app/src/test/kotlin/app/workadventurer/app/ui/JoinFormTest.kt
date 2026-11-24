@@ -54,10 +54,24 @@ class JoinFormTest {
         assertEquals(false, canRejoin(current = "Ada", typed = "Bo", wokaChanged = false, connected = false)) // mid-reconnect
     }
 
+    // Changing your name or woka turns Leave into Rejoin, and a warning above the name says why.
     @Test
-    fun theRejoinButtonAndItsLineSaySoPlainly() {
-        assertEquals("Rejoin as Bo", rejoinLabel("  Bo "))
-        assertEquals("Rejoin as you", rejoinLabel(""))
-        assertEquals("Leaves and joins again with your new name or woka", REJOIN_EXPLAINER)
+    fun theRejoinWarningNamesWhatYouChanged() {
+        assertEquals("⚠️ To update your name you need to rejoin the room", rejoinNotice("Ada", "Bo", wokaChanged = false, connected = true))
+        assertEquals("⚠️ To update your woka you need to rejoin the room", rejoinNotice("Ada", "Ada", wokaChanged = true, connected = true))
+        assertEquals("⚠️ To update your name and woka you need to rejoin the room", rejoinNotice("Ada", " Bo ", wokaChanged = true, connected = true))
+    }
+
+    @Test
+    fun noWarningWhileNothingWouldBeUpdated() {
+        assertEquals(null, rejoinNotice("Ada", "Ada", wokaChanged = false, connected = true))
+        assertEquals(null, rejoinNotice("Ada", " Ada ", wokaChanged = false, connected = true)) // spaces are not a change
+        assertEquals(null, rejoinNotice("Ada", "", wokaChanged = false, connected = true)) // a blank name can't be rejoined with
+        assertEquals(null, rejoinNotice("Ada", "Bo", wokaChanged = false, connected = false)) // mid-reconnect: Leave stays
+    }
+
+    @Test
+    fun theRejoinButtonSaysSoPlainly() {
+        assertEquals("Rejoin the room", REJOIN_LABEL)
     }
 }

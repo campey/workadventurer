@@ -138,6 +138,7 @@ fun AppRoot(
             drawerContent = {
                 WorldPanel(
                     details = details,
+                    roomUrl = state.roomName, loadWorldMeta = loadWorldMeta, loadPicture = loadPicture,
                     onShareLink = { onShareLink(shareableRoomUrl(state.roomName)); scope.launch { drawer.close() } },
                     onShareLogs = onShareLogs,
                     onLeave = onLeave,

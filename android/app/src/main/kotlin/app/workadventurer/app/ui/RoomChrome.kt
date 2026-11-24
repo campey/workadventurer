@@ -47,7 +47,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.workadventurer.proto.AvailabilityStatus
@@ -117,9 +119,22 @@ private val LeaveIcon: ImageVector by lazy {
     ).build()
 }
 
+private val RefreshIcon: ImageVector by lazy {
+    ImageVector.Builder("refresh", 24.dp, 24.dp, 24f, 24f).addPath(
+        pathData = PathParser().parsePathString(
+            "M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4 M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4",
+        ).toNodes(),
+        stroke = androidx.compose.ui.graphics.SolidColor(Color.Black), strokeLineWidth = 2f,
+        strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round, strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
+    ).build()
+}
+
+/** The orange of the rejoin button's icon and warning: something here needs your attention, but nothing is broken. */
+private val RejoinOrange = Color(0xFFFF9800)
+
 /**
- * The panel that slides in from the left: the world's details, a link to share, and at the bottom Leave beside a button that
- * shares the debug logs. Only what exists today is here; world options are added as they come.
+ * The panel that slides in from the left: the world's summary, a link to share, your name and woka pinned at the bottom, and Leave
+ * (which becomes Rejoin once the name or woka has changed) beside a button that shares the debug logs. Only what exists today is here; world options are added as they come.
  */
 @Composable
 fun WorldPanel(
@@ -129,13 +144,25 @@ fun WorldPanel(
     /** The woka you picked but are not wearing yet: shown in place of [myTextures], and it makes Rejoin live. */
     pendingWoka: Texture? = null,
     onWoka: () -> Unit = {}, onRejoin: (name: String) -> Unit = {},
+    /** The room's address, and how to look its world up (#108): the panel shows the same summary as the Join screen. */
+    roomUrl: String = "",
+    loadWorldMeta: suspend (roomUrl: String) -> app.workadventurer.protocol.WorldMeta? = { null },
+    loadPicture: suspend (url: String) -> androidx.compose.ui.graphics.ImageBitmap? = { null },
 ) {
+    // Your name, typed here: it is fixed for a connection, so changing it (or the woka) means rejoining.
+    var typed by rememberSaveable(myName) { mutableStateOf(myName) }
+    val notice = rejoinNotice(myName, typed, wokaChanged = pendingWoka != null, connected = connected)
     ModalDrawerSheet(
         drawerContainerColor = MaterialTheme.colorScheme.surface,
         drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
     ) {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp).padding(top = 28.dp)) {
-            WorldInfo(details, plain = true)
+            // The same summary as the Join screen: the title tile, then the map with the description on glass.
+            val world = rememberWorldLookup(roomUrl, 0L, loadWorldMeta, loadPicture)
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                WorldInfo(details)
+                WorldPreview(world.meta?.description, world.picture, loading = world.looking)
+            }
             TextButton(
                 onClick = onShareLink,
                 modifier = Modifier.padding(top = 8.dp).heightIn(min = 56.dp).semantics { contentDescription = "Share a link to this room" },
@@ -144,9 +171,14 @@ fun WorldPanel(
                 Spacer(Modifier.width(14.dp))
                 Text("Share link to room", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             }
-            // You, like on the Join screen. The name and woka are fixed for a connection, so changing them needs a rejoin.
-            HorizontalDivider(Modifier.padding(top = 12.dp, bottom = 16.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-            var typed by rememberSaveable(myName) { mutableStateOf(myName) }
+            Spacer(Modifier.height(16.dp))
+        }
+        // You, pinned to the bottom like on the Join screen: whatever scrolls above never moves it. The warning appears above the name.
+        Column(Modifier.fillMaxWidth().padding(horizontal = 28.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (notice != null) Text(
+                notice, style = MaterialTheme.typography.bodyMedium, color = RejoinOrange,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = typed, onValueChange = { typed = it }, singleLine = true,
@@ -157,13 +189,6 @@ fun WorldPanel(
                     description = wokaTileDescription(offline = false), offline = false,
                 )
             }
-            Spacer(Modifier.height(16.dp))
-            PrimaryAction(
-                label = rejoinLabel(typed), explainer = REJOIN_EXPLAINER, onClick = { onRejoin(typed.trim()) },
-                description = "${rejoinLabel(typed)}. $REJOIN_EXPLAINER",
-                enabled = canRejoin(current = myName, typed = typed, wokaChanged = pendingWoka != null, connected = connected), quiet = true,
-            )
-            Spacer(Modifier.height(16.dp))
         }
         HorizontalDivider(Modifier.padding(horizontal = 28.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
         Row(
@@ -172,14 +197,21 @@ fun WorldPanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Button(
-                onClick = onLeave,
-                modifier = Modifier.weight(1f).heightIn(min = 56.dp).semantics { contentDescription = "Leave the room ${details.name}" },
+                onClick = if (notice != null) ({ onRejoin(typed.trim()) }) else onLeave,
+                modifier = Modifier.weight(1f).heightIn(min = 56.dp)
+                    .semantics { contentDescription = if (notice != null) "$REJOIN_LABEL to update your name or woka" else "Leave the room ${details.name}" },
                 shape = RoundedCornerShape(28.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface),
             ) {
-                Icon(LeaveIcon, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                Spacer(Modifier.width(12.dp))
-                Text("Leave the room", style = MaterialTheme.typography.titleMedium)
+                if (notice != null) {
+                    Icon(RefreshIcon, contentDescription = null, tint = RejoinOrange)
+                    Spacer(Modifier.width(12.dp))
+                    Text(REJOIN_LABEL, style = MaterialTheme.typography.titleMedium)
+                } else {
+                    Icon(LeaveIcon, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Leave the room", style = MaterialTheme.typography.titleMedium)
+                }
             }
             IconButton(
                 onClick = onShareLogs,
