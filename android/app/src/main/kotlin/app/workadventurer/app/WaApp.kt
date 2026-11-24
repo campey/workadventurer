@@ -46,6 +46,17 @@ class WaApp : Application() {
         }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
     }
 
+    private val worldMetas = java.util.concurrent.ConcurrentHashMap<String, app.workadventurer.protocol.WorldMeta>()
+
+    /** A world's own words about itself (#108), for the Join screen. Kept for the run; null when it can't be read, which is not cached. */
+    suspend fun worldMeta(roomUrl: String): app.workadventurer.protocol.WorldMeta? {
+        worldMetas[roomUrl]?.let { return it }
+        val cfg = app.workadventurer.protocol.RoomConfig.forRoom("", roomUrl)
+        return app.workadventurer.protocol.fetchWorldMeta(http, cfg)?.also { worldMetas[roomUrl] = it }
+    }
+
+    val pictureLoader by lazy { app.workadventurer.app.ui.PictureLoader(http) }
+
     /** The audio devices and which one a call uses (#164); tracks devices from the start so the bar can show them. */
     val audioRouter: app.workadventurer.app.audio.AudioRouter by lazy { app.workadventurer.app.audio.AudioRouter(this, callLog).also { it.start() } }
 
