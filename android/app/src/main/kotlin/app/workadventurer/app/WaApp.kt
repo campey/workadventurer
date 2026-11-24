@@ -6,6 +6,7 @@ import android.os.Build
 import android.util.Log
 import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.WaSession
+import app.workadventurer.app.session.startsNewCall
 import app.workadventurer.protocol.PusherConnection
 import app.workadventurer.protocol.WaStaging
 import kotlinx.coroutines.CoroutineScope
@@ -119,6 +120,19 @@ class WaApp : Application() {
         )
     }
 
+    /** Whether a newer server's adapter may be downloaded: ask (default), automatically, or never. */
+    val adapterUpdates by lazy { AdapterUpdatesSetting(PrefsStore(this)) }
+
+    /** Adapters downloaded for server versions this build predates; private to the app, a corrupt file is ignored and overwritten. */
+    private val adapterRecovery by lazy {
+        app.workadventurer.app.session.CatalogAdapterRecovery(
+            settings = adapterUpdates,
+            store = app.workadventurer.protocol.catalog.FileAdapterStore(File(filesDir, "adapters")),
+            client = http,
+            indexUrl = BuildConfig.CATALOG_URL.ifEmpty { app.workadventurer.protocol.catalog.DEFAULT_CATALOG_URL }, // empty unless a debug build overrides it
+        )
+    }
+
     val session: WaSession by lazy {
         val s = WaSession(
             scope = appScope,
@@ -132,6 +146,7 @@ class WaApp : Application() {
             },
             voiceHost = MeshVoiceHost(this, callLog, audioRouter, netHub),
             log = { callLog.i("WaSession", it) },
+            recovery = adapterRecovery,
         )
         // Our own picture arrives in the room-joined message; keep it for the Join screen's preview.
         appScope.launch {
@@ -156,11 +171,14 @@ class WaApp : Application() {
         }
         // A call's file opens when a Join sets Connecting and closes on Leave or a failed join; see CallLog.onConnection.
         appScope.launch {
+            var previous: Connection? = null
             s.state.map { it.connection to it.roomName }.distinctUntilChanged().collect { (connection, room) ->
+                val before = previous
+                previous = connection
                 callLog.onConnection(connection, room)
                 // Device events only while a call's file is open (the file exists by now: onConnection opened it first).
                 when (connection) {
-                    Connection.Connecting -> { deviceEvents.start(); netHub.startSession() }
+                    Connection.Connecting -> if (startsNewCall(before, connection)) { deviceEvents.start(); netHub.startSession() }
                     Connection.Disconnected, is Connection.Failed -> deviceEvents.stop()
                     else -> {}
                 }

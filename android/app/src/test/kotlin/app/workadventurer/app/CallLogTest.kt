@@ -82,4 +82,16 @@ class CallLogTest {
         log.onConnection(Connection.Disconnected, "")
         assertTrue(logs().isEmpty())
     }
+
+    @Test
+    fun answeringTheAdapterQuestionDoesNotStartANewCallFile() {
+        val ask = Connection.NeedsConsent(app.workadventurer.protocol.catalog.AdapterOffer("deadbeef", null))
+        log.onConnection(Connection.Connecting, room)
+        log.onConnection(ask, room)
+        log.onConnection(Connection.Connecting, room)
+        log.onConnection(Connection.Connected, room)
+        assertEquals(1, logs().size)
+        log.onConnection(Connection.Disconnected, room)
+        assertEquals(1, logs().size)
+    }
 }

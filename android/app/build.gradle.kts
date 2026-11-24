@@ -17,6 +17,9 @@ android {
         // The release workflow passes the tag (android-v0.2.0 -> 0.2.0) and the run number; local builds keep 1 / 0.1.0.
         versionCode = (System.getenv("ANDROID_VERSION_CODE") ?: "1").toInt()
         versionName = System.getenv("ANDROID_VERSION_NAME") ?: "0.1.0"
+        // The adapter catalog (#126): the public index of downloadable server-version adapters.
+        // Empty means the app uses DEFAULT_CATALOG_URL from :protocol (the one source); only a debug build can override it.
+        buildConfigField("String", "CATALOG_URL", "\"\"")
     }
 
     // One debug key for everyone (this Mac, the cloud container, any session), so a debug APK built anywhere installs over
@@ -34,9 +37,17 @@ android {
     // build and the other way round. A real release key (from CI secrets) replaces this when the app goes to a store.
     buildTypes {
         getByName("release") { signingConfig = signingConfigs.getByName("debug") }
+        // Debug builds only: `./gradlew assembleDebug -PcatalogUrl=https://host/catalog/index.json` points the app at another catalog.
+        getByName("debug") {
+            (project.findProperty("catalogUrl") as String?)?.takeIf { Regex("https://[A-Za-z0-9._~:/?#@!$&()*+,;=%\\[\\]-]{1,500}").matches(it) }
+                ?.let { buildConfigField("String", "CATALOG_URL", "\"$it\"") }
+        }
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

@@ -1,6 +1,7 @@
 package app.workadventurer.app
 
 import app.workadventurer.app.session.Connection
+import app.workadventurer.app.session.startsNewCall
 
 /**
  * The app's one place to log. Every line still goes to logcat ([logcat]); while a call is open it also goes to that call's
@@ -25,11 +26,17 @@ class CallLog(
         files.append(tag, "ERROR $message")
     }
 
+    private var previous: Connection? = null
+
     fun onConnection(connection: Connection, roomUrl: String) {
+        val before = previous
+        previous = connection
         when (connection) {
-            Connection.Connecting -> { files.start(roomUrl, header(roomUrl)); i(TAG, "connecting") }
+            Connection.Connecting ->
+                if (startsNewCall(before, connection)) { files.start(roomUrl, header(roomUrl)); i(TAG, "connecting") } else i(TAG, "connecting (adapter question answered)")
             Connection.Connected -> i(TAG, "connected")
             is Connection.Reconnecting -> i(TAG, "reconnecting (attempt ${connection.attempt}, in ${connection.inMs} ms)")
+            is Connection.NeedsConsent -> i(TAG, "waiting for the answer to an adapter download")
             is Connection.Failed -> { i(TAG, "failed: ${connection.message}"); files.end() }
             Connection.Disconnected -> {
                 if (files.isOpen) { i(TAG, "disconnected"); files.end() } else logcat(TAG, "disconnected")

@@ -37,6 +37,7 @@ import app.workadventurer.app.audio.AudioRoute
 import app.workadventurer.app.session.Connection
 import app.workadventurer.app.session.SessionState
 import app.workadventurer.protocol.Texture
+import app.workadventurer.protocol.catalog.AdapterUpdates
 import app.workadventurer.protocol.WokaCatalogue
 import app.workadventurer.protocol.WorldMeta
 import androidx.compose.ui.graphics.ImageBitmap
@@ -82,6 +83,9 @@ fun AppRoot(
     net: NetSnapshot = NetSnapshot(),
     onNetworkWatching: (Boolean) -> Unit = {},
     onNetworkReset: () -> Unit = {},
+    /** The adapter-updates preference (ask / auto / never) and how to change it; shown in the Settings sheet. */
+    adapterUpdates: AdapterUpdates = AdapterUpdates.ASK,
+    onAdapterUpdates: (AdapterUpdates) -> Unit = {},
 ) {
     val nav = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
@@ -92,6 +96,8 @@ fun AppRoot(
     var wokaRoom by remember { mutableStateOf("") }
     var wokaPicks by remember { mutableStateOf(0) }
     var showNetwork by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    val settingsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val networkSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     DisposableEffect(showNetwork) {
         onNetworkWatching(showNetwork)
@@ -179,7 +185,7 @@ fun AppRoot(
                             chosenFor = chosenWokaFor, wokaPicks = wokaPicks,
                             loadWorldMeta = loadWorldMeta, loadPicture = loadPicture,
                             onWoka = { room -> wokaRoom = room; nav.navigate(Route.Woka.path) },
-                            onJoin = onJoin,
+                            onJoin = onJoin, onSettings = { showSettings = true },
                         )
                     }
                     composable(
@@ -233,6 +239,10 @@ fun AppRoot(
             }
         }
 
+        (state.connection as? Connection.NeedsConsent)?.let { c ->
+            AdapterConsentDialog(c.offer) { answer -> onCommand(Command.AnswerAdapter(answer)) }
+        }
+        if (showSettings) SettingsSheet(adapterUpdates, onPick = onAdapterUpdates, onDismiss = { showSettings = false }, sheetState = settingsSheetState)
         if (showNetwork) NetworkSheet(net, onDismiss = { showNetwork = false }, sheetState = networkSheetState, onReset = onNetworkReset)
         if (showAvSheet) AvSheet(
             onDismiss = { showAvSheet = false }, sheetState = avSheetState,
