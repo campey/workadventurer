@@ -19,6 +19,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,8 +42,10 @@ private val OFFLINE_DOT = Color(0xFF8A99B3)
  * with Leave above it.
  */
 @Composable
-fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> Unit, onOpenPerson: (Int) -> Unit, onCommand: (Command) -> Unit) {
+fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> Unit, onOpenPerson: (Int) -> Unit, onCommand: (Command) -> Unit, onGone: (String) -> Unit = {}) {
     val m = conversationScreen(key, state)
+    // The bubble dissolved under this screen: step back and say so.
+    LaunchedEffect(m == null) { if (m == null) onGone(conversationGoneNotice()) }
     val canMove = state.connection is Connection.Connected
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {

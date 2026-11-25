@@ -114,6 +114,8 @@ fun AppRoot(
         nav.navigate(target.path) { popUpTo(nav.graph.id) { inclusive = true } }
         drawer.close() // never leave the world panel open over the Join screen after leaving
     }
+    // A person or bubble vanished under the open screen: go back to where we were, and say who or what, briefly.
+    val goneBack: (String) -> Unit = { message -> nav.popBackStack(); scope.launch { snackbar.showSnackbar(message) } }
     LaunchedEffect(notice) { if (notice != null) snackbar.showSnackbar(notice) }
 
     // Walking into a Jitsi area: we don't support those yet (#119), so say so once, rather than leave someone in a call they can't hear.
@@ -220,7 +222,7 @@ fun AppRoot(
                     ) { entry ->
                         val route = parseRoute("conversation/${entry.arguments?.getString("kind")}/${entry.arguments?.getString("id")}") as? Route.Conversation
                         if (route != null) {
-                            ConversationScreen(route.key, state, onBack = { nav.popBackStack() }, onOpenPerson = { nav.navigate(Route.User(it).path) }, onCommand = onCommand)
+                            ConversationScreen(route.key, state, onBack = { nav.popBackStack() }, onOpenPerson = { nav.navigate(Route.User(it).path) }, onCommand = onCommand, onGone = goneBack)
                         }
                     }
                     composable(
@@ -233,7 +235,7 @@ fun AppRoot(
                     ) { entry ->
                         UserDetailScreen(
                             entry.arguments?.getInt("userId") ?: -1, state, onBack = { nav.popBackStack() },
-                            onOpenConversation = { nav.navigate(Route.Conversation(it).path) }, onCommand = onCommand,
+                            onOpenConversation = { nav.navigate(Route.Conversation(it).path) }, onCommand = onCommand, onGone = goneBack,
                         )
                     }
                 }
