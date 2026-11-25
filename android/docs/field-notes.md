@@ -273,6 +273,11 @@ Measured live against browser peers on the S25 Ultra unless marked.
   back to WEBRTC and not wait for the disconnect. The log never carries the token or server address. An area meeting with a
   `livekitRoomProperty` starts on WEBRTC too (see `docs/livekit.md`).
   Spawn-point trap: four avatars `wa to` the phone at the spawn point only made two bubbles; the Fire Pit area is where five meet.
+- **A big area meeting goes straight to LiveKit** (#134, 2026-11-25, prod, Lean Iterator campus "Lean Coffee Table 1", six people in it
+  when the phone walked in): within 20 ms of `joined space` the phone got `meeting is switching to LIVEKIT` and the LiveKit
+  invitation, and never a single `webRtcStart`, so there was no mesh to fall back on: the phone heard and said nothing, while the
+  Conversation screen said "Talking in Lean Coffee Table 1". That strip is wrong whenever the app has no audio for the meeting; slice 2
+  should show that audio is not connected (and "connecting" while joining the SFU). Walking out sent `left space` 2.5 s later.
 - **Not handled yet:** `livekitInvitationMessage` (G4) — in a large area meeting the server moves everyone to LiveKit and the
   phone would sit in the space announcing mic-on with no media; `transceiverRequest`; the same browser reachable through both an
   area space and a bubble (two PeerConnections, mic sent twice) — supersede is keyed on (space, peer).
