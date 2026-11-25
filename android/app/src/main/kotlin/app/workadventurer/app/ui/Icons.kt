@@ -23,6 +23,14 @@ object WaIcons {
             strokeLineJoin = StrokeJoin.Round,
         ).build()
 
+    /** A door with an arrow going out of it (to the right). Walking out of an area or bubble; flip it for the button that does so. */
+    val Leave: ImageVector by lazy {
+        stroked("leave", "M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2 M9 12h12l-3 -3 M18 15l3 -3", width = 2f)
+    }
+
+    /** A cross: drop the connection. */
+    val Close: ImageVector by lazy { stroked("close", "M18 6l-12 12 M6 6l12 12", width = 2f) }
+
     val MicOn: ImageVector by lazy {
         stroked(
             "mic-on",

@@ -113,7 +113,7 @@ fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> 
                 Phase.Joined -> {
                     PrimaryAction(
                         m.leaveLabel, "", onClick = { onCommand(Command.LeaveConversation) },
-                        description = "${m.leaveLabel}. Walk your avatar out of the ${m.noun}", enabled = canMove, danger = true,
+                        description = "${m.leaveLabel}. Walk your avatar out of the ${m.noun}", enabled = canMove, danger = true, icon = WaIcons.Leave, flipIcon = true,
                     )
                     PrimaryAction(
                         "In the ${m.noun}", m.subtext ?: "", onClick = {}, description = "You are in the ${m.noun}. ${m.subtext ?: ""}", done = true,

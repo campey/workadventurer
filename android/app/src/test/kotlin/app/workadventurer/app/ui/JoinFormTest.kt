@@ -70,6 +70,12 @@ class JoinFormTest {
         assertEquals(null, rejoinNotice("Ada", "Bo", wokaChanged = false, connected = false)) // mid-reconnect: Leave stays
     }
 
+    // The world panel's bottom button drops the connection to the world; "leave" is for walking out of an area or bubble.
+    @Test
+    fun theWorldPanelButtonSaysDisconnect() {
+        assertEquals("Disconnect", DISCONNECT_LABEL)
+    }
+
     @Test
     fun theRejoinButtonSaysSoPlainly() {
         assertEquals("Rejoin the room", REJOIN_LABEL)

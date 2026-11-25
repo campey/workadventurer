@@ -27,6 +27,9 @@ fun canRejoin(current: String, typed: String, wokaChanged: Boolean, connected: B
 /** The button that replaces Leave in the world panel once your name or woka has changed. */
 const val REJOIN_LABEL = "Rejoin the room"
 
+/** The world panel's bottom button: drops your connection. ("Leave" is for walking out of an area or bubble.) */
+const val DISCONNECT_LABEL = "Disconnect"
+
 /**
  * The warning shown above your name in the world panel while a rejoin is what applies a change: it names what changed. Null when
  * [canRejoin] is false (nothing changed, a blank name, or mid-reconnect), when Leave stays as it is.

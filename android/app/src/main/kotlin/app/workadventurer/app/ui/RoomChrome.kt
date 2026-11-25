@@ -106,16 +106,6 @@ private val BugIcon: ImageVector by lazy {
     ).build()
 }
 
-private val LeaveIcon: ImageVector by lazy {
-    ImageVector.Builder("leave", 24.dp, 24.dp, 24f, 24f).addPath(
-        pathData = PathParser().parsePathString(
-            "M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2 M9 12h12l-3 -3 M18 15l3 -3",
-        ).toNodes(),
-        stroke = androidx.compose.ui.graphics.SolidColor(Color.Black), strokeLineWidth = 2f,
-        strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round, strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
-    ).build()
-}
-
 private val RefreshIcon: ImageVector by lazy {
     ImageVector.Builder("refresh", 24.dp, 24.dp, 24f, 24f).addPath(
         pathData = PathParser().parsePathString(
@@ -130,7 +120,7 @@ private val RefreshIcon: ImageVector by lazy {
 private val RejoinOrange = Color(0xFFFF9800)
 
 /**
- * The panel that slides in from the left: the world's summary, a link to share, your name and woka pinned at the bottom, and Leave
+ * The panel that slides in from the left: the world's summary, a link to share, your name and woka pinned at the bottom, and Disconnect
  * (which becomes Rejoin once the name or woka has changed) beside a button that shares the debug logs. Only what exists today is here; world options are added as they come.
  */
 @Composable
@@ -198,7 +188,7 @@ fun WorldPanel(
             Button(
                 onClick = if (notice != null) ({ onRejoin(typed.trim()) }) else onLeave,
                 modifier = Modifier.weight(1f).heightIn(min = 56.dp)
-                    .semantics { contentDescription = if (notice != null) "$REJOIN_LABEL to update your name or woka" else "Leave the room ${details.name}" },
+                    .semantics { contentDescription = if (notice != null) "$REJOIN_LABEL to update your name or woka" else "$DISCONNECT_LABEL from ${details.name}" },
                 shape = RoundedCornerShape(28.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface),
             ) {
@@ -207,9 +197,9 @@ fun WorldPanel(
                     Spacer(Modifier.width(12.dp))
                     Text(REJOIN_LABEL, style = MaterialTheme.typography.titleMedium)
                 } else {
-                    Icon(LeaveIcon, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    Icon(WaIcons.Close, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.width(12.dp))
-                    Text("Leave the room", style = MaterialTheme.typography.titleMedium)
+                    Text(DISCONNECT_LABEL, style = MaterialTheme.typography.titleMedium)
                 }
             }
             IconButton(

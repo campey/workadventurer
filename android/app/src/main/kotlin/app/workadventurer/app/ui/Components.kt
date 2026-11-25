@@ -2,6 +2,7 @@ package app.workadventurer.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.semantics.Role
 
 
@@ -51,6 +52,9 @@ fun PrimaryAction(
     danger: Boolean = false,
     quiet: Boolean = false,
     done: Boolean = false,
+    /** An icon before the label of a [danger] button; [flipIcon] mirrors it left to right. */
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    flipIcon: Boolean = false,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).semantics { contentDescription = description }
@@ -69,7 +73,13 @@ fun PrimaryAction(
                 onClick = onClick, enabled = enabled, modifier = modifier, shape = RoundedCornerShape(32.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            ) { Text(label, style = MaterialTheme.typography.titleMedium) }
+            ) {
+                if (icon != null) {
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp).then(if (flipIcon) Modifier.scale(scaleX = -1f, scaleY = 1f) else Modifier))
+                    Spacer(Modifier.width(10.dp))
+                }
+                Text(label, style = MaterialTheme.typography.titleMedium)
+            }
         } else if (quiet) {
             Button(
                 onClick = onClick, enabled = enabled, modifier = modifier, shape = RoundedCornerShape(32.dp),
