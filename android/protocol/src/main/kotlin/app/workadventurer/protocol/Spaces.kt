@@ -23,6 +23,30 @@ sealed interface VoiceEvent {
 
     /** We left the space: every link in it must go. */
     data class SpaceLeft(override val spaceName: String) : VoiceEvent
+
+    /**
+     * The server moves a big meeting to its LiveKit SFU (#134). [token] and [serverUrl] are secrets of the call: never log them,
+     * use [liveKitRoomName] to say which room it is.
+     */
+    data class LiveKitInvite(override val spaceName: String, val token: String, val serverUrl: String) : VoiceEvent {
+        override fun toString() = "LiveKitInvite(spaceName=$spaceName)"
+    }
+
+    /** The server ended the SFU for this space (the meeting shrank). */
+    data class LiveKitDisconnect(override val spaceName: String) : VoiceEvent
+
+    /** The server announces the meeting's transport is changing to [strategy] ("LIVEKIT" or "WEBRTC"). Informational; [finalized] is the second, final message. */
+    data class Switch(override val spaceName: String, val strategy: String, val finalized: Boolean) : VoiceEvent
+}
+
+/** The room an invitation token names (its JWT `video.room` claim), or "?" when it can't be read. Never throws. */
+fun liveKitRoomName(token: String): String = try {
+    val payload = java.util.Base64.getUrlDecoder().decode(token.split(".")[1])
+    val json = kotlinx.serialization.json.Json.parseToJsonElement(String(payload)) as kotlinx.serialization.json.JsonObject
+    (json["video"] as? kotlinx.serialization.json.JsonObject)?.get("room")
+        ?.let { it as? kotlinx.serialization.json.JsonPrimitive }?.content ?: "?"
+} catch (e: Exception) {
+    "?"
 }
 
 data class IceServerInfo(val urls: List<String>, val username: String?, val credential: String?)

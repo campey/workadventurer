@@ -124,6 +124,8 @@ class MeshSession(
             }
             is VoiceEvent.Disconnect -> closeWhere { it.spaceName == e.spaceName && it.peer == e.peerSpaceUserId }
             is VoiceEvent.SpaceLeft -> closeWhere { it.spaceName == e.spaceName }
+            // The SFU is not built yet (#134 slice 2): the mesh carries on, and the connection already logged what the server said.
+            is VoiceEvent.LiveKitInvite, is VoiceEvent.LiveKitDisconnect, is VoiceEvent.Switch -> Unit
         }
     }
 

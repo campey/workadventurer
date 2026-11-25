@@ -188,6 +188,22 @@ open class PusherConnection(
             _log.tryEmit("webRtcDisconnect from a peer in ${p.spaceName}")
             _voiceEvents.tryEmit(VoiceEvent.Disconnect(p.spaceName, peer))
         }
+        ev.switchMessage?.let {
+            _log.tryEmit("meeting is switching to ${it.strategy} in ${p.spaceName}")
+            _voiceEvents.tryEmit(VoiceEvent.Switch(p.spaceName, it.strategy, finalized = false))
+        }
+        ev.finalizeSwitchMessage?.let {
+            _log.tryEmit("meeting switched to ${it.strategy} in ${p.spaceName}")
+            _voiceEvents.tryEmit(VoiceEvent.Switch(p.spaceName, it.strategy, finalized = true))
+        }
+        ev.livekitInvitationMessage?.let {
+            _log.tryEmit("LiveKit invitation for room ${liveKitRoomName(it.token)} (space ${p.spaceName})") // never the token or address
+            _voiceEvents.tryEmit(VoiceEvent.LiveKitInvite(p.spaceName, it.token, it.serverUrl))
+        }
+        ev.livekitDisconnectMessage?.let {
+            _log.tryEmit("LiveKit disconnect for ${p.spaceName}")
+            _voiceEvents.tryEmit(VoiceEvent.LiveKitDisconnect(p.spaceName))
+        }
     }
 
     private var meetingTracker: MeetingAreaTracker? = null

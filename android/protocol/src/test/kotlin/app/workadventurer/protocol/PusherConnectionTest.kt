@@ -10,15 +10,19 @@ import app.workadventurer.proto.FilterType
 import app.workadventurer.proto.IceServer
 import app.workadventurer.proto.IceServersAnswer
 import app.workadventurer.proto.IceServersQuery
+import app.workadventurer.proto.FinalizeSwitchMessage
 import app.workadventurer.proto.JoinSpaceAnswer
 import app.workadventurer.proto.JoinSpaceQuery
 import app.workadventurer.proto.JoinSpaceRequestMessage
 import app.workadventurer.proto.LeaveSpaceRequestMessage
+import app.workadventurer.proto.LivekitDisconnectMessage
+import app.workadventurer.proto.LivekitInvitationMessage
 import app.workadventurer.proto.MuteAudioPrivateMessage
 import app.workadventurer.proto.PrivateEventPusherToFront
 import app.workadventurer.proto.PrivateSpaceEvent
 import app.workadventurer.proto.QueryMessage
 import app.workadventurer.proto.SpaceUser
+import app.workadventurer.proto.SwitchMessage
 import app.workadventurer.proto.WebRtcDisconnectMessage
 import app.workadventurer.proto.WebRtcSignal
 import app.workadventurer.proto.WebRtcStartMessage
@@ -1005,6 +1009,35 @@ class PusherConnectionTest {
             assertEquals(VoiceEvent.Signal("sp", "sp_9", "c1", "{\"type\":\"offer\"}"), events[1])
             assertEquals(VoiceEvent.Disconnect("sp", "sp_9"), events[2])
             collector.cancel(); conn.close()
+        }
+    }
+
+    // The server escalates a big meeting to LiveKit with an invitation (#134); the app only needs to hear it for now.
+    @Test
+    fun liveKitInvitationsSwitchesAndDisconnectsBecomeVoiceEvents() = runBlocking<Unit> {
+        val live = LiveFake()
+        server(live.fake).use { s ->
+            val conn = PusherConnection(OkHttpClient(), cfg(s), keepAliveMs = 60_000)
+            val events = java.util.concurrent.CopyOnWriteArrayList<VoiceEvent>()
+            val logs = java.util.concurrent.CopyOnWriteArrayList<String>()
+            val collector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { conn.voiceEvents.collect { events += it } }
+            val logCollector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { conn.log.collect { logs += it } }
+            withTimeout(5_000) { conn.connect() }
+            live.push(batch(
+                privateEvent("sp_9", PrivateSpaceEvent(switchMessage = SwitchMessage(strategy = "LIVEKIT"))),
+                privateEvent("sp_9", PrivateSpaceEvent(finalizeSwitchMessage = FinalizeSwitchMessage(strategy = "LIVEKIT"))),
+                privateEvent("sp_9", PrivateSpaceEvent(livekitInvitationMessage = LivekitInvitationMessage(token = "a.e30.c", serverUrl = "wss://lk.example"))),
+                privateEvent("sp_9", PrivateSpaceEvent(livekitDisconnectMessage = LivekitDisconnectMessage())),
+            ))
+            waitFor { events.size == 4 }
+            assertEquals(VoiceEvent.Switch("sp", "LIVEKIT", finalized = false), events[0])
+            assertEquals(VoiceEvent.Switch("sp", "LIVEKIT", finalized = true), events[1])
+            assertEquals(VoiceEvent.LiveKitInvite("sp", "a.e30.c", "wss://lk.example"), events[2])
+            assertEquals(VoiceEvent.LiveKitDisconnect("sp"), events[3])
+            // The log says what happened, but never the token or the server's address.
+            waitFor { logs.any { it.contains("LiveKit invitation") } }
+            assertTrue(logs.none { it.contains("a.e30.c") || it.contains("lk.example") }, "log leaked: $logs")
+            collector.cancel(); logCollector.cancel(); conn.close()
         }
     }
 
