@@ -180,11 +180,11 @@ private fun SectionHeader(title: String, onClick: (() -> Unit)?, description: St
 internal fun PersonRow(p: Participant, onClick: (() -> Unit)?) {
     val label = if (p.isMe) "${p.name} (You)" else p.name
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (p.leftRoom) Modifier.alpha(LEFT_ROOM_ALPHA) else Modifier)
-            .then(if (onClick != null && !p.leftRoom) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (p.leaving != null) Modifier.alpha(LEFT_ROOM_ALPHA) else Modifier)
+            .then(if (onClick != null && p.leaving == null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
             .padding(horizontal = 16.dp, vertical = 6.dp)
             .semantics(mergeDescendants = true) {
-                contentDescription = "$label, ${if (p.leftRoom) LEFT_ROOM_TEXT else statusLabel(p.status)}${if (onClick != null && !p.leftRoom) (if (p.isMe) ". Opens your screen" else ". Opens their screen") else ""}"
+                contentDescription = "$label, ${p.leaving ?: statusLabel(p.status)}${if (onClick != null && p.leaving == null) (if (p.isMe) ". Opens your screen" else ". Opens their screen") else ""}"
             },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -193,8 +193,8 @@ internal fun PersonRow(p: Participant, onClick: (() -> Unit)?) {
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (!p.leftRoom) Box(Modifier.size(8.dp).clip(CircleShape).background(Color(statusColor(p.status))))
-                Text(if (p.leftRoom) LEFT_ROOM_TEXT else statusLabel(p.status), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (p.leaving == null) Box(Modifier.size(8.dp).clip(CircleShape).background(Color(statusColor(p.status))))
+                Text(p.leaving ?: statusLabel(p.status), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

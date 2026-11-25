@@ -43,7 +43,7 @@ fun conversationScreen(key: ConversationKey, s: SessionState, left: Set<Int> = e
     val silentArea = area?.isSilent() == true && !jitsi
     val megaphone = area?.isMegaphone() == true && !jitsi
     val myBlock = yourStatusReason(s.myStatus) // your own do not disturb / back in a moment comes first: nothing else would work
-    val others = c.members.filter { !it.isMe && !it.leftRoom } // someone who just left is still listed, but is not company
+    val others = c.members.filter { !it.isMe && it.leaving == null } // someone who just left is still listed, but is not company
     val walking = when (val a = s.activity) {
         is Activity.WalkingTo -> if (isBubble) others.any { it.name.ifBlank { "Unnamed player" } == a.label } else a.label == c.title
         else -> false

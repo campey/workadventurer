@@ -76,7 +76,8 @@ fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> 
             m.emptyText?.let {
                 Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
             }
-            m.members.forEach { p -> PersonRow(p, onClick = { p.userId?.let(onOpenPerson) }) }
+            // Someone who walked out of this bubble or area stays a moment too, dimmed.
+            rememberWithWalkers(m.members, m.noun, key).forEach { p -> PersonRow(p, onClick = { p.userId?.let(onOpenPerson) }) }
         }
 
         val join: Command? = when (key) {

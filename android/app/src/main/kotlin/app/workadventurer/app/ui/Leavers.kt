@@ -13,8 +13,8 @@ import kotlinx.coroutines.delay
 /** How long someone who left stays in the list, dimmed, before the row goes. */
 const val LEAVER_HOLD_MS = 4_000L
 
-/** What a leaver's row says in place of their status. */
-const val LEFT_ROOM_TEXT = "Left the room…"
+/** What the row of someone who dropped out of the room says in place of their status: the server only says they are gone, so this is its likeliest cause. */
+const val DISCONNECTED_TEXT = "Disconnected…"
 
 /** How faded their row is. */
 const val LEFT_ROOM_ALPHA = 0.5f
@@ -62,4 +62,41 @@ fun rememberWithLeavers(state: SessionState): Pair<SessionState, Set<Int>> {
         held = trackLeavers(before, state, held, System.currentTimeMillis())
     }
     return withLeavers(state, held) to held.keys
+}
+
+/** Someone who walked out of the bubble or area being looked at (and is still in the room): their row, until [until]. */
+data class Walker(val participant: Participant, val until: Long)
+
+/**
+ * The room view's walkers to show now: [held] ones whose moment isn't up and who haven't come back, plus anyone in [before] who
+ * isn't in [now]. You are never a walker, and neither is someone already leaving the room (their row is already dimmed).
+ * [noun] is "bubble" or "area".
+ */
+fun trackWalkers(before: List<Participant>?, now: List<Participant>, held: Map<Int, Walker>, nowMs: Long, noun: String): Map<Int, Walker> {
+    val present = now.mapNotNull { it.userId }.toSet()
+    val kept = held.filter { (id, w) -> id !in present && w.until > nowMs }
+    val added = before.orEmpty()
+        .filter { !it.isMe && it.leaving == null && it.userId != null && it.userId !in present && it.userId !in kept }
+        .associate { p -> p.userId!! to Walker(p.copy(leaving = "Left the $noun…"), nowMs + LEAVER_HOLD_MS) }
+    return kept + added
+}
+
+/** [members] with the [held] walkers put back, dimmed: you first, then by name. */
+fun withWalkers(members: List<Participant>, held: Map<Int, Walker>): List<Participant> =
+    if (held.isEmpty()) members
+    else (members + held.values.map { it.participant }).sortedWith(compareBy<Participant> { !it.isMe }.thenBy { it.name.lowercase() }.thenBy { it.userId })
+
+/** The room view's [members], with anyone who just walked out still there for a moment, dimmed, saying what they did. */
+@Composable
+fun rememberWithWalkers(members: List<Participant>, noun: String, key: Any): List<Participant> {
+    var before by remember(key) { mutableStateOf<List<Participant>?>(null) }
+    var held by remember(key) { mutableStateOf<Map<Int, Walker>>(emptyMap()) }
+    LaunchedEffect(members, key) {
+        held = trackWalkers(before, members, held, System.currentTimeMillis(), noun)
+        before = members
+        val next = held.values.minOfOrNull { it.until } ?: return@LaunchedEffect
+        delay((next - System.currentTimeMillis()).coerceAtLeast(0))
+        held = trackWalkers(before, members, held, System.currentTimeMillis(), noun)
+    }
+    return withWalkers(members, held)
 }

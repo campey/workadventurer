@@ -6,7 +6,6 @@ import app.workadventurer.protocol.Group
 import app.workadventurer.protocol.Player
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 // Someone who leaves stays in the list for a moment, dimmed, saying they left, so the list doesn't just jump (#134).
 class LeaversTest {
@@ -76,9 +75,48 @@ class LeaversTest {
         val held = trackLeavers(state(listOf(ada, bo)), now, emptyMap(), nowMs = 0)
         val m = usersModel(withLeavers(now, held), left = held.keys)
         val ada = m.onMap.first { it.name == "Ada" }
-        assertTrue(ada.leftRoom)
-        assertEquals(false, m.onMap.first { it.name == "Bo" }.leftRoom)
-        assertEquals("Left the room…", LEFT_ROOM_TEXT)
+        assertEquals(DISCONNECTED_TEXT, ada.leaving)
+        assertEquals(null, m.onMap.first { it.name == "Bo" }.leaving)
+        assertEquals("Disconnected…", DISCONNECTED_TEXT)
         assertEquals(0.5f, LEFT_ROOM_ALPHA)
+    }
+
+    // Walking out of the bubble or area you are looking at (but staying in the room) dims their row there too.
+    private fun who(id: Int, name: String, me: Boolean = false, leaving: String? = null) =
+        Participant(id, name, me, app.workadventurer.proto.AvailabilityStatus.ONLINE, emptyList(), leaving)
+    private val meP = who(1, "Me", me = true)
+    private val adaP = who(2, "Ada")
+    private val boP = who(3, "Bo")
+
+    @Test
+    fun someoneWhoWalkedOutOfTheAreaIsHeldWithWhatHappened() {
+        val held = trackWalkers(listOf(meP, adaP), listOf(meP), emptyMap(), nowMs = 1_000, noun = "area")
+        assertEquals(setOf(2), held.keys)
+        assertEquals("Left the area…", held.getValue(2).participant.leaving)
+        assertEquals(1_000 + LEAVER_HOLD_MS, held.getValue(2).until)
+        assertEquals("Left the bubble…", trackWalkers(listOf(meP, adaP), listOf(meP), emptyMap(), 0, "bubble").getValue(2).participant.leaving)
+    }
+
+    @Test
+    fun youAndPeopleAlreadyLeavingTheRoomAreNotWalkers() {
+        assertEquals(emptyMap(), trackWalkers(listOf(meP, adaP), listOf(adaP), emptyMap(), 0, "area")) // you
+        assertEquals(emptyMap(), trackWalkers(listOf(meP, who(2, "Ada", leaving = DISCONNECTED_TEXT)), listOf(meP), emptyMap(), 0, "area"))
+        assertEquals(emptyMap(), trackWalkers(null, listOf(meP), emptyMap(), 0, "area"))
+    }
+
+    @Test
+    fun aWalkerGoesAfterTheMomentOrWhenTheyComeBack() {
+        val held = trackWalkers(listOf(meP, adaP), listOf(meP), emptyMap(), 0, "area")
+        assertEquals(setOf(2), trackWalkers(listOf(meP), listOf(meP), held, LEAVER_HOLD_MS - 1, "area").keys)
+        assertEquals(emptyMap(), trackWalkers(listOf(meP), listOf(meP), held, LEAVER_HOLD_MS, "area"))
+        assertEquals(emptyMap(), trackWalkers(listOf(meP), listOf(meP, adaP), held, 10, "area"))
+    }
+
+    @Test
+    fun theWalkerIsShownDimmedInOrderYouFirst() {
+        val held = trackWalkers(listOf(meP, adaP, boP), listOf(meP, boP), emptyMap(), 0, "area")
+        val shown = withWalkers(listOf(meP, boP), held)
+        assertEquals(listOf("Me", "Ada", "Bo"), shown.map { it.name })
+        assertEquals(listOf(null, "Left the area…", null), shown.map { it.leaving })
     }
 }

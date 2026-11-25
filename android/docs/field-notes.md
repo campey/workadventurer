@@ -92,6 +92,10 @@ per-gate sections below have the measurements; this section is the summary to st
   zone and that the app can't use one yet, instead of offering to walk in.
 - **Full bubbles** (#111) [code]: the server refuses a full group (`MAX_PER_GROUP`, an env var), but it is never sent to clients;
   `groupSize` is the current size, not a cap. So "full" can't be shown from the client. Revisit with LiveKit escalation (#134).
+- **Someone going from the list** (#134): the server sends only `UserLeftMessage { userId }` when a player disappears, with no reason: a closed
+  tab, a dropped connection, a kick and a walk through an exit to another room of the world all look the same (an exit is the client
+  closing this room's connection and opening the next). A disconnect is by far the likeliest, so the dimmed row says "Disconnected…";
+  walking out of the bubble or area you are looking at is a different, in-world thing, and says "Left the bubble…" / "Left the area…".
 - **Not covered**: lockable *areas* (`lockableAreaPropertyData`) are a separate lock from a bubble's.
 
 ### Roles and signalling

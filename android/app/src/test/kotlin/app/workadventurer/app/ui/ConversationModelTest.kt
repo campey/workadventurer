@@ -163,7 +163,7 @@ class ConversationModelTest {
         val inRed = listOf(red)
         val m = conversationScreen(areaKey, state(players = listOf(player(2, "Ada", 10, 10)), inAreas = inRed), left = setOf(2))!!
         assertEquals(listOf("Me", "Ada"), m.members.map { it.name })
-        assertEquals(listOf(false, true), m.members.map { it.leftRoom })
+        assertEquals(listOf(false, true), m.members.map { it.leaving != null })
         assertEquals("Waiting in Red Table", m.subtext)
     }
 

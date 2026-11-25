@@ -12,8 +12,8 @@ data class Participant(
     val isMe: Boolean,
     val status: AvailabilityStatus,
     val textures: List<Texture>,
-    /** They have just left the room: their row shows it for a moment, then goes. */
-    val leftRoom: Boolean = false,
+    /** They have just left (the room, or the bubble or area you are looking at): what their dimmed row says for a moment before it goes. Null for someone who is here. */
+    val leaving: String? = null,
 )
 
 /** What a conversation screen is about: a proximity bubble (by group id) or a map area (by `id ?: name`, as `WalkToArea`). */
@@ -75,7 +75,7 @@ private fun areaOrder(s: SessionState, visits: Map<String, Int>, populated: (Are
 fun usersModel(s: SessionState, visits: Map<String, Int> = emptyMap(), left: Set<Int> = emptySet()): UsersModel {
     val me = Participant(s.myUserId, s.myName.ifBlank { "You" }, true, s.myStatus, s.myTextures)
     val others = s.players.associateBy { it.userId }.mapValues { (_, p) ->
-        Participant(p.userId, p.name, false, p.availabilityStatus, p.textures, leftRoom = p.userId in left)
+        Participant(p.userId, p.name, false, p.availabilityStatus, p.textures, leaving = if (p.userId in left) DISCONNECTED_TEXT else null)
     }
     val byName = compareBy<Participant>({ it.name.lowercase() }, { it.userId })
 
