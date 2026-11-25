@@ -55,23 +55,20 @@ import androidx.compose.ui.unit.dp
 import app.workadventurer.proto.AvailabilityStatus
 import app.workadventurer.protocol.Texture
 
-/** What we announce ourselves as: the app has no way to change it yet, so we are always online. */
-val MY_STATUS = AvailabilityStatus.ONLINE
-
 /**
  * The bar across the top of every screen once you are in a world: the world's icon and name, and your own woka picture with
  * your status dot on the right. The whole bar is one button that opens the world panel (the world, and you).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RoomTopBar(worldName: String, myName: String, myTextures: List<Texture>, onOpen: () -> Unit) {
+fun RoomTopBar(worldName: String, myName: String, myTextures: List<Texture>, onOpen: () -> Unit, myStatus: AvailabilityStatus = AvailabilityStatus.ONLINE) {
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
         ),
         modifier = Modifier.clickable(role = Role.Button, onClick = onOpen)
-            .semantics(mergeDescendants = true) { contentDescription = "Open the world panel for $worldName. You are $myName, ${statusLabel(MY_STATUS)}" },
+            .semantics(mergeDescendants = true) { contentDescription = "Open the world panel for $worldName. You are $myName, ${statusLabel(myStatus)}" },
         navigationIcon = {
             Box(
                 Modifier.padding(start = 16.dp).size(36.dp).border(2.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(10.dp)),
@@ -81,7 +78,7 @@ fun RoomTopBar(worldName: String, myName: String, myTextures: List<Texture>, onO
         title = { Text(worldName, maxLines = 1, modifier = Modifier.padding(start = 4.dp)) },
         actions = {
             Box(Modifier.padding(end = 12.dp).size(48.dp), contentAlignment = Alignment.Center) {
-                WokaAvatar(myTextures, myName, 36.dp, status = MY_STATUS)
+                WokaAvatar(myTextures, myName, 36.dp, status = myStatus)
             }
         },
     )
@@ -144,6 +141,8 @@ fun WorldPanel(
     /** The woka you picked but are not wearing yet: shown in place of [myTextures], and it makes Rejoin live. */
     pendingWoka: Texture? = null,
     onWoka: () -> Unit = {}, onRejoin: (name: String) -> Unit = {},
+    /** Your status, read out with your woka (#111). */
+    myStatus: AvailabilityStatus = AvailabilityStatus.ONLINE,
     /** The room's address, and how to look its world up (#108): the panel shows the same summary as the Join screen. */
     roomUrl: String = "",
     loadWorldMeta: suspend (roomUrl: String) -> app.workadventurer.protocol.WorldMeta? = { null },
@@ -186,7 +185,7 @@ fun WorldPanel(
                 )
                 WokaTile(
                     pendingWoka?.let { listOf(it) } ?: myTextures, typed, onClick = onWoka,
-                    description = wokaTileDescription(offline = false), offline = false,
+                    description = wokaTileDescription(offline = false, status = myStatus), offline = false,
                 )
             }
         }

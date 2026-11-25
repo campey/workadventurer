@@ -1,5 +1,7 @@
 package app.workadventurer.protocol
 
+import app.workadventurer.proto.AvailabilityStatus
+
 /** Staging (`play.staging.workadventu.re`, rolling master) has its own pusher and its own woka catalogue. */
 object WaStaging {
     const val HOST = "play.staging.workadventu.re"
@@ -36,6 +38,8 @@ data class RoomConfig(
      * [HANDSHAKE_FORBIDDEN] names.
      */
     val handshakeQuery: Map<String, String> = emptyMap(),
+    /** What the join announces about us (#111): online unless the person chose otherwise. Changed in the room with [PusherConnection.setAvailabilityStatus]. */
+    val availabilityStatus: AvailabilityStatus = AvailabilityStatus.ONLINE,
 ) {
     companion object {
         /** The config for [roomUrl]: staging rooms get the staging pusher and woka, everything else is prod. A chosen [wokaId] replaces the default. */

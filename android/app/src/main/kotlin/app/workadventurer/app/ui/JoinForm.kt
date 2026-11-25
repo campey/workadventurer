@@ -4,7 +4,8 @@ package app.workadventurer.app.ui
 const val NEW_WORLD_LABEL = "+ New world"
 
 /** What a screen reader says for the woka tile (Offline on the Join screen, Online in a room): it opens the picker (#108). */
-fun wokaTileDescription(offline: Boolean) = "Your woka, ${if (offline) OFFLINE_LABEL else statusLabel(MY_STATUS)}. Opens the woka picker"
+fun wokaTileDescription(offline: Boolean, status: app.workadventurer.proto.AvailabilityStatus = app.workadventurer.proto.AvailabilityStatus.ONLINE) =
+    "Your woka, ${if (offline) OFFLINE_LABEL else statusLabel(status)}. Opens the woka picker"
 
 /** Shown in the preview instead of an initial until the picture is known or has loaded. */
 const val WOKA_PREVIEW_PLACEHOLDER = "…"

@@ -63,4 +63,43 @@ class StatusTest {
         for ((k, same) in shown) assertEquals(true, same.size >= 1, k.toString())
         assertEquals(statusLabel(AvailabilityStatus.AWAY) != statusLabel(AvailabilityStatus.BUSY), true)
     }
+
+    // #111: with these statuses the server never puts someone in a bubble (back/src/Model/User.ts `silent`), so inviting them or
+    // walking over to them gets nowhere. Busy and away are only prompts on the web client; a meeting is handled by its own area.
+    @Test
+    fun someStatusesKeepSomeoneOutOfEveryConversationAndSayWhy() {
+        assertEquals("They are on do not disturb, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.DO_NOT_DISTURB))
+        assertEquals("They will be back in a moment, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.BACK_IN_A_MOMENT))
+        assertEquals("Their sound is blocked, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.SOUND_BLOCKED))
+        assertEquals("They are in a silent area, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.SILENT))
+        assertEquals("They are not taking part in proximity meetings, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.DENY_PROXIMITY_MEETING))
+        assertEquals("They are using the megaphone, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.SPEAKER))
+        assertEquals("They are listening to a megaphone, so they can't be in a conversation right now", unavailableReason(AvailabilityStatus.LISTENER))
+    }
+
+    @Test
+    fun otherStatusesDoNotBlockAnything() {
+        for (s in listOf(AvailabilityStatus.ONLINE, AvailabilityStatus.UNCHANGED, AvailabilityStatus.AWAY, AvailabilityStatus.BUSY,
+            AvailabilityStatus.JITSI, AvailabilityStatus.BBB, AvailabilityStatus.LIVEKIT)) {
+            assertEquals(null, unavailableReason(s), s.name)
+        }
+    }
+
+    // #111 slice 3: the statuses you can pick for yourself (the web client's menu), and what two of them cost you.
+    @Test
+    fun youCanPickOnlineBusyBackInAMomentOrDoNotDisturb() {
+        assertEquals(
+            listOf(AvailabilityStatus.ONLINE, AvailabilityStatus.BUSY, AvailabilityStatus.BACK_IN_A_MOMENT, AvailabilityStatus.DO_NOT_DISTURB),
+            SELECTABLE_STATUSES.map { it.status },
+        )
+        assertEquals("Nobody can join you, and you can't join anyone", SELECTABLE_STATUSES.first { it.status == AvailabilityStatus.DO_NOT_DISTURB }.hint)
+    }
+
+    @Test
+    fun doNotDisturbAndBackInAMomentStopYouJoiningConversations() {
+        assertEquals("You are on do not disturb, so you can't join conversations", yourStatusReason(AvailabilityStatus.DO_NOT_DISTURB))
+        assertEquals("You said you will be back in a moment, so you can't join conversations", yourStatusReason(AvailabilityStatus.BACK_IN_A_MOMENT))
+        assertEquals(null, yourStatusReason(AvailabilityStatus.ONLINE))
+        assertEquals(null, yourStatusReason(AvailabilityStatus.BUSY)) // busy is only a signal to others
+    }
 }

@@ -17,6 +17,8 @@ class WhereaboutsTest {
     private fun area(id: String, name: String, x: Int, y: Int, meeting: Boolean) =
         Area(id, name, x, y, 100, 100, if (meeting) setOf("livekitRoomProperty") else emptySet(), false, false, if (meeting) MeetingRoom("p", name) else null)
 
+    private val silentArea = Area("q1", "Quiet corner", 0, 0, 100, 100, setOf("silent"), false, false, null)
+
     private fun state(
         players: List<Player>, areas: List<Area> = emptyList(), inAreas: List<Area> = emptyList(),
         groups: List<Group> = emptyList(), myGroupId: Int? = null,
@@ -187,5 +189,66 @@ class WhereaboutsTest {
         val inArea = state(listOf(player(2, "Maya", 50, 50)), areas = listOf(meeting), inAreas = listOf(meeting))
         assertEquals("You are already in Red Table together", togetherNote(whereIs(2, inArea)))
         assertNull(togetherNote(Whereabouts.OnTheMap))
+    }
+
+    @Test
+    fun someoneInALockedBubbleCannotBeWalkedOverTo() {
+        val s = state(listOf(player(2, "Maya"), player(3, "Sam")), groups = listOf(Group(5, 0, 0, listOf(2, 3), locked = true)))
+        val w = whereIs(2, s)
+        assertEquals(Whereabouts.InBubble(ConversationKey.Bubble(5), others = listOf("Sam"), withYou = false, locked = true), w)
+        assertEquals("Their bubble is locked, so nobody else can join it", walkBlockReason(w))
+    }
+
+    @Test
+    fun nothingBlocksWalkingToSomeoneInAnOpenBubbleOrWhenYouAreInTheLockedOne() {
+        val open = state(listOf(player(2, "Maya"), player(3, "Sam")), groups = listOf(Group(5, 0, 0, listOf(2, 3))))
+        assertNull(walkBlockReason(whereIs(2, open)))
+        val together = state(listOf(player(2, "Maya"), player(3, "Sam")), groups = listOf(Group(5, 0, 0, listOf(1, 2, 3), locked = true)), myGroupId = 5)
+        assertNull(walkBlockReason(whereIs(2, together))) // you are already in it
+        assertNull(walkBlockReason(Whereabouts.OnTheMap))
+    }
+
+    private val dnd = app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB
+
+    @Test
+    fun someoneUnavailableCannotBeInvitedOrWalkedOverToOnTheOpenMap() {
+        val blocks = actionBlocks(Whereabouts.OnTheMap, dnd)
+        val why = "They are on do not disturb, so they can't be in a conversation right now"
+        assertEquals(ActionBlocks(invite = why, walk = why), blocks)
+    }
+
+    @Test
+    fun someoneUnavailableInAMeetingAreaCanStillBeWalkedToButNotInvited() {
+        val area = Whereabouts.InArea(ConversationKey.AreaKey("t1"), "Table", meeting = true, others = emptyList(), withYou = false)
+        val blocks = actionBlocks(area, dnd)
+        assertEquals("They are on do not disturb, so they can't be in a conversation right now", blocks.invite)
+        assertNull(blocks.walk) // walking into the area puts you in the same meeting whatever their status
+    }
+
+    @Test
+    fun anAvailableOrBusyPersonBlocksNothing() {
+        assertEquals(ActionBlocks(null, null), actionBlocks(Whereabouts.OnTheMap, app.workadventurer.proto.AvailabilityStatus.ONLINE))
+        assertEquals(ActionBlocks(null, null), actionBlocks(Whereabouts.OnTheMap, app.workadventurer.proto.AvailabilityStatus.BUSY))
+    }
+
+    @Test
+    fun aLockedBubbleBlocksWalkingButNotInvitingAnAvailablePerson() {
+        val locked = Whereabouts.InBubble(ConversationKey.Bubble(5), others = listOf("Sam"), withYou = false, locked = true)
+        assertEquals(ActionBlocks(invite = null, walk = "Their bubble is locked, so nobody else can join it"), actionBlocks(locked, app.workadventurer.proto.AvailabilityStatus.ONLINE))
+    }
+
+    @Test
+    fun someoneInASilentAreaCannotBeWalkedOverTo() {
+        val s = state(listOf(player(2, "Maya", 50, 50)), areas = listOf(silentArea))
+        val w = whereIs(2, s)
+        assertEquals(true, (w as Whereabouts.InArea).silent)
+        assertEquals("That area is silent, so a conversation can't start there", actionBlocks(w, app.workadventurer.proto.AvailabilityStatus.ONLINE).walk)
+    }
+
+    @Test
+    fun yourOwnDoNotDisturbBlocksBothActionsWhoeverTheyAre() {
+        val why = "You are on do not disturb, so you can't join conversations"
+        val blocks = actionBlocks(Whereabouts.OnTheMap, app.workadventurer.proto.AvailabilityStatus.ONLINE, mine = app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB)
+        assertEquals(ActionBlocks(invite = why, walk = why), blocks)
     }
 }

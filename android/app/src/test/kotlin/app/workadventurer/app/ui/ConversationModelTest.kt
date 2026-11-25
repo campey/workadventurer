@@ -97,4 +97,63 @@ class ConversationModelTest {
         assertNull(conversationScreen(bubbleKey, state()))
         assertNull(conversationScreen(ConversationKey.AreaKey("nope"), state()))
     }
+
+    // #111: a locked bubble lets nobody else in, so offering to walk over would only leave you standing next to it.
+    @Test
+    fun aLockedBubbleYouAreNotInCannotBeJoinedAndSaysWhy() {
+        val m = conversationScreen(bubbleKey, state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(2), locked = true))))!!
+        assertEquals(Phase.Locked, m.phase)
+        assertEquals("This bubble is locked", m.joinLabel)
+        assertEquals("The people in it have locked it, so nobody else can join", m.explainer)
+        assertEquals("You are not in this bubble", m.strip)
+    }
+
+    @Test
+    fun aLockedBubbleYouAreInIsStillJoinedAndCanBeLeft() {
+        val m = conversationScreen(bubbleKey, state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(1, 2), locked = true)), myGroupId = 3))!!
+        assertEquals(Phase.Joined, m.phase)
+        assertEquals("Leave the bubble", m.leaveLabel)
+    }
+
+    // #111: a map area with the `silent` property: the web client sets everyone in it to SILENT, so no conversation works there.
+    @Test
+    fun aSilentAreaCannotBeJoinedAndSaysWhy() {
+        val quiet = area("quiet", "Quiet corner", setOf("silent"), meeting = false)
+        val m = conversationScreen(ConversationKey.AreaKey("quiet"), state(areas = listOf(quiet)))!!
+        assertEquals(Phase.Silent, m.phase)
+        assertEquals("This area is silent", m.joinLabel)
+        assertEquals("Conversations don't work in a silent area", m.explainer)
+    }
+
+    @Test
+    fun whileYouAreOnDoNotDisturbYouCannotJoinABubbleAndItSaysWhy() {
+        val s = state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(2)))).copy(myStatus = app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB)
+        val m = conversationScreen(bubbleKey, s)!!
+        assertEquals(Phase.Unavailable, m.phase)
+        assertEquals("You are on do not disturb, so you can't join conversations", m.explainer)
+    }
+
+    @Test
+    fun busyDoesNotStopYouJoining() {
+        val s = state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(2)))).copy(myStatus = app.workadventurer.proto.AvailabilityStatus.BUSY)
+        assertEquals(Phase.CanJoin, conversationScreen(bubbleKey, s)!!.phase)
+    }
+
+    // #111: a megaphone zone is a broadcast, not a conversation: a speaker area talks to every listener area. The app can do neither yet.
+    @Test
+    fun aSpeakerAreaIsNotAConversationAndSaysSo() {
+        val podium = area("podium", "Great Hall Podium", setOf("speakerMegaphone"), meeting = false)
+        val m = conversationScreen(ConversationKey.AreaKey("podium"), state(areas = listOf(podium)))!!
+        assertEquals(Phase.Megaphone, m.phase)
+        assertEquals("This is a megaphone zone", m.joinLabel)
+        assertEquals("Whoever stands here speaks to everyone in the listener areas. The app can't use a megaphone yet", m.explainer)
+    }
+
+    @Test
+    fun aListenerAreaIsNotAConversationAndSaysSo() {
+        val audience = area("audience", "Audience", setOf("listenerMegaphone"), meeting = false)
+        val m = conversationScreen(ConversationKey.AreaKey("audience"), state(areas = listOf(audience)))!!
+        assertEquals(Phase.Megaphone, m.phase)
+        assertEquals("Whoever stands here hears the speaker. The app can't listen to a megaphone yet", m.explainer)
+    }
 }

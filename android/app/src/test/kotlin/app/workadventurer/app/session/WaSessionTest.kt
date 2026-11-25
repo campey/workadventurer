@@ -59,6 +59,8 @@ class WaSessionTest {
         }
         val micCalls = mutableListOf<Boolean>()
         override fun setMicOn(on: Boolean) { micCalls += on }
+        val statusCalls = mutableListOf<app.workadventurer.proto.AvailabilityStatus>()
+        override fun setAvailabilityStatus(status: app.workadventurer.proto.AvailabilityStatus) { statusCalls += status }
         override fun close() { closeCalls++; fakeClosed.complete(Closed(1000, "bye")) }
         override fun sendInvite(receiverUuid: String, receiverUserId: Int?) { invitesSent += receiverUuid to receiverUserId }
         override fun respondToInvite(senderUuid: String, accept: Boolean) {
@@ -837,5 +839,34 @@ class WaSessionTest {
         assertTrue(voices.isEmpty())
         session.dispatch(Command.Join(cfg)); runCurrent()
         assertEquals(true, voices[0].muteCalls.last(), "an unmute pressed before joining must not carry into the join: it starts muted")
+    }
+
+    // #111: setting your own status: sent live, shown in the state, remembered for the next join and for every reconnect.
+    @Test
+    fun settingYourStatusIsSentLiveShownAndUsedByTheNextJoin() = runTest {
+        val configs = mutableListOf<RoomConfig>()
+        var conn: FakeConn? = null
+        val session = WaSession(backgroundScope, { c -> configs += c; FakeConn(c) { }.also { conn = it } }, nowMs = { testScheduler.currentTime })
+        assertEquals(app.workadventurer.proto.AvailabilityStatus.ONLINE, session.state.value.myStatus)
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(app.workadventurer.proto.AvailabilityStatus.ONLINE, configs.last().availabilityStatus)
+
+        session.dispatch(Command.SetStatus(app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB)); runCurrent()
+        assertEquals(listOf(app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB), conn!!.statusCalls)
+        assertEquals(app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB, session.state.value.myStatus)
+
+        session.dispatch(Command.Leave); runCurrent()
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB, configs.last().availabilityStatus) // it survives leaving and rejoining
+        assertEquals(app.workadventurer.proto.AvailabilityStatus.DO_NOT_DISTURB, session.state.value.myStatus)
+    }
+
+    @Test
+    fun aStatusSetBeforeJoiningIsRememberedAndAnnouncedByTheJoin() = runTest {
+        val configs = mutableListOf<RoomConfig>()
+        val session = WaSession(backgroundScope, { c -> configs += c; FakeConn(c) { } }, nowMs = { testScheduler.currentTime })
+        session.dispatch(Command.SetStatus(app.workadventurer.proto.AvailabilityStatus.BACK_IN_A_MOMENT)); runCurrent()
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(app.workadventurer.proto.AvailabilityStatus.BACK_IN_A_MOMENT, configs.last().availabilityStatus)
     }
 }

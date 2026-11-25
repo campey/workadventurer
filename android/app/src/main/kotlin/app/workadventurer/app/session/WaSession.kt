@@ -56,6 +56,9 @@ sealed interface Command {
     /** "Invite to discussion": ask a player to come over to us. */
     data class InvitePlayer(val userId: Int) : Command
 
+    /** Choose your own status (#111). Sent at once when in a room, and remembered for the next join and every reconnect. */
+    data class SetStatus(val status: app.workadventurer.proto.AvailabilityStatus) : Command
+
     /** Answer yes to an invitation we received, then walk to whoever sent it. */
     data class SetMuted(val muted: Boolean, val source: String = "ui") : Command // source only labels the call log
     data class AcceptInvite(val senderUuid: String) : Command { override fun toString() = "AcceptInvite" } // uuid is an email
@@ -112,6 +115,8 @@ data class SessionState(
     val myGroupId: Int? = null,
     /** The microphone. A join starts with the mic state its [RoomConfig.micOn] asks for (muted unless the app remembered otherwise). */
     val muted: Boolean = true,
+    /** The status we announce (#111). Kept across leaving and rejoining; the server treats some of them as "not in any conversation". */
+    val myStatus: app.workadventurer.proto.AvailabilityStatus = app.workadventurer.proto.AvailabilityStatus.ONLINE,
 )
 
 typealias ConnectionFactory = (RoomConfig) -> PusherConnection
@@ -167,6 +172,8 @@ class WaSession(
     /** Asked once per NEW_VERSION refusal for an adapter; null means no recovery (the refusal is just shown). */
     private val recovery: AdapterRecovery? = null,
 ) {
+    /** What we announce about ourselves; read by every connection the run opens, so a reconnect keeps it. */
+    @Volatile private var myStatus = app.workadventurer.proto.AvailabilityStatus.ONLINE
     private val _state = MutableStateFlow(SessionState())
     val state: StateFlow<SessionState> = _state.asStateFlow()
 
@@ -192,12 +199,12 @@ class WaSession(
                 is Command.Join -> {
                     val gen = restart()
                     // Set synchronously so observers never see the previous room's (or a stale Failed) state first.
-                    _state.value = SessionState(connection = Connection.Connecting, roomName = cmd.config.roomUrl, myName = cmd.config.name, muted = !cmd.config.micOn)
+                    _state.value = SessionState(connection = Connection.Connecting, roomName = cmd.config.roomUrl, myName = cmd.config.name, muted = !cmd.config.micOn, myStatus = myStatus)
                     job = scope.launch { run(cmd.config, gen) }
                 }
                 Command.Leave -> {
                     restart()
-                    _state.value = SessionState()
+                    _state.value = SessionState(myStatus = myStatus)
                 }
                 is Command.WalkToPlayer -> startMovement { c ->
                     val p = c.state.players.value[cmd.userId] ?: return@startMovement null
@@ -251,6 +258,12 @@ class WaSession(
                 is Command.AnswerAdapter -> consent?.let { d ->
                     // The first answer wins; the dialog goes away now, back to the state we were in (never a fresh Connecting).
                     if (d.complete(cmd.answer) && _state.value.connection is Connection.NeedsConsent) _state.update { it.copy(connection = consentBefore) }
+                }
+                is Command.SetStatus -> {
+                    myStatus = cmd.status
+                    _state.update { it.copy(myStatus = cmd.status) }
+                    log("status ${cmd.status.name}${if (_state.value.connection == Connection.Connected) "" else ", not in a room so only remembered"}")
+                    if (_state.value.connection == Connection.Connected) conn?.setAvailabilityStatus(cmd.status)
                 }
                 is Command.InvitePlayer -> {
                     val c = conn
@@ -422,7 +435,7 @@ class WaSession(
         var recoveryTried = false
         var firstRefusal: String? = null
         while (true) {
-            val c = factory(cfg)
+            val c = factory(cfg.copy(availabilityStatus = myStatus))
             if (!adopt(gen, c)) { c.close(); return }
             var upAt = -1L
             var voice: VoiceHandle? = null

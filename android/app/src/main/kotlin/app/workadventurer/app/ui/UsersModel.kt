@@ -21,7 +21,11 @@ sealed interface ConversationKey {
 }
 
 /** A bubble or a meeting area with the people in it. [joined] means we are in it right now. */
-data class Conversation(val key: ConversationKey, val title: String, val members: List<Participant>, val joined: Boolean)
+data class Conversation(
+    val key: ConversationKey, val title: String, val members: List<Participant>, val joined: Boolean,
+    /** A locked bubble lets nobody else in (#111). Areas are never locked here. */
+    val locked: Boolean = false,
+)
 
 /** An area that is not a populated meeting: [occupants] are the people standing in it (they are also on the map list). */
 data class AreaEntry(val area: Area, val occupants: List<Participant>)
@@ -40,8 +44,15 @@ data class UsersModel(
 )
 
 const val BUBBLE_TITLE = "🫧 bubble"
+const val LOCKED_BUBBLE_TITLE = "🔒 locked bubble"
 
 private fun Area.key() = id ?: name
+
+/** A silent area: the web client puts everyone in it on SILENT, so no conversation works there (#111). */
+fun Area.isSilent() = "silent" in propertyTypes
+
+/** A megaphone zone (#111): a speaker area talks to every listener area. A broadcast, not a conversation. */
+fun Area.isMegaphone() = "speakerMegaphone" in propertyTypes || "listenerMegaphone" in propertyTypes
 
 /** An area you can talk in: a LiveKit meeting room, or a Jitsi one. */
 fun Area.isMeeting() = meetingRoom != null || "jitsiRoomProperty" in propertyTypes
@@ -60,7 +71,7 @@ private fun areaOrder(s: SessionState, visits: Map<String, Int>, populated: (Are
 }
 
 fun usersModel(s: SessionState, visits: Map<String, Int> = emptyMap()): UsersModel {
-    val me = Participant(s.myUserId, s.myName.ifBlank { "You" }, true, AvailabilityStatus.ONLINE, s.myTextures)
+    val me = Participant(s.myUserId, s.myName.ifBlank { "You" }, true, s.myStatus, s.myTextures)
     val others = s.players.associateBy { it.userId }.mapValues { (_, p) ->
         Participant(p.userId, p.name, false, p.availabilityStatus, p.textures)
     }
@@ -70,8 +81,8 @@ fun usersModel(s: SessionState, visits: Map<String, Int> = emptyMap()): UsersMod
     fun bubble(g: app.workadventurer.protocol.Group): Conversation {
         val members = g.userIds.mapNotNull { id -> if (id == s.myUserId) me else others[id] }
         return Conversation(
-            ConversationKey.Bubble(g.groupId), BUBBLE_TITLE,
-            members.sortedWith(compareBy<Participant> { !it.isMe }.then(byName)), joined = g.groupId == s.myGroupId,
+            ConversationKey.Bubble(g.groupId), if (g.locked) LOCKED_BUBBLE_TITLE else BUBBLE_TITLE,
+            members.sortedWith(compareBy<Participant> { !it.isMe }.then(byName)), joined = g.groupId == s.myGroupId, locked = g.locked,
         )
     }
     val allBubbles = s.groups.sortedBy { it.groupId }.map(::bubble).filter { it.members.isNotEmpty() }

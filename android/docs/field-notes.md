@@ -63,6 +63,37 @@ per-gate sections below have the measurements; this section is the summary to st
 - A new connection id for a peer we already have a link to **replaces** the old link (the server restarts connections with a new
   id). Keyed on (space, peer). [code]
 
+- **Locked bubbles** (#111) [live 2026-11-25, code v1.35.1]: when someone in a bubble locks it, the server re-sends the group as a
+  `GroupUpdateMessage` with `locked = true`; an update that doesn't mention it (a members-only update, or a plain re-send) must not unlock
+  it. A locked bubble lets nobody else in: `Group.searchForNearbyUsers` and `GameRoom` both skip it, so walking next to one leaves you
+  standing there with no error from the server. The app greys out Join and Walk over and says why. A full bubble is refused the same way,
+  but the cap (`MAX_PER_GROUP`) is a server setting that clients never see, so "full" can't be shown. Testing it: two CLI avatars
+  that spawn beside the phone form a bubble that pulls the phone in too, so leave it first, then the lock is seen from outside.
+
+- **Statuses that keep someone out of a bubble** (#111) [live 2026-11-25, code v1.35.1]: back/src/Model/User.ts `silent` is true for
+  `DO_NOT_DISTURB`, `BACK_IN_A_MOMENT`, `DENY_PROXIMITY_MEETING`, `SILENT`, `SOUND_BLOCKED`, `SPEAKER`, `LISTENER`, `JITSI`, `BBB` and
+  `LIVEKIT`: the server never puts such a person in a bubble and takes them out of the one they are in. Seen live: a CLI avatar that
+  announced `DO_NOT_DISTURB` (`setPlayerDetailsMessage.availabilityStatus = 9`) spawned beside the phone and no bubble formed, where two
+  online avatars had formed one at once. `BUSY` and `AWAY` are not silent (the web client only prompts those people). The app blocks
+  Invite and Walk over for the first seven; a meeting status is left to the area flow, since walking into the area is how you join it.
+- **Silent areas** [live, code]: the `silent` area property (`SilentPropertyData`, `type: "silent"`) is enforced by each client setting
+  its own status to `SILENT` while inside; the server only sees the status. Prod's Afrolabs room has several (Pop Bench, ...), campus
+  has two, staging's village has many (even a `start` area). The Conversation screen of such an area says it is silent.
+
+- **Setting your own status** (#111) [live 2026-11-25]: `joinRoomFrontMessage.availabilityStatus` announces it on join and
+  `setPlayerDetailsMessage { availabilityStatus }` changes it in the room (the same field the CLI uses for LiveKit areas). The app offers
+  the web client's four: online, busy, back in a moment, do not disturb. Seen live, both ways: with the phone on do not disturb an
+  online avatar spawned beside it and no bubble formed; 0.3 s after the phone went back to online the server put it in the bubble
+  (`GameRoom` re-checks a user who stops being silent). The server also takes you out of your current bubble when you go silent.
+  Kept in the session, not on disk: it survives leaving, rejoining and reconnects, but not the app being killed.
+- **Megaphone zones** (#111) [live 2026-11-25, code]: areas with `speakerMegaphone` / `listenerMegaphone` properties switch the web
+  client's status to `SPEAKER` / `LISTENER` and carry the audience over LiveKit, not a proximity bubble. Afrolabs has "Great Hall
+  Podium" (speaker) and "Audience" (listener), campus several, staging's village many. The Conversation screen says it's a megaphone
+  zone and that the app can't use one yet, instead of offering to walk in.
+- **Full bubbles** (#111) [code]: the server refuses a full group (`MAX_PER_GROUP`, an env var), but it is never sent to clients;
+  `groupSize` is the current size, not a cap. So "full" can't be shown from the client. Revisit with LiveKit escalation (#134).
+- **Not covered**: lockable *areas* (`lockableAreaPropertyData`) are a separate lock from a bubble's.
+
 ### Roles and signalling
 - **Who offers** [live, code]: the server tells the user who was already watching the space to offer (`initiator=true`); the
   phone nearly always is that user, so the phone must be able to offer. If nobody offers, the browser times out after ~20 s,

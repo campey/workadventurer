@@ -29,6 +29,42 @@ fun statusColor(s: AvailabilityStatus): Long = when (s) {
     AvailabilityStatus.DENY_PROXIMITY_MEETING -> 0xFFFFFFFFL
 }
 
+/**
+ * Why someone can't be in a conversation right now, or null when they can. With these statuses the server never puts a person in a
+ * bubble (and takes them out of the one they are in): back/src/Model/User.ts `silent`. Busy and away are only prompts on the web
+ * client, and a meeting (LiveKit, Jitsi, BBB) is a place you walk into, so those say nothing here (#111).
+ */
+fun unavailableReason(s: AvailabilityStatus): String? {
+    val why = when (s) {
+        AvailabilityStatus.DO_NOT_DISTURB -> "They are on do not disturb"
+        AvailabilityStatus.BACK_IN_A_MOMENT -> "They will be back in a moment"
+        AvailabilityStatus.SOUND_BLOCKED -> "Their sound is blocked"
+        AvailabilityStatus.SILENT -> "They are in a silent area"
+        AvailabilityStatus.DENY_PROXIMITY_MEETING -> "They are not taking part in proximity meetings"
+        AvailabilityStatus.SPEAKER -> "They are using the megaphone"
+        AvailabilityStatus.LISTENER -> "They are listening to a megaphone"
+        else -> return null
+    }
+    return "$why, so they can't be in a conversation right now"
+}
+
+/** A status you can pick for yourself, with what it means (#111). The web client's menu offers these four. */
+data class StatusChoice(val status: AvailabilityStatus, val hint: String)
+
+val SELECTABLE_STATUSES = listOf(
+    StatusChoice(AvailabilityStatus.ONLINE, "Anyone can talk to you"),
+    StatusChoice(AvailabilityStatus.BUSY, "Others see you are busy, but you can still talk"),
+    StatusChoice(AvailabilityStatus.BACK_IN_A_MOMENT, "Nobody can join you, and you can't join anyone"),
+    StatusChoice(AvailabilityStatus.DO_NOT_DISTURB, "Nobody can join you, and you can't join anyone"),
+)
+
+/** Why your own status stops you joining conversations (the server keeps these two out of every bubble), or null when it doesn't. */
+fun yourStatusReason(s: AvailabilityStatus): String? = when (s) {
+    AvailabilityStatus.DO_NOT_DISTURB -> "You are on do not disturb, so you can't join conversations"
+    AvailabilityStatus.BACK_IN_A_MOMENT -> "You said you will be back in a moment, so you can't join conversations"
+    else -> null
+}
+
 /** Not in a world: the protocol has no such status, but the web client says "Offline" and shows a grey dot. */
 const val OFFLINE_LABEL = "Offline"
 const val OFFLINE_COLOR = 0xFF6B7A90L

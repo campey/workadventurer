@@ -3,8 +3,8 @@ package app.workadventurer.app.ui
 import app.workadventurer.app.session.Activity
 import app.workadventurer.app.session.SessionState
 
-/** Where the conversation screen's action is: join, on the way, in it, on the way out, or a Jitsi area we cannot join. */
-enum class Phase { CanJoin, Walking, Joined, Leaving, Jitsi }
+/** Where the conversation screen's action is: join, on the way, in it, on the way out, a Jitsi area we cannot join, a locked bubble, or a silent area (nobody can talk in either). */
+enum class Phase { CanJoin, Walking, Joined, Leaving, Jitsi, Locked, Silent, Unavailable, Megaphone }
 
 /**
  * What the screen for one bubble or area shows. Joining and leaving are done by walking (the protocol has no message for
@@ -38,6 +38,9 @@ fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScree
     val the = if (isBubble) "the bubble" else c.title
     val area = (key as? ConversationKey.AreaKey)?.let { k -> s.areas.firstOrNull { (it.id ?: it.name) == k.key } }
     val jitsi = area?.isJitsi() == true
+    val silentArea = area?.isSilent() == true && !jitsi
+    val megaphone = area?.isMegaphone() == true && !jitsi
+    val myBlock = yourStatusReason(s.myStatus) // your own do not disturb / back in a moment comes first: nothing else would work
     val others = c.members.filter { !it.isMe }
     val walking = when (val a = s.activity) {
         is Activity.WalkingTo -> if (isBubble) others.any { it.name.ifBlank { "Unnamed player" } == a.label } else a.label == c.title
@@ -48,15 +51,24 @@ fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScree
         jitsi -> Phase.Jitsi
         leaving -> Phase.Leaving
         c.joined -> Phase.Joined
+        myBlock != null -> Phase.Unavailable
+        megaphone -> Phase.Megaphone
+        c.locked -> Phase.Locked
+        silentArea -> Phase.Silent
         walking -> Phase.Walking
         else -> Phase.CanJoin
     }
     return ConversationScreenModel(
         title = c.title, noun = noun, members = c.members, phase = phase,
         strip = if (c.joined) "You are in this $noun" else "You are not in this $noun",
-        joinLabel = if (jitsi) "Join in Jitsi" else "Join the $noun",
+        joinLabel = if (jitsi) "Join in Jitsi" else if (c.locked) "This bubble is locked" else if (silentArea) "This area is silent" else if (megaphone) "This is a megaphone zone" else "Join the $noun",
         explainer = when {
             jitsi -> JITSI_NOT_SUPPORTED_MESSAGE
+            myBlock != null -> myBlock
+            c.locked -> "The people in it have locked it, so nobody else can join"
+            silentArea -> "Conversations don't work in a silent area"
+            megaphone -> if ("speakerMegaphone" in area!!.propertyTypes) "Whoever stands here speaks to everyone in the listener areas. The app can't use a megaphone yet"
+                else "Whoever stands here hears the speaker. The app can't listen to a megaphone yet"
             isBubble -> "Walk your avatar over to talk to them"
             else -> "Walk your avatar into the area to talk to them"
         },

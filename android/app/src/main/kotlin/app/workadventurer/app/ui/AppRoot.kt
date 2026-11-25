@@ -137,7 +137,7 @@ fun AppRoot(
             gesturesEnabled = inRoom,
             drawerContent = {
                 WorldPanel(
-                    details = details,
+                    details = details, myStatus = state.myStatus,
                     roomUrl = state.roomName, loadWorldMeta = loadWorldMeta, loadPicture = loadPicture,
                     onShareLink = { onShareLink(shareableRoomUrl(state.roomName)); scope.launch { drawer.close() } },
                     onShareLogs = onShareLogs,
@@ -158,7 +158,7 @@ fun AppRoot(
                 topBar = {
                     if (inRoom) {
                         RoomTopBar(
-                            worldName = details.name, myName = state.myName, myTextures = state.myTextures,
+                            worldName = details.name, myName = state.myName, myTextures = state.myTextures, myStatus = state.myStatus,
                             onOpen = { scope.launch { drawer.open() } },
                         )
                     }

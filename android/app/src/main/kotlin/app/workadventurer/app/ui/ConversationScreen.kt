@@ -88,6 +88,10 @@ fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> 
                     "Walking over…", "Your avatar is on its way", onClick = {}, enabled = false, quiet = true,
                 )
                 Phase.Jitsi -> PrimaryAction(m.joinLabel, m.explainer, onClick = {}, enabled = false, quiet = true)
+                Phase.Locked -> PrimaryAction(m.joinLabel, m.explainer, onClick = {}, enabled = false, quiet = true)
+                Phase.Silent -> PrimaryAction(m.joinLabel, m.explainer, onClick = {}, enabled = false, quiet = true)
+                Phase.Unavailable -> PrimaryAction(m.joinLabel, m.explainer, onClick = {}, enabled = false, quiet = true)
+                Phase.Megaphone -> PrimaryAction(m.joinLabel, m.explainer, onClick = {}, enabled = false, quiet = true)
                 Phase.Leaving -> PrimaryAction("Walking out…", "Your avatar is on its way out", onClick = {}, enabled = false, quiet = true)
                 Phase.Joined -> {
                     PrimaryAction(

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -63,7 +64,7 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
         val where = if (isMe) whereAmI(state) else whereIs(userId, state)
         val name = if (isMe) state.myName.ifBlank { "You" } else playerLabel(player!!)
         val textures = if (isMe) state.myTextures else player!!.textures
-        val status = if (isMe) MY_STATUS else player!!.availabilityStatus
+        val status = if (isMe) state.myStatus else player!!.availabilityStatus
         val canMove = state.connection is Connection.Connected
         val walking = !isMe && (state.activity as? Activity.WalkingTo)?.label == name
 
@@ -74,6 +75,8 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
                 Box(Modifier.size(10.dp).clip(CircleShape).background(Color(statusColor(status))))
                 Text(statusLabel(status), style = MaterialTheme.typography.bodyLarge)
             }
+            // Your own screen is where you choose your status (#111).
+            if (isMe) StatusPicker(state.myStatus, onPick = { onCommand(Command.SetStatus(it)) })
             val conversation = where.conversation()
             Row(
                 Modifier.padding(top = 28.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface)
@@ -108,9 +111,11 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
                 description = if (isMe) "Open the conversation you are in" else "Open the conversation you are in with $name", quiet = true,
             )
         } else {
+            // What stops each action: a locked bubble, a silent area, or a status that keeps them out of every conversation (#111).
+            val blocks = actionBlocks(where, status, mine = state.myStatus)
             Column(Modifier.padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(
-                    onClick = { onCommand(Command.InvitePlayer(userId)) }, enabled = canMove,
+                    onClick = { onCommand(Command.InvitePlayer(userId)) }, enabled = canMove && blocks.invite == null,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).heightIn(min = 56.dp).semantics { contentDescription = "Invite $name to a meeting" },
                     shape = RoundedCornerShape(28.dp),
                 ) {
@@ -118,14 +123,48 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
                     Spacer(Modifier.width(10.dp))
                     Text("Invite", style = MaterialTheme.typography.titleMedium)
                 }
+                // Say why, rather than let you walk over and stand next to them. When only Invite is stopped its reason goes under it.
+                val blocked = blocks.walk
+                if (blocks.invite != null && blocked == null) Text(
+                    blocks.invite, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                )
                 PrimaryAction(
                     label = if (walking) "Walking over…" else "Walk over",
-                    explainer = if (walking) "Your avatar is on its way to them" else explainer,
+                    explainer = if (walking) "Your avatar is on its way to them" else blocked ?: explainer,
                     onClick = { onCommand(Command.WalkToPlayer(userId)) },
                     description = if (walking) "Walking over to $name" else "Walk over to $name and ${if (explainer.contains("join")) "join the conversation" else "start a conversation"}",
-                    enabled = canMove && !walking,
-                    quiet = walking,
+                    enabled = canMove && !walking && blocked == null,
+                    quiet = walking || blocked != null,
                 )
+            }
+        }
+    }
+}
+
+/** "Your status": the four the web client offers, each with what it means. Choosing one is sent at once, and kept for the next join. */
+@Composable
+private fun StatusPicker(current: app.workadventurer.proto.AvailabilityStatus, onPick: (app.workadventurer.proto.AvailabilityStatus) -> Unit) {
+    Column(Modifier.padding(top = 20.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface).padding(vertical = 8.dp)) {
+        Text(
+            "Your status", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+        for (choice in SELECTABLE_STATUSES) {
+            val selected = choice.status == current
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                    .selectable(selected = selected, role = Role.RadioButton, onClick = { onPick(choice.status) })
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .semantics { contentDescription = "${statusLabel(choice.status)}. ${choice.hint}${if (selected) ". Selected" else ""}" },
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Box(Modifier.size(12.dp).clip(CircleShape).background(Color(statusColor(choice.status))))
+                Column(Modifier.weight(1f)) {
+                    Text(statusLabel(choice.status), style = MaterialTheme.typography.bodyLarge)
+                    Text(choice.hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (selected) Icon(WaIcons.Check, contentDescription = null)
             }
         }
     }
