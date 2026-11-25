@@ -138,4 +138,22 @@ class ConversationModelTest {
         val s = state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(2)))).copy(myStatus = app.workadventurer.proto.AvailabilityStatus.BUSY)
         assertEquals(Phase.CanJoin, conversationScreen(bubbleKey, s)!!.phase)
     }
+
+    // #111: a megaphone zone is a broadcast, not a conversation: a speaker area talks to every listener area. The app can do neither yet.
+    @Test
+    fun aSpeakerAreaIsNotAConversationAndSaysSo() {
+        val podium = area("podium", "Great Hall Podium", setOf("speakerMegaphone"), meeting = false)
+        val m = conversationScreen(ConversationKey.AreaKey("podium"), state(areas = listOf(podium)))!!
+        assertEquals(Phase.Megaphone, m.phase)
+        assertEquals("This is a megaphone zone", m.joinLabel)
+        assertEquals("Whoever stands here speaks to everyone in the listener areas. The app can't use a megaphone yet", m.explainer)
+    }
+
+    @Test
+    fun aListenerAreaIsNotAConversationAndSaysSo() {
+        val audience = area("audience", "Audience", setOf("listenerMegaphone"), meeting = false)
+        val m = conversationScreen(ConversationKey.AreaKey("audience"), state(areas = listOf(audience)))!!
+        assertEquals(Phase.Megaphone, m.phase)
+        assertEquals("Whoever stands here hears the speaker. The app can't listen to a megaphone yet", m.explainer)
+    }
 }

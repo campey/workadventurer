@@ -86,6 +86,13 @@ per-gate sections below have the measurements; this section is the summary to st
   online avatar spawned beside it and no bubble formed; 0.3 s after the phone went back to online the server put it in the bubble
   (`GameRoom` re-checks a user who stops being silent). The server also takes you out of your current bubble when you go silent.
   Kept in the session, not on disk: it survives leaving, rejoining and reconnects, but not the app being killed.
+- **Megaphone zones** (#111) [live 2026-11-25, code]: areas with `speakerMegaphone` / `listenerMegaphone` properties switch the web
+  client's status to `SPEAKER` / `LISTENER` and carry the audience over LiveKit, not a proximity bubble. Afrolabs has "Great Hall
+  Podium" (speaker) and "Audience" (listener), campus several, staging's village many. The Conversation screen says it's a megaphone
+  zone and that the app can't use one yet, instead of offering to walk in.
+- **Full bubbles** (#111) [code]: the server refuses a full group (`MAX_PER_GROUP`, an env var), but it is never sent to clients;
+  `groupSize` is the current size, not a cap. So "full" can't be shown from the client. Revisit with LiveKit escalation (#134).
+- **Not covered**: lockable *areas* (`lockableAreaPropertyData`) are a separate lock from a bubble's.
 
 ### Roles and signalling
 - **Who offers** [live, code]: the server tells the user who was already watching the space to offer (`initiator=true`); the
