@@ -22,6 +22,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +51,9 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
     // You are not in the players list: your own picture, name and place come from the session.
     val isMe = state.myUserId != null && userId == state.myUserId
     val player = state.players.firstOrNull { it.userId == userId }
+    // Remember who they were, so if they leave while this is open the screen can still say who it was.
+    var lastSeen by remember(userId) { mutableStateOf<app.workadventurer.protocol.Player?>(null) }
+    if (player != null) lastSeen = player
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack, modifier = Modifier.size(48.dp).semantics { contentDescription = "Back to the people list" }) {
@@ -56,7 +63,11 @@ fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpe
         if (!isMe && player == null) {
             // They left (or went out of view) while this was open.
             Column(Modifier.weight(1f).fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Text("This person is no longer here", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+                lastSeen?.let { WokaAvatar(it.textures, playerLabel(it), 96.dp) }
+                Text(
+                    personGoneNotice(lastSeen?.let { playerLabel(it) }), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 16.dp),
+                )
             }
             return@Column
         }

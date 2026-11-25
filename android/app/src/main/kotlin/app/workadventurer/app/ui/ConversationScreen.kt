@@ -53,7 +53,7 @@ fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> 
         }
         if (m == null) {
             Column(Modifier.weight(1f).fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Text("This conversation is no longer here", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+                Text(conversationGoneNotice(), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
             }
             return@Column
         }
