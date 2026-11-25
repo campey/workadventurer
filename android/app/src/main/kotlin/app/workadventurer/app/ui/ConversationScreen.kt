@@ -43,7 +43,9 @@ private val OFFLINE_DOT = Color(0xFF8A99B3)
  */
 @Composable
 fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> Unit, onOpenPerson: (Int) -> Unit, onCommand: (Command) -> Unit, onGone: () -> Unit = {}) {
-    val m = conversationScreen(key, state)
+    // Someone who just left stays in the list a moment, dimmed (the same as the people list).
+    val (shown, left) = rememberWithLeavers(state)
+    val m = conversationScreen(key, shown, left)
     // The bubble dissolved under this screen: step back to the list.
     LaunchedEffect(m == null) { if (m == null) onGone() }
     val canMove = state.connection is Connection.Connected
@@ -79,7 +81,7 @@ fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> 
 
         val join: Command? = when (key) {
             is ConversationKey.AreaKey -> Command.WalkToArea(key.key)
-            is ConversationKey.Bubble -> m.members.firstOrNull { !it.isMe }?.userId?.let { Command.WalkToPlayer(it) }
+            is ConversationKey.Bubble -> m.walkTargetId?.let { Command.WalkToPlayer(it) }
         }
         Column(Modifier.padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             when (m.phase) {

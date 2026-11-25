@@ -21,11 +21,13 @@ data class ConversationScreenModel(
     val subtext: String?,
     val leaveLabel: String,
     val emptyText: String?,
+    /** For a bubble: who to walk over to (someone still here), or null. */
+    val walkTargetId: Int? = null,
 )
 
 /** The model for [key], or null if that bubble is gone or that area is not on this map. */
-fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScreenModel? {
-    val m = usersModel(s)
+fun conversationScreen(key: ConversationKey, s: SessionState, left: Set<Int> = emptySet()): ConversationScreenModel? {
+    val m = usersModel(s, left = left)
     val c: Conversation = (listOfNotNull(m.active) + m.bubbles + m.meetingAreas).firstOrNull { it.key == key }
         ?: (key as? ConversationKey.AreaKey)?.let { k ->
             m.otherAreas.firstOrNull { (it.area.id ?: it.area.name) == k.key }?.let { e ->
@@ -41,7 +43,7 @@ fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScree
     val silentArea = area?.isSilent() == true && !jitsi
     val megaphone = area?.isMegaphone() == true && !jitsi
     val myBlock = yourStatusReason(s.myStatus) // your own do not disturb / back in a moment comes first: nothing else would work
-    val others = c.members.filter { !it.isMe }
+    val others = c.members.filter { !it.isMe && !it.leftRoom } // someone who just left is still listed, but is not company
     val walking = when (val a = s.activity) {
         is Activity.WalkingTo -> if (isBubble) others.any { it.name.ifBlank { "Unnamed player" } == a.label } else a.label == c.title
         else -> false
@@ -75,5 +77,6 @@ fun conversationScreen(key: ConversationKey, s: SessionState): ConversationScree
         subtext = if (c.joined) { if (others.isEmpty()) "Waiting in $the" else "Talking in $the" } else null,
         leaveLabel = "Leave the $noun",
         emptyText = if (c.members.isEmpty()) "Nobody is here yet" else null,
+        walkTargetId = others.firstOrNull()?.userId,
     )
 }

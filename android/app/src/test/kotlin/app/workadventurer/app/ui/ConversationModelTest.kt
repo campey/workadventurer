@@ -156,4 +156,21 @@ class ConversationModelTest {
         assertEquals(Phase.Megaphone, m.phase)
         assertEquals("Whoever stands here hears the speaker. The app can't listen to a megaphone yet", m.explainer)
     }
+
+    // Someone who just left stays in the room view's list, dimmed, but no longer counts as company (#134).
+    @Test
+    fun aLeaverStaysListedButIsNotCompany() {
+        val inRed = listOf(red)
+        val m = conversationScreen(areaKey, state(players = listOf(player(2, "Ada", 10, 10)), inAreas = inRed), left = setOf(2))!!
+        assertEquals(listOf("Me", "Ada"), m.members.map { it.name })
+        assertEquals(listOf(false, true), m.members.map { it.leftRoom })
+        assertEquals("Waiting in Red Table", m.subtext)
+    }
+
+    @Test
+    fun walkingOverToABubbleNeverTargetsSomeoneWhoLeft() {
+        val st = state(players = listOf(player(2, "Ada"), player(3, "Bo")), groups = listOf(Group(3, 5, 5, listOf(2, 3))))
+        val m = conversationScreen(bubbleKey, st, left = setOf(2))!!
+        assertEquals(3, m.walkTargetId)
+    }
 }
