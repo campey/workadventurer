@@ -25,6 +25,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -53,7 +54,9 @@ fun UsersScreen(
     /** How often you have been in each area of this room (by area key); where you go often is listed first. */
     visits: Map<String, Int> = emptyMap(),
 ) {
-    val model = usersModel(state, visits)
+    // Someone who just left stays in their place for a moment, dimmed, saying so.
+    val (shown, left) = rememberWithLeavers(state)
+    val model = usersModel(shown, visits, left)
     val canMove = state.connection is Connection.Connected
     fun open(c: Conversation) = onOpenConversation(c.key)
 
@@ -177,11 +180,11 @@ private fun SectionHeader(title: String, onClick: (() -> Unit)?, description: St
 internal fun PersonRow(p: Participant, onClick: (() -> Unit)?) {
     val label = if (p.isMe) "${p.name} (You)" else p.name
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp)
-            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (p.leftRoom) Modifier.alpha(LEFT_ROOM_ALPHA) else Modifier)
+            .then(if (onClick != null && !p.leftRoom) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
             .padding(horizontal = 16.dp, vertical = 6.dp)
             .semantics(mergeDescendants = true) {
-                contentDescription = "$label, ${statusLabel(p.status)}${if (onClick != null) (if (p.isMe) ". Opens your screen" else ". Opens their screen") else ""}"
+                contentDescription = "$label, ${if (p.leftRoom) LEFT_ROOM_TEXT else statusLabel(p.status)}${if (onClick != null && !p.leftRoom) (if (p.isMe) ". Opens your screen" else ". Opens their screen") else ""}"
             },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -190,8 +193,8 @@ internal fun PersonRow(p: Participant, onClick: (() -> Unit)?) {
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(Color(statusColor(p.status))))
-                Text(statusLabel(p.status), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!p.leftRoom) Box(Modifier.size(8.dp).clip(CircleShape).background(Color(statusColor(p.status))))
+                Text(if (p.leftRoom) LEFT_ROOM_TEXT else statusLabel(p.status), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

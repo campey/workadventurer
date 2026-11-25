@@ -42,10 +42,10 @@ private val OFFLINE_DOT = Color(0xFF8A99B3)
  * with Leave above it.
  */
 @Composable
-fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> Unit, onOpenPerson: (Int) -> Unit, onCommand: (Command) -> Unit, onGone: (String) -> Unit = {}) {
+fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> Unit, onOpenPerson: (Int) -> Unit, onCommand: (Command) -> Unit, onGone: () -> Unit = {}) {
     val m = conversationScreen(key, state)
-    // The bubble dissolved under this screen: step back and say so.
-    LaunchedEffect(m == null) { if (m == null) onGone(conversationGoneNotice()) }
+    // The bubble dissolved under this screen: step back to the list.
+    LaunchedEffect(m == null) { if (m == null) onGone() }
     val canMove = state.connection is Connection.Connected
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {

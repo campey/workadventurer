@@ -114,8 +114,8 @@ fun AppRoot(
         nav.navigate(target.path) { popUpTo(nav.graph.id) { inclusive = true } }
         drawer.close() // never leave the world panel open over the Join screen after leaving
     }
-    // A person or bubble vanished under the open screen: go back to where we were, and say who or what, briefly.
-    val goneBack: (String) -> Unit = { message -> nav.popBackStack(); scope.launch { snackbar.showSnackbar(message) } }
+    // A person or bubble vanished under the open screen: go back to where we were (a leaver's row shows it in the list).
+    val goneBack: () -> Unit = { nav.popBackStack() }
     LaunchedEffect(notice) { if (notice != null) snackbar.showSnackbar(notice) }
 
     // Walking into a Jitsi area: we don't support those yet (#119), so say so once, rather than leave someone in a call they can't hear.

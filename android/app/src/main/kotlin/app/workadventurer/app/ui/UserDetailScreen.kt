@@ -48,16 +48,16 @@ import app.workadventurer.app.session.SessionState
  * to them (to join their conversation if they are in one). Already together with them: just where they are.
  */
 @Composable
-fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpenConversation: (ConversationKey) -> Unit, onCommand: (Command) -> Unit, onGone: (String) -> Unit = {}) {
+fun UserDetailScreen(userId: Int, state: SessionState, onBack: () -> Unit, onOpenConversation: (ConversationKey) -> Unit, onCommand: (Command) -> Unit, onGone: () -> Unit = {}) {
     // You are not in the players list: your own picture, name and place come from the session.
     val isMe = state.myUserId != null && userId == state.myUserId
     val player = state.players.firstOrNull { it.userId == userId }
     // Remember who they were, so if they leave while this is open the screen can still say who it was.
     var lastSeen by remember(userId) { mutableStateOf<app.workadventurer.protocol.Player?>(null) }
     if (player != null) lastSeen = player
-    // They left while this was open: there is nothing to do here, so the app steps back and says who it was.
+    // They left while this was open: there is nothing to do here, so the app steps back to the list, where their row shows it.
     val gone = !(state.myUserId != null && userId == state.myUserId) && player == null
-    LaunchedEffect(gone) { if (gone) onGone(personGoneNotice(lastSeen?.let { playerLabel(it) })) }
+    LaunchedEffect(gone) { if (gone) onGone() }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack, modifier = Modifier.size(48.dp).semantics { contentDescription = "Back to the people list" }) {
