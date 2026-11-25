@@ -261,6 +261,14 @@ Measured live against browser peers on the S25 Ultra unless marked.
   the UI says "muted". Stopping capture would end the zero-RTP stream and bring back the red mic. Kept, deliberately.
 - **Meeting areas** join after a 1.5 s dwell and leave after 2.5 s outside; space name is `slugify(shortHash(roomUrl)-name)`,
   from the room URL exactly as typed (a trailing slash or `#entry` hashes differently and lands in an empty space).
+- **Escalation seen live from the phone** (#134 slice 1, 2026-11-25, prod Afrolabs Fire Pit, phone + 4 CLI avatars): the phone logged
+  `meeting is switching to WEBRTC`, two `webRtcStart`s, then 11 s later `meeting is switching to LIVEKIT` and
+  `LiveKit invitation for room <room url>.<space name>` (the room is the JWT's `video.room`), then 5 s after that
+  `meeting switched to WEBRTC`: the meeting went to the SFU and back within seconds as people settled. No `livekitDisconnectMessage`
+  was logged for the way back, only the final switch to WEBRTC, as the CLI saw (#150), so the app must leave the SFU on a switch
+  back to WEBRTC and not wait for the disconnect. The log never carries the token or server address. An area meeting with a
+  `livekitRoomProperty` starts on WEBRTC too (see `docs/livekit.md`).
+  Spawn-point trap: four avatars `wa to` the phone at the spawn point only made two bubbles; the Fire Pit area is where five meet.
 - **Not handled yet:** `livekitInvitationMessage` (G4) — in a large area meeting the server moves everyone to LiveKit and the
   phone would sit in the space announcing mic-on with no media; `transceiverRequest`; the same browser reachable through both an
   area space and a bubble (two PeerConnections, mic sent twice) — supersede is keyed on (space, peer).
