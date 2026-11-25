@@ -23,6 +23,7 @@ android {
 
 dependencies {
     api(libs.webrtc)
+    implementation(libs.livekit.android)
     api(project(":protocol"))
     implementation(libs.coroutines.core)
     implementation(libs.serialization.json)

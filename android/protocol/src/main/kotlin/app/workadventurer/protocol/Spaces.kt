@@ -35,7 +35,7 @@ sealed interface VoiceEvent {
     /** The server ended the SFU for this space (the meeting shrank). */
     data class LiveKitDisconnect(override val spaceName: String) : VoiceEvent
 
-    /** The server announces the meeting's transport is changing to [strategy] ("LIVEKIT" or "WEBRTC"). Informational; [finalized] is the second, final message. */
+    /** The server announces the meeting moving to [strategy] ("LIVEKIT" or "WEBRTC"); [finalized] is the second message, which names the transport being SHUT DOWN (the old one), not the new one. */
     data class Switch(override val spaceName: String, val strategy: String, val finalized: Boolean) : VoiceEvent
 }
 

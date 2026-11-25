@@ -7,6 +7,7 @@ coroutines = "1.9.0"
 serialization = "1.7.3"
 # The exact libwebrtc build livekit-android 2.29.0 depends on (prefixed classes: livekit.org.webrtc.*), so G4 shares it.
 webrtc = "144.7559.14"
+livekit = "2.29.0"
 
 [libraries]
 wire-runtime = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
@@ -24,6 +25,7 @@ androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-ru
 androidx-core-ktx = { module = "androidx.core:core-ktx", version = "1.13.1" }
 androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version = "2.8.4" }
 webrtc = { module = "io.github.webrtc-sdk:android-prefixed", version.ref = "webrtc" }
+livekit-android = { module = "io.livekit:livekit-android", version.ref = "livekit" }
 androidx-test-runner = { module = "androidx.test:runner", version = "1.6.2" }
 androidx-test-junit = { module = "androidx.test.ext:junit", version = "1.2.1" }
 androidx-test-rules = { module = "androidx.test:rules", version = "1.6.1" }

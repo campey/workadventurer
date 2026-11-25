@@ -739,8 +739,25 @@ class WaSessionTest {
 
     private class FakeVoice(val onClose: () -> Unit = {}) : VoiceHandle {
         val muteCalls = mutableListOf<Boolean>()
+        override val audio = kotlinx.coroutines.flow.MutableStateFlow(app.workadventurer.voice.AudioStatus.None)
         override fun setMuted(muted: Boolean) { muteCalls += muted }
         override fun close() { onClose() }
+    }
+
+    // The meeting moved to LiveKit (#134): the screen must say whether the audio is up, not "Talking" regardless.
+    @Test
+    fun theAudioStatusOfTheVoiceReachesTheStateAndClearsWhenTheConnectionEnds() = runTest {
+        val voices = mutableListOf<FakeVoice>()
+        val session = WaSession(backgroundScope, { c -> FakeConn(c) { } }, nowMs = { testScheduler.currentTime },
+            voiceHost = { FakeVoice().also { voices += it } })
+        assertEquals(app.workadventurer.voice.AudioStatus.None, session.state.value.audio)
+        session.dispatch(Command.Join(cfg)); runCurrent()
+        voices[0].audio.value = app.workadventurer.voice.AudioStatus.Connecting; runCurrent()
+        assertEquals(app.workadventurer.voice.AudioStatus.Connecting, session.state.value.audio)
+        voices[0].audio.value = app.workadventurer.voice.AudioStatus.Connected; runCurrent()
+        assertEquals(app.workadventurer.voice.AudioStatus.Connected, session.state.value.audio)
+        session.dispatch(Command.Leave); runCurrent()
+        assertEquals(app.workadventurer.voice.AudioStatus.None, session.state.value.audio)
     }
 
     @Test

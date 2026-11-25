@@ -117,6 +117,8 @@ data class SessionState(
     val muted: Boolean = true,
     /** The status we announce (#111). Kept across leaving and rejoining; the server treats some of them as "not in any conversation". */
     val myStatus: app.workadventurer.proto.AvailabilityStatus = app.workadventurer.proto.AvailabilityStatus.ONLINE,
+    /** The audio of the meeting you are in: only different from None while it is on the server's LiveKit room (#134). */
+    val audio: app.workadventurer.voice.AudioStatus = app.workadventurer.voice.AudioStatus.None,
 )
 
 typealias ConnectionFactory = (RoomConfig) -> PusherConnection
@@ -127,6 +129,10 @@ typealias VoiceHost = (PusherConnection) -> VoiceHandle
 /** What the session can ask of a running voice mesh. */
 interface VoiceHandle : AutoCloseable {
     fun setMuted(muted: Boolean)
+
+    /** Where the audio of the meeting stands (#134): joining the server's LiveKit room, in it, or it would not connect. */
+    val audio: kotlinx.coroutines.flow.StateFlow<app.workadventurer.voice.AudioStatus>
+        get() = kotlinx.coroutines.flow.MutableStateFlow(app.workadventurer.voice.AudioStatus.None)
 }
 
 // WorkAdventure (v1.34.0 defaults, back/src/Enum/EnvironmentVariableValidator.ts): two players form a bubble at
@@ -452,10 +458,11 @@ class WaSession(
                 coroutineScope {
                     // A child of this run, so it can't outlive it or leak past a Leave.
                     val mirror = launch { mirrorState(c, gen) }
+                    val audioMirror = handle?.let { h -> launch { h.audio.collect { a -> setState(gen) { it.copy(audio = a) } } } }
                     try {
                         val closed = c.closed.await()
                         log("connection dropped: ${closed.code} ${closed.reason}") // so "Reconnecting" always has a reason on record
-                    } finally { mirror.cancel() }
+                    } finally { mirror.cancel(); audioMirror?.cancel(); setState(gen) { it.copy(audio = app.workadventurer.voice.AudioStatus.None) } }
                 }
             } catch (e: CancellationException) {
                 throw e

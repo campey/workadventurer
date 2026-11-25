@@ -6,7 +6,10 @@ import android.media.AudioManager
 import app.workadventurer.app.session.VoiceHandle
 import app.workadventurer.protocol.PusherConnection
 import app.workadventurer.protocol.VoiceEvent
+import app.workadventurer.voice.AudioStatus
+import app.workadventurer.voice.LiveKitFactory
 import app.workadventurer.voice.MeshSession
+import app.workadventurer.voice.RealLiveKitCall
 import app.workadventurer.voice.VoiceEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -19,6 +22,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,14 +49,21 @@ class MeshVoiceHost(
     private class Handle(private val onClose: () -> Unit) : VoiceHandle {
         private var currentlyMuted = true
         private var engine: VoiceEngine? = null
+        private var mesh: MeshSession? = null
 
-        @Synchronized override fun setMuted(muted: Boolean) { currentlyMuted = muted; engine?.setMuted(muted) }
+        /** The audio of the meeting, as the mesh reports it (#134). */
+        override val audio = MutableStateFlow(AudioStatus.None)
+
+        @Synchronized override fun setMuted(muted: Boolean) { currentlyMuted = muted; engine?.setMuted(muted); mesh?.setMuted(muted) }
+
+        /** The mesh now exists: it applies the mute choice to a LiveKit room it joins. */
+        @Synchronized fun attach(m: MeshSession) { mesh = m; m.setMuted(currentlyMuted) }
 
         /** The engine now exists: apply whatever mute choice has been made so far. */
         @Synchronized fun attach(e: VoiceEngine) { engine = e; e.setMuted(currentlyMuted) }
 
         /** Before the engine is disposed, so a late mute can't touch a disposed track. */
-        @Synchronized fun detach() { engine = null }
+        @Synchronized fun detach() { engine = null; mesh = null }
 
         override fun close() = onClose()
     }
@@ -83,8 +94,11 @@ class MeshVoiceHost(
                     links = { id -> e.newLink(id, ice.await()) },
                     sink = { space, peer, id, signal -> conn.sendSignal(space, peer, id, signal) },
                     log = { log.i("WaVoice", it) },
+                    liveKit = LiveKitFactory { RealLiveKitCall(context) { line -> log.i("WaVoice", line) } },
+                    onAudio = { status -> handle.audio.value = status },
                 )
                 mesh = m
+                handle.attach(m)
                 // Every 5 s, per live connection: audio packets sent/received, ICE state, negotiated direction, mic on/off.
                 // Counts and states only. Answers "is audio leaving the phone?" when a browser shows a red mic.
                 // Taken on the mesh coroutine itself, not a second thread: libwebrtc objects aren't safe to read mid-negotiation or teardown.

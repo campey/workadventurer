@@ -158,6 +158,16 @@ class ConversationModelTest {
     }
 
     // Someone who just left stays in the room view's list, dimmed, but no longer counts as company (#134).
+    // A meeting on LiveKit (#134): "Talking" only once the audio is actually up.
+    @Test
+    fun theStripSaysWhenTheAudioIsStillConnectingOrFailed() {
+        val joined = state(players = listOf(player(2, "Ada", 10, 10)), inAreas = listOf(red))
+        assertEquals("Talking in Red Table", conversationScreen(areaKey, joined)!!.subtext)
+        assertEquals("Connecting audio in Red Table…", conversationScreen(areaKey, joined.copy(audio = app.workadventurer.voice.AudioStatus.Connecting))!!.subtext)
+        assertEquals("Can't connect audio in Red Table", conversationScreen(areaKey, joined.copy(audio = app.workadventurer.voice.AudioStatus.Failed))!!.subtext)
+        assertEquals("Talking in Red Table", conversationScreen(areaKey, joined.copy(audio = app.workadventurer.voice.AudioStatus.Connected))!!.subtext)
+    }
+
     @Test
     fun aLeaverStaysListedButIsNotCompany() {
         val inRed = listOf(red)

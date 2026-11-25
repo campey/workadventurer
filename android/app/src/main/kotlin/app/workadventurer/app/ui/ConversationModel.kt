@@ -74,7 +74,15 @@ fun conversationScreen(key: ConversationKey, s: SessionState, left: Set<Int> = e
             isBubble -> "Walk your avatar over to talk to them"
             else -> "Walk your avatar into the area to talk to them"
         },
-        subtext = if (c.joined) { if (others.isEmpty()) "Waiting in $the" else "Talking in $the" } else null,
+        subtext = if (c.joined) {
+            when {
+                // A meeting on the server's LiveKit room has no audio until the app is in it (#134): don't claim we are talking.
+                s.audio == app.workadventurer.voice.AudioStatus.Connecting -> "Connecting audio in $the…"
+                s.audio == app.workadventurer.voice.AudioStatus.Failed -> "Can't connect audio in $the"
+                others.isEmpty() -> "Waiting in $the"
+                else -> "Talking in $the"
+            }
+        } else null,
         leaveLabel = "Leave the $noun",
         emptyText = if (c.members.isEmpty()) "Nobody is here yet" else null,
         walkTargetId = others.firstOrNull()?.userId,

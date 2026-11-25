@@ -266,18 +266,25 @@ Measured live against browser peers on the S25 Ultra unless marked.
 - **Meeting areas** join after a 1.5 s dwell and leave after 2.5 s outside; space name is `slugify(shortHash(roomUrl)-name)`,
   from the room URL exactly as typed (a trailing slash or `#entry` hashes differently and lands in an empty space).
 - **Escalation seen live from the phone** (#134 slice 1, 2026-11-25, prod Afrolabs Fire Pit, phone + 4 CLI avatars): the phone logged
-  `meeting is switching to WEBRTC`, two `webRtcStart`s, then 11 s later `meeting is switching to LIVEKIT` and
-  `LiveKit invitation for room <room url>.<space name>` (the room is the JWT's `video.room`), then 5 s after that
-  `meeting switched to WEBRTC`: the meeting went to the SFU and back within seconds as people settled. No `livekitDisconnectMessage`
-  was logged for the way back, only the final switch to WEBRTC, as the CLI saw (#150), so the app must leave the SFU on a switch
-  back to WEBRTC and not wait for the disconnect. The log never carries the token or server address. An area meeting with a
-  `livekitRoomProperty` starts on WEBRTC too (see `docs/livekit.md`).
+  `meeting is switching to WEBRTC` and two `webRtcStart`s, then 11 s later `meeting is switching to LIVEKIT` and
+  `LiveKit invitation for room <room url>.<space name>` (the room is the JWT's `video.room`), and 5 s after that a final message naming
+  WEBRTC. **The final (`finalizeSwitchMessage`) message names the transport being shut down, not the new one**: that "WEBRTC" was the
+  mesh being closed after the escalation, not a return to it (the first read, "to the SFU and back in seconds", was wrong; #150 says the
+  same). A real return to the mesh is a *non-final* `switchMessage` naming WEBRTC, with no `livekitDisconnectMessage`. The log never
+  carries the token or server address. An area meeting with a `livekitRoomProperty` starts on WEBRTC too (see `docs/livekit.md`).
   Spawn-point trap: four avatars `wa to` the phone at the spawn point only made two bubbles; the Fire Pit area is where five meet.
 - **A big area meeting goes straight to LiveKit** (#134, 2026-11-25, prod, Lean Iterator campus "Lean Coffee Table 1", six people in it
   when the phone walked in): within 20 ms of `joined space` the phone got `meeting is switching to LIVEKIT` and the LiveKit
   invitation, and never a single `webRtcStart`, so there was no mesh to fall back on: the phone heard and said nothing, while the
   Conversation screen said "Talking in Lean Coffee Table 1". That strip is wrong whenever the app has no audio for the meeting; slice 2
   should show that audio is not connected (and "connecting" while joining the SFU). Walking out sent `left space` 2.5 s later.
+- **Joining the LiveKit room works** (#134 slice 2, 2026-11-25, prod Afrolabs Red Table, phone + 4 CLI avatars): the invitation arrives about
+  250 ms after `joined space`, the phone is in the room 1.2 s later (a `livekit-android` 2.29.0 `Room` with `NoAudioHandler`, so the app's
+  AudioRouter keeps the audio mode), it subscribes to each avatar's audio track, and the room reports "1 speaking" while an avatar plays a
+  clip. The server sent the invitation **twice** (the same quirk the CLI notes: two invitations back to back); latest-wins closes the first
+  call and keeps the second. Unmuting publishes the mic through the room, and muting stops it. Leaving the area or the space leaves the room.
+  The LiveKit `Room` brings its own audio device module beside the mesh engine's: only one records at a time (the mesh engine's records
+  only while a mesh link is sending), so no mic sharing was needed. A de-escalation is a non-final `switchMessage` naming WEBRTC.
 - **Not handled yet:** `livekitInvitationMessage` (G4) — in a large area meeting the server moves everyone to LiveKit and the
   phone would sit in the space announcing mic-on with no media; `transceiverRequest`; the same browser reachable through both an
   area space and a bubble (two PeerConnections, mic sent twice) — supersede is keyed on (space, peer).

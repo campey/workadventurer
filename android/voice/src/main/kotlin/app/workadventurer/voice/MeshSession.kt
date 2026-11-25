@@ -59,6 +59,10 @@ class MeshSession(
     private val links: PeerLinkFactory,
     private val sink: SignalSink,
     private val log: (String) -> Unit,
+    /** Joins the LiveKit room a big meeting moves to (#134); null if this build can't, and then an invitation is ignored. */
+    private val liveKit: LiveKitFactory? = null,
+    /** Told when the audio of the meeting changes: joining the LiveKit room, in it, failed, or over. */
+    private val onAudio: (AudioStatus) -> Unit = {},
 ) {
     private class Entry(val spaceName: String, val peer: String, val link: PeerLink) {
         /** True when the server made us the initiator of this connection: only the initiator can answer a renegotiate request. */
@@ -66,6 +70,18 @@ class MeshSession(
 
         /** True once we sent an answer: a later offer on this connection is a renegotiation, and a failure must not kill the link. */
         @Volatile var answered = false
+    }
+
+    private class LiveKitEntry(val spaceName: String, val call: LiveKitCall)
+
+    private val lkLock = Any()
+    private var lk: LiveKitEntry? = null
+    @Volatile private var muted = true
+
+    /** The mute choice: sent to the LiveKit call now, and to any joined later. The mesh's own microphone is the engine's. */
+    fun setMuted(muted: Boolean) {
+        this.muted = muted
+        synchronized(lkLock) { lk?.call }?.setMuted(muted)
     }
 
     private val active = LinkedHashMap<String, Entry>()
@@ -123,9 +139,12 @@ class MeshSession(
                 }
             }
             is VoiceEvent.Disconnect -> closeWhere { it.spaceName == e.spaceName && it.peer == e.peerSpaceUserId }
-            is VoiceEvent.SpaceLeft -> closeWhere { it.spaceName == e.spaceName }
-            // The SFU is not built yet (#134 slice 2): the mesh carries on, and the connection already logged what the server said.
-            is VoiceEvent.LiveKitInvite, is VoiceEvent.LiveKitDisconnect, is VoiceEvent.Switch -> Unit
+            is VoiceEvent.SpaceLeft -> { closeWhere { it.spaceName == e.spaceName }; leaveLiveKit(e.spaceName) }
+            is VoiceEvent.LiveKitInvite -> joinLiveKit(e)
+            is VoiceEvent.LiveKitDisconnect -> leaveLiveKit(e.spaceName)
+            // The meeting going back to the mesh arrives with no disconnect message (seen live, #150): the switch to WEBRTC ends the room. The
+            // FINAL switch message names the transport being shut down (WEBRTC right after an escalation), so it says nothing about the room.
+            is VoiceEvent.Switch -> if (!e.finalized && e.strategy == "WEBRTC") leaveLiveKit(e.spaceName)
         }
     }
 
@@ -188,6 +207,44 @@ class MeshSession(
         log("[${e.connectionId}] answered")
     }
 
+    /** The latest invitation wins: any call we are in goes, the space's mesh links go, and we join the room (muted until the mute choice says otherwise). */
+    private suspend fun joinLiveKit(e: VoiceEvent.LiveKitInvite) {
+        val factory = liveKit
+        if (factory == null) { log("LiveKit invitation for ${e.spaceName} ignored: this build can't join one"); return }
+        leaveLiveKit(null)
+        closeWhere { it.spaceName == e.spaceName }
+        val call = factory.create(e.spaceName)
+        synchronized(lkLock) { lk = LiveKitEntry(e.spaceName, call) }
+        onAudio(AudioStatus.Connecting)
+        try {
+            call.connect(e.serverUrl, e.token)
+        } catch (c: CancellationException) {
+            synchronized(lkLock) { if (lk?.call === call) lk = null }
+            try { call.close() } catch (t: Throwable) { /* nothing more to do */ }
+            throw c
+        } catch (t: Throwable) {
+            // Only the kind of failure: the message can carry the server's address.
+            log("LiveKit connect failed (${t.javaClass.simpleName})")
+            synchronized(lkLock) { if (lk?.call === call) lk = null }
+            try { call.close() } catch (_: Throwable) {}
+            onAudio(AudioStatus.Failed)
+            return
+        }
+        call.setMuted(muted)
+        log("joined the LiveKit room for ${e.spaceName}")
+        onAudio(AudioStatus.Connected)
+    }
+
+    /** Leaves the LiveKit room if we are in one for [spaceName] (any space when null, silently: a new call is about to replace it). */
+    private fun leaveLiveKit(spaceName: String?) {
+        val entry = synchronized(lkLock) {
+            val cur = lk
+            if (cur != null && (spaceName == null || cur.spaceName == spaceName)) { lk = null; cur } else null
+        } ?: return
+        try { entry.call.close() } catch (t: Throwable) { log("LiveKit close failed (${t.javaClass.simpleName})") }
+        if (spaceName != null) { log("left the LiveKit room for ${entry.spaceName}"); onAudio(AudioStatus.None) }
+    }
+
     private fun closeWhere(match: (Entry) -> Boolean) {
         val ids = synchronized(active) { active.filterValues(match).keys.toList() }
         ids.forEach { drop(it) }
@@ -219,5 +276,9 @@ class MeshSession(
 
     private object LinkTick
 
-    fun closeAll() { synchronized(active) { active.keys.toList() }.forEach { drop(it) } }
+    fun closeAll() {
+        synchronized(active) { active.keys.toList() }.forEach { drop(it) }
+        val had = synchronized(lkLock) { lk != null }
+        if (had) leaveLiveKit(synchronized(lkLock) { lk?.spaceName })
+    }
 }

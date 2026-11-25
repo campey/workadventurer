@@ -193,7 +193,7 @@ open class PusherConnection(
             _voiceEvents.tryEmit(VoiceEvent.Switch(p.spaceName, it.strategy, finalized = false))
         }
         ev.finalizeSwitchMessage?.let {
-            _log.tryEmit("meeting switched to ${it.strategy} in ${p.spaceName}")
+            _log.tryEmit("meeting finished leaving ${it.strategy} in ${p.spaceName}") // the final message names the transport shut down
             _voiceEvents.tryEmit(VoiceEvent.Switch(p.spaceName, it.strategy, finalized = true))
         }
         ev.livekitInvitationMessage?.let {
