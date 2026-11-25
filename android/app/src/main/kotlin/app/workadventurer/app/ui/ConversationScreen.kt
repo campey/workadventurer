@@ -20,6 +20,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,9 +50,15 @@ private val OFFLINE_DOT = Color(0xFF8A99B3)
 fun ConversationScreen(key: ConversationKey, state: SessionState, onBack: () -> Unit, onOpenPerson: (Int) -> Unit, onCommand: (Command) -> Unit, onGone: () -> Unit = {}) {
     // Someone who just left stays in the list a moment, dimmed (the same as the people list).
     val (shown, left) = rememberWithLeavers(state)
-    val m = conversationScreen(key, shown, left)
-    // The bubble dissolved under this screen: step back to the list.
-    LaunchedEffect(m == null) { if (m == null) onGone() }
+    val live = conversationScreen(key, shown, left)
+    // A bubble that dissolves under this screen (the server drops one of fewer than two) stays up for a moment, dimmed, then
+    // we step back to the list. If you walked out of it yourself, or it never showed, we step back at once.
+    var last by remember(key) { mutableStateOf<ConversationScreenModel?>(null) }
+    if (live != null) last = live
+    val m = live ?: last?.takeIf { key is ConversationKey.Bubble && holdsWhenDissolved(it) }?.let { dissolvedBubble(it) }
+    LaunchedEffect(live == null) {
+        if (live == null) { if (m != null) delay(LEAVER_HOLD_MS); onGone() }
+    }
     val canMove = state.connection is Connection.Connected
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {

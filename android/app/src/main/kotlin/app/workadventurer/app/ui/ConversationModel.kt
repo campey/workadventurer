@@ -80,3 +80,16 @@ fun conversationScreen(key: ConversationKey, s: SessionState, left: Set<Int> = e
         walkTargetId = others.firstOrNull()?.userId,
     )
 }
+
+/**
+ * The screen of a bubble the server has just dissolved (it drops a bubble of fewer than two people), kept for a moment with the
+ * others dimmed, so the screen doesn't vanish under you (#134). Nothing on it can be acted on.
+ */
+fun dissolvedBubble(last: ConversationScreenModel): ConversationScreenModel = last.copy(
+    members = last.members.map { if (it.isMe) it else it.copy(leaving = "Left the bubble…") },
+    phase = Phase.Unavailable, joinLabel = "This bubble has ended", explainer = "Everyone has left it", subtext = null,
+    walkTargetId = null,
+)
+
+/** Whether a dissolved bubble's screen stays up for a moment: not when you walked out of it yourself (you know it ended). */
+fun holdsWhenDissolved(last: ConversationScreenModel): Boolean = last.phase != Phase.Leaving

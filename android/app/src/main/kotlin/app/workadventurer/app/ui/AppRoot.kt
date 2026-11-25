@@ -88,6 +88,19 @@ fun AppRoot(
     onAdapterUpdates: (AdapterUpdates) -> Unit = {},
 ) {
     val nav = rememberNavController()
+    // The chimes WorkAdventure's web client plays when you or others join and leave your conversation (#134).
+    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val cues = remember { app.workadventurer.app.CuePlayer(appContext) }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { cues.release() } }
+    var lastSeen by remember { mutableStateOf<SessionState?>(null) }
+    LaunchedEffect(state) {
+        val before = lastSeen
+        // Only between two connected states: a reconnect empties and refills the room, which is not people coming and going.
+        if (before != null && before.connection is Connection.Connected && state.connection is Connection.Connected) {
+            soundCues(before, state).forEach(cues::play)
+        }
+        lastSeen = state
+    }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showAvSheet by remember { mutableStateOf(false) }

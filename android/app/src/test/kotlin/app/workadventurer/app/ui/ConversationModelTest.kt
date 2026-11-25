@@ -173,4 +173,24 @@ class ConversationModelTest {
         val m = conversationScreen(bubbleKey, st, left = setOf(2))!!
         assertEquals(3, m.walkTargetId)
     }
+
+    // A bubble you were looking at that dissolves (the server drops a bubble of fewer than two) stays up for a moment, dimmed (#134).
+    @Test
+    fun aBubbleThatDissolvedKeepsItsScreenDimmedForAMoment() {
+        val last = conversationScreen(bubbleKey, state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(1, 2))), myGroupId = 3))!!
+        val ended = dissolvedBubble(last)
+        assertEquals(listOf("Me", "Ada"), ended.members.map { it.name })
+        assertEquals(listOf(null, "Left the bubble…"), ended.members.map { it.leaving })
+        assertEquals("This bubble has ended", ended.joinLabel)
+        assertEquals(Phase.Unavailable, ended.phase)
+        assertEquals(null, ended.subtext)
+    }
+
+    @Test
+    fun aBubbleYouWalkedOutOfIsNotHeld() {
+        val leaving = conversationScreen(bubbleKey, state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(1, 2))), myGroupId = 3, activity = Activity.WalkingOut("the bubble")))!!
+        assertEquals(false, holdsWhenDissolved(leaving))
+        val joined = conversationScreen(bubbleKey, state(players = listOf(player(2, "Ada")), groups = listOf(Group(3, 5, 5, listOf(1, 2))), myGroupId = 3))!!
+        assertEquals(true, holdsWhenDissolved(joined))
+    }
 }
