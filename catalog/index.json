@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-11-21T04:42:23.970Z",
+  "updated": "2026-11-26T20:46:13.312Z",
   "entries": {
     "23c8eb8c": {
       "status": "ok",
@@ -9,7 +9,8 @@
       "file": "adapters/23c8eb8c.json",
       "sha256": "49d61fe536042f46cf1beceebaf50f11be12d72ee77bdfb109dbec68d0fa3d14",
       "gate": null,
-      "issue": null
+      "issue": null,
+      "added": "2026-11-13T12:40:05.000Z"
     },
     "62e25483": {
       "status": "ok",
@@ -18,7 +19,8 @@
       "file": "adapters/62e25483.json",
       "sha256": "44b04d209958de9c331ff6e94b43ea4edd9924cec37d55d250840286de00d6df",
       "gate": null,
-      "issue": null
+      "issue": null,
+      "added": "2026-11-13T12:40:05.000Z"
     },
     "b82fc568": {
       "status": "ok",
@@ -27,7 +29,8 @@
       "file": "adapters/b82fc568.json",
       "sha256": "00dfda7d58c261b34415002336ec074fa6123e662bd388003d3f80b675cf3256",
       "gate": null,
-      "issue": null
+      "issue": null,
+      "added": "2026-11-13T12:40:05.000Z"
     },
     "d2d82672": {
       "status": "ok",
@@ -36,7 +39,8 @@
       "file": "adapters/d2d82672.json",
       "sha256": "6db9d10270babf924f1c503d62306499e8a4b89a6cbd37ade1d86052b4ee200a",
       "gate": null,
-      "issue": null
+      "issue": null,
+      "added": "2026-11-13T12:40:05.000Z"
     },
     "dcadccc6": {
       "status": "ok",
@@ -45,7 +49,8 @@
       "file": "adapters/dcadccc6.json",
       "sha256": "e4cd8de72c1efaeed5a7b37572ec4852b842f085f304f9aab7b243ea39523bb7",
       "gate": null,
-      "issue": null
+      "issue": null,
+      "added": "2026-11-21T04:42:26.000Z"
     },
     "f4cfe455": {
       "status": "ok",
@@ -54,7 +59,8 @@
       "file": "adapters/f4cfe455.json",
       "sha256": "a4797734c32b0178fae575f71c64151b6a2b5e53c11e6affd38a875a6bfa341b",
       "gate": null,
-      "issue": null
+      "issue": null,
+      "added": "2026-11-13T12:40:05.000Z"
     }
   }
 }

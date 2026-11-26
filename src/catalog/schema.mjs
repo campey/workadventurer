@@ -8,6 +8,10 @@ export const HASH_RE = /^[0-9a-f]{8}$/;
 export const BOUNDS = { dwellMs: [0, 10000], lingerMs: [0, 10000], speed: [50, 1000] };
 
 const SERVERS = ["production", "staging"];
+
+const INSTANT_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/;
+/** True for an ISO-8601 instant with a zone: the only form an index entry's `added` / `seenOn[].checked` may take. */
+export const isInstant = (v) => typeof v === "string" && v.length <= 40 && INSTANT_RE.test(v) && !Number.isNaN(Date.parse(v));
 const NAME_RE = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
 const VALUE_RE = /^[A-Za-z0-9._:{}-]{0,64}$/;
 const PLACEHOLDERS = new Set(["{tabId}", "{uuid}"]);

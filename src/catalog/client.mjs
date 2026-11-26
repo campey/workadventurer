@@ -5,7 +5,7 @@
 // Nothing throws; every failure is { ok: false, reason }.
 
 import { createHash } from "node:crypto";
-import { HASH_RE, validateAdapterFile } from "./schema.mjs";
+import { HASH_RE, isInstant, validateAdapterFile } from "./schema.mjs";
 
 export const DEFAULT_CATALOG_URL = "https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json";
 export const MAX_INDEX_BYTES = 1024 * 1024;
@@ -88,9 +88,13 @@ export async function fetchIndex({ url = catalogUrl(), fetch, timeoutMs } = {}) 
   // Keep only entries we could trust. "ok" needs a file path and a real sha256;
   // "needs-attention" is a placeholder with no usable file (any file/sha256 it carries
   // is stripped, so it can never be fetched as an adapter); other statuses are dropped.
+  // `added` (when the adapter was listed) is kept only as an ISO instant; `seenOn` is the watcher's own bookkeeping
+  // and no client reads it, so it is dropped here.
   const entries = {};
-  for (const [hash, e] of Object.entries(raw.entries)) {
-    if (!HASH_RE.test(hash) || !isObj(e)) continue;
+  for (const [hash, e0] of Object.entries(raw.entries)) {
+    if (!HASH_RE.test(hash) || !isObj(e0)) continue;
+    const { added, seenOn, ...e1 } = e0;
+    const e = isInstant(added) ? { ...e1, added } : e1;
     if (e.status === "needs-attention") {
       const { file, sha256, ...rest } = e;
       entries[hash] = rest;
