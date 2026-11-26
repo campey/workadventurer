@@ -1,7 +1,31 @@
 # Downloadable adapters: design (#126, with #127 and #128's catalog side)
 
-Status: for approval. Epic #124. Builds on `2026-10-10-probes-fakes-scenarios-design.md` (the scenario suite that
+Status: approved and built (CLI side, #126/#127, and the Android side, #188). Epic #124. Builds on `2026-10-10-probes-fakes-scenarios-design.md` (the scenario suite that
 gates new versions) and `2026-09-10-wa-version-adapters-design.md` (today's per-version adapters).
+
+### Where the build deviated
+
+The sections below are the design as approved. What was built differs in these ways (details in
+`docs/field-notes.md` "When the watcher says needs attention" and `android/docs/field-notes.md` "How the app recovers"):
+
+- **A needs-attention placeholder's `commit` is a code fingerprint**, not a commit SHA: a hash of the client code the gate
+  tests (`bin`, `src`, `scripts`, `world-port`, `android`, `proto`, `package.json`...), so a docs-only push does not retest
+  and a code change does.
+- **The workflow is two jobs, `gate` and `publish`.** `gate` runs third-party code with read-only permissions and no
+  secret and only uploads a verdict; `publish` holds the write token, runs no gate code, and re-reads the servers and
+  rebuilds the candidate itself before trusting the verdict.
+- **The publishing PR is merged with a merge commit**, not squashed (the repo disallows squash merges; found on the first
+  real run).
+- **`decide` is server-aware, and `seenOn` records a hash on both servers.** A hash published from one server's gate and
+  later announced by the other is gated once on that server too (production includes the live scenarios); the outcome goes
+  on the index entry as `seenOn`, never on the adapter file, and a failed `seenOn` opens an issue without demoting the entry.
+- **`ADAPTER_WATCH_ENABLED`**: scheduled and dispatch runs only happen once this repository variable is `true`; manual runs
+  always work.
+- **Android applies any `ok` entry's hash, and the handshake query only.** It does not take the entry's other behaviours.
+- **Per-entry `added`** (when the adapter was first listed `ok`) is in the index, used by Android's consent dialog and by
+  staging pruning.
+- **Staging pruning**: the publishing PR also removes older staging entries (keeping the newest five, and never a built-in,
+  production or just-announced hash).
 
 ## Why
 
@@ -265,7 +289,7 @@ code. Decided: the adapter carries them, see "Handshake parameters".
 - The candidate builder script and the workflow, reusing `vendor-proto`, `proto-diff`, `selfcheck`, the scenario runner.
 - Documentation: field notes ("When prod bumps" becomes "When the watcher says needs attention").
 
-## Order of work (proposed)
+## Order of work (as planned)
 
 1. Catalog format, seeding, and the CLI recovery flow, with the fake pusher and a fake catalog.
 2. Android recovery flow.

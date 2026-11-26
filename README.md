@@ -188,6 +188,9 @@ invite cycles currently leak memory (issue #29) — restart it every few.
 | `scripts/stt-eval.mjs` | scores STT quality over a clip corpus (`test/fixtures/stt/`); see `docs/field-notes.md` |
 | `map/<org>/<world>/<room>/collision.json` | per-room baked collision grid + named areas |
 | `src/adapters/` | one adapter per WA `major.minor` (`wa-1.33`, `wa-1.34`, `wa-master`) + `resolveAdapter` — see [§ Version targets](#version-targets) |
+| `src/catalog/` | adapter catalog client: fetch and verify, cache, consent prompt, `recoverAdapter`, `--adapter-file` loader |
+| `catalog/` | the published catalog: `index.json` + `adapters/<hash>.json` (written by the watcher's PRs, or by hand + `scripts/catalog-index.mjs`) |
+| `scripts/watch/`, `.github/workflows/adapter-watch.yml` | the adapter watcher: notice, gate, publish — see [§ Version targets](#version-targets) |
 | `proto/<target>/messages.proto` | vendored WA proto per target (`wa-1.33` = tag `v1.33.8`, `wa-1.34` = tag `v1.34.0`) |
 | `scripts/proto-diff.mjs` | structural wire diff of two vendored protos, flagging removals the client uses — see [§ Version targets](#version-targets) |
 | `docs/field-notes.md` | failure modes + non-obvious mechanics (spawn, `#10`, werift, area debounce, staging) |
@@ -240,9 +243,37 @@ the reason are logged on connect and shown in `wa status`.
 
 A patch release that shifts the `apiVersionHash` **appends** to that adapter's
 `apiVersionHashes` — it does not fork a new adapter. Refresh `wa-master` with
-`node scripts/vendor-proto.mjs <ref>` (prints the recomputed hash). When **prod moves to a new `major.minor`** (it does without notice — see
-[docs/field-notes.md § When the watcher says needs attention](docs/field-notes.md#when-the-watcher-says-needs-attention-and-a-manual-bump)), clients stop connecting
-with `NEW_VERSION` until there's an adapter for it.
+`node scripts/vendor-proto.mjs <ref>` (prints the recomputed hash).
+
+**Adapters keep up with the server (the catalog, #126/#127).** Production moves to a new
+hash without notice (see
+[docs/field-notes.md § When the watcher says needs attention](docs/field-notes.md#when-the-watcher-says-needs-attention-and-a-manual-bump)).
+Instead of a release for each one, the repo publishes a **catalog** (`catalog/index.json` plus
+`catalog/adapters/<hash>.json`, served from `main`) of adapter files that a machine has already
+proven sufficient. When the server answers with a hash no built-in adapter knows:
+
+- **CLI**: `wa join` (and `wa selfcheck`) reads the server's version, looks the hash up in the catalog and, per
+  `adapterUpdates` (config key; `WA_ADAPTER_UPDATES`: `ask` the default, `auto` or `never`), asks
+  before downloading it. The file is verified (sha256 from the index, strict schema, same origin, no
+  redirects) and cached; it is data, not code. A built-in hash always wins, and a catalog or network failure
+  leaves the old behaviour (a clear message; the server's `NEW_VERSION`).
+- **Android**: a `NEW_VERSION` refusal triggers one recovery attempt with a consent dialog and a Settings choice
+  (ask / auto / never); see `android/docs/field-notes.md` "How the app recovers".
+- **`--adapter-file <f>`** (`wa join`, `wa selfcheck`; `WA_ADAPTER_FILE`; `adapterFile` config key) loads a candidate
+  adapter file that is not in the catalog. The watcher's gate uses it to test a new hash before publishing.
+- **The watcher** (`.github/workflows/adapter-watch.yml`, `scripts/watch/`) re-reads production's and
+  staging's home pages every hour. For a hash the catalog does not have it runs the gate (proto-diff,
+  `selfcheck`, the live scenarios on production, the Kotlin smoke) in a job with no write access; a second job then
+  publishes the adapter to `catalog/` through a PR (pass), or records a needs-attention placeholder and opens an
+  issue (fail). The schedule only runs when the repository variable `ADAPTER_WATCH_ENABLED` is `true` (off by
+  default); the manual "Adapter watch" run always works. Design:
+  [the spec](docs/superpowers/specs/2026-11-10-downloadable-adapters-design.md).
+
+The manual path still works, and is how a hash the gate rejects gets in: add the hash to a built-in adapter's
+`apiVersionHashes` (above), or write a catalog adapter file under `catalog/adapters/` and run
+`node scripts/catalog-index.mjs` to rebuild `catalog/index.json`. When a server is newer than anything built in and
+the catalog has nothing for it either (the watcher is off, the gate failed, or you chose `never`), clients still
+stop with `NEW_VERSION`.
 
 **Before any change touching `src/`:** `node scripts/selfcheck.mjs` (prod) must
 stay green. `--target wa-master` is advisory.

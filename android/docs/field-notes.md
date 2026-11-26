@@ -538,7 +538,14 @@ Emulator: Pixel-class AVD `Medium_Phone_API_35` (Android 15), debug APK, 2026-10
 
 ## Prod bump to v1.34.1 broke the APK (2026-10-13) [live]
 
-The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when prod moved to v1.34.1 (hash `23c8eb8c` -> `b82fc568`, same `messages.proto`) the app showed "couldn't join... please refresh" (the server's NEW_VERSION error screen). Fixed by putting `b82fc568` first. Verified with `wa-cli` against prod: login, join, nav grid, walk to "Red Table" (ARRIVED). This is exactly what the downloadable adapter (#126) removes: the app should fetch the hash for the server's version instead of shipping one.
+The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when prod moved to v1.34.1 (hash `23c8eb8c` -> `b82fc568`, same `messages.proto`) the app showed "couldn't join... please refresh" (the server's NEW_VERSION error screen). Fixed by putting `b82fc568` first. Verified with `wa-cli` against prod: login, join, nav grid, walk to "Red Table" (ARRIVED). **Resolved:** the app now recovers from this on its own by fetching the hash from the adapter catalog (#126, #188); see "How the app recovers" below.
+
+### First real bump through the system (2026-11-26) [live]
+
+Production moved to v1.35.0 with hash `dcadccc6`, which the watcher had already published from staging (`master@621f2bf2`).
+The CLI and the app recover through the catalog with no release. `selfcheck --target production` needed the catalog
+pre-flight to pass on it (it has it now), and the production gate for that hash runs once, through `seenOn`
+(`docs/field-notes.md` "When the watcher says needs attention").
 
 ## Adapter recovery, catalog client (#188, `:protocol` `catalog` package) [code]
 

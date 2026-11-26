@@ -8,6 +8,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Downloadable adapters: the catalog and CLI recovery (issue #126).** When a server answers with an API version hash
+  no built-in adapter knows, `wa join` reads the server's version, looks the hash up in `catalog/index.json` and, per
+  the new `adapterUpdates` setting (`ask` by default, `auto`, `never`; `WA_ADAPTER_UPDATES`), downloads the adapter
+  file after asking. The file is verified (sha256, strict schema, same origin, no redirects) and cached; it is data
+  that only supplies a hash and handshake behaviour, not code. A built-in hash always wins and a catalog failure
+  leaves the old `NEW_VERSION` behaviour. Code in `src/catalog/`; the published adapters in `catalog/`; rebuild the
+  index with `node scripts/catalog-index.mjs`. See README "Version targets".
+- **`--adapter-file <f>` (issue #126).** `wa join`, `wa selfcheck` and `scripts/selfcheck.mjs` load a candidate adapter
+  file that is not in the catalog (also `WA_ADAPTER_FILE` and the `adapterFile` config key; `WORLD=live npm run
+  scenarios` honours the env var). It wins over the catalog, the version probe and built-in hash matching.
+- **The adapter watcher (issue #127).** `.github/workflows/adapter-watch.yml` and `scripts/watch/` re-read the
+  production and staging home pages hourly; for a hash the catalog lacks they run the gate (proto-diff, `selfcheck`,
+  live scenarios on production, Kotlin smoke) and publish the adapter to `catalog/` through a PR, or record a
+  needs-attention placeholder and open an issue. A hash seen on both servers is gated once on each (`seenOn`).
+  The schedule runs only when the repository variable `ADAPTER_WATCH_ENABLED` is `true`. How to read it:
+  `docs/field-notes.md` "When the watcher says needs attention".
+- **Android recovers from a new server version (issue #188).** A `NEW_VERSION` refusal triggers one recovery attempt:
+  the app reads the server's version, finds the catalog adapter and applies its hash and handshake query. A
+  "Compatibility update available" dialog asks first (Download, Cancel, and an "Auto-download next time" checkbox), and
+  Settings on the Join screen holds the ask / auto / never choice. A failed recovery ends with a specific message
+  instead of a generic join failure. See `android/docs/field-notes.md` "How the app recovers".
+- **`selfcheck` runs the catalog pre-flight (issue #126).** `wa selfcheck` and `scripts/selfcheck.mjs` do what `wa join`
+  does for a server newer than the built-in adapters, so `selfcheck --target production` works on a version that is
+  only in the catalog.
 - **`wa join --stt --transcript <file>` (issue #64).** Appends one JSONL line
   (`ts`, `speaker`, `text`) per finalized utterance to a file, so a call leaves a
   transcript without grepping the daemon log. Finals only, empty ones skipped; also
@@ -271,6 +295,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`wa-cli` joined a staging `--room` with the production pusher and woka list** and was refused with "invalid
+  character texture". It now uses the staging ones (the explicit `--pusher` and `--api-version` flags still override);
+  found by the watcher's first dry run (#127).
 - **`SttStream` no longer drops audio pushed before its pipeline exists (issue #58).**
   After a cold worker spawn (~2–5 s of MLX import + model warm) the first seconds of
   speech were silently dropped, and `scripts/stt-selfcheck.mjs` false-passed with a

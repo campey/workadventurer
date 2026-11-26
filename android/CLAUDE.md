@@ -28,6 +28,12 @@ Read `../docs/field-notes.md` and `../docs/livekit.md` before G3/G4: several
 bugs documented there look plausible-but-wrong on first read and were only
 resolved by live testing against a real peer.
 
+## Docs
+
+- `docs/field-notes.md`: findings per gate, led by the protocol and behaviour reference.
+- Adapter recovery (the catalog client, consent dialog, Settings): `docs/field-notes.md` "Adapter recovery, catalog client"
+  and "How the app recovers".
+
 ## Toolchain
 
 JDK 17 (Temurin) and the Gradle wrapper. Wire/proto3 and wire-behaviour proofs
@@ -44,6 +50,8 @@ Set up once per container (not in the session-start hook: about 600 MB):
    `sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"`.
 3. `export ANDROID_HOME=/opt/android-sdk` and `echo "sdk.dir=/opt/android-sdk" > android/local.properties` (git-ignored).
 4. `./gradlew testDebugUnitTest :nav:test :protocol:test :wa-cli:test`.
+
+`:wa-cli:run` and `:protocol:test` need only JDK 17 (no Android SDK, no `local.properties`); `:app` needs the SDK.
 
 Maven Central answers 429 now and then from the container: rerun, Gradle keeps what it already fetched. Without the Android SDK or
 `dl.google.com`, `tools/nav-test-cloud.sh` runs just the pure-JVM `:nav` tests.

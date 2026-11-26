@@ -676,7 +676,7 @@ A route's waypoints are tile **centres**, so it ends up to about 22 px from the 
 **With the catalog (#126).**
 
 - **Android does the same** (#188): a typed NEW_VERSION refusal triggers one recovery attempt that applies the catalog adapter's hash
-  and handshake query (nothing else), with an ask/auto/never setting and a Download / Don't ask again / Cancel dialog; see
+  and handshake query (nothing else), with an ask/auto/never setting and a consent dialog (Download, Cancel, an "Auto-download next time" checkbox); see
   `android/docs/field-notes.md` "How the app recovers".
 
 - **Candidate adapter from a file.** `--adapter-file <f>` (`wa join`, `wa selfcheck`,

@@ -30,8 +30,17 @@ repo once G4 passes. Progress is tracked as learning gates, one at a time:
 | G1 | Does presence survive on a phone (screen locked)? | done |
 | G2 | Can it move (pathfinding port)? | done |
 | G3 | Two-way mesh audio with browser peers? | live-checked; review minors in #105 |
-| G4 | LiveKit escalation and switch-back (4+ person meetings) | not started |
-| G5 | Hands-free seam (media-session mute, TalkBack, Bluetooth earbuds) | not started |
+| G4 | LiveKit escalation and switch-back (4+ person meetings) | in progress (#134): main hears LiveKit invitations and logs offers it cannot answer; the LiveKit join itself is on the `android-livekit-escalation` branch, in review, not on `main` yet |
+| G5 | Hands-free seam (media-session mute, TalkBack, Bluetooth earbuds) | partly done: Bluetooth audio routing (#164). Checked on hardware by the maintainer: a Bluetooth headset works, stays stable on long calls, and switching between audio sources works. Not done: media-key (play/pause) mute, TalkBack |
+
+Audio routing (what is built for G5): speaker by default, a headset takes over when it connects, the microphone
+follows the chosen device, a device picker in the audio sheet, Bluetooth headsets as call devices (`BLUETOOTH_CONNECT` is
+asked with the other permissions).
+
+**Adapters keep up with the server.** A production version bump used to break the CLI and the APK until someone shipped
+a new hash. Now a catalog of gated adapters (`catalog/`), an hourly watcher that tests and publishes them, and recovery
+in the CLI and the app (with the user's consent) mean a routine bump no longer breaks either. See the README's "Version
+targets" and the [design](superpowers/specs/2026-11-10-downloadable-adapters-design.md).
 
 Epic: #54. Design: `docs/superpowers/specs/2026-10-05-android-client-design.md`.
 Findings per gate: `android/docs/field-notes.md`.
@@ -70,10 +79,12 @@ wa CLI / daemon (Node)  ──┐
 Claude Code plugin      ──┼── src/: pusher WebSocket + protobuf, pathfinding,
 STT listener (--stt)    ──┘        WebRTC / LiveKit audio, per-version adapters
 Android app (Kotlin)    ───── its own protocol + voice stack; shares only proto/
+catalog/ + adapter watcher ── adapters for new server versions: the CLI and the app fetch them
 ```
 
 Shared knowledge (what the server really does) lives in
-`docs/field-notes.md`, `docs/livekit.md` and `android/docs/field-notes.md`.
+`docs/field-notes.md`, `docs/livekit.md` and `android/docs/field-notes.md`. A new server version reaches the clients
+through `catalog/` (published by `.github/workflows/adapter-watch.yml`) rather than a release.
 
 ## Where to start
 
