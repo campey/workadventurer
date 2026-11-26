@@ -55,9 +55,11 @@ fun parseRoute(path: String): Route? {
 
 /**
  * Join is the front door and stays up (showing progress) until the room is really joined; a drop that is reconnecting keeps
- * you in the room.
+ * you in the room. The adapter question is a dialog over whatever is showing, so it keeps the screen [current] (the one this
+ * returned last): moving to Join would pull you off Users and `popUpTo` would clear the back stack.
  */
-fun routeFor(connection: Connection): Route = when (connection) {
+fun routeFor(connection: Connection, current: Route = Route.Join): Route = when (connection) {
+    is Connection.NeedsConsent -> current
     Connection.Connected, is Connection.Reconnecting -> Route.Users
-    Connection.Disconnected, Connection.Connecting, is Connection.NeedsConsent, is Connection.Failed -> Route.Join
+    Connection.Disconnected, Connection.Connecting, is Connection.Failed -> Route.Join
 }

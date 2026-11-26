@@ -28,8 +28,10 @@ object ServerVersionReader {
                 if (NAME.containsMatchIn(tag)) {
                     return CONTENT.find(tag)?.groupValues?.get(1)?.takeIf { HASH_RE.matches(it) }
                 }
+                i = end + 1 // non-overlapping, like the CLI's regex: the next candidate starts after this tag
+            } else {
+                i += 5
             }
-            i += 5
         }
     }
 
@@ -40,14 +42,21 @@ object ServerVersionReader {
      * GET the room URL's origin and read the version; null on any failure or when neither value is found.
      * Redirects are refused on purpose (a catalog-relevant hash must come from the server itself).
      */
-    suspend fun read(client: OkHttpClient, roomUrl: String, timeoutMs: Long = 8000): ServerVersion? {
-        val u = roomUrl.toHttpUrlOrNull() ?: return null
+    suspend fun read(client: OkHttpClient, roomUrl: String, timeoutMs: Long = 8000): ServerVersion? =
+        (readPage(client, roomUrl, timeoutMs) as? Fetched.Ok)?.value?.takeIf { it.hash != null || it.release != null }
+
+    /**
+     * Like [read] but says why it failed: [Fetched.Fail] when the page could not be fetched (sanitised-by-caller reason), and
+     * [Fetched.Ok] with null fields when the page loaded but publishes neither value (a self-hosted server without the tag).
+     */
+    suspend fun readPage(client: OkHttpClient, roomUrl: String, timeoutMs: Long = 8000): Fetched<ServerVersion> {
+        val u = roomUrl.toHttpUrlOrNull() ?: return Fetched.Fail("bad room URL")
         val origin = u.newBuilder().encodedPath("/").query(null).fragment(null).build().toString()
         val got = getCapped(client, origin, timeoutMs, MAX_PAGE_BYTES, truncate = true)
-        if (got !is Got.Bytes) return null
-        val html = String(got.bytes, Charsets.UTF_8)
-        val hash = matchApiHash(html)
-        val release = matchRelease(html)
-        return if (hash != null || release != null) ServerVersion(hash, release) else null
+        if (got !is Got.Bytes) return Fetched.Fail("page: ${(got as Got.Fail).reason}")
+        return cpu {
+            val html = String(got.bytes, Charsets.UTF_8)
+            Fetched.Ok(ServerVersion(matchApiHash(html), matchRelease(html)))
+        }
     }
 }

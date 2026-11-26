@@ -12,7 +12,8 @@ import java.time.Instant
 const val DEFAULT_CATALOG_URL = "https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json"
 
 sealed class IndexEntry {
-    data class Ok(val file: String, val sha256: String) : IndexEntry()
+    /** [added] is the entry's optional `added` instant (ISO-8601), kept only if it parses; null otherwise. */
+    data class Ok(val file: String, val sha256: String, val added: String? = null) : IndexEntry()
     data class NeedsAttention(val gate: JsonElement?) : IndexEntry()
 }
 
@@ -35,7 +36,13 @@ object CatalogClient {
     suspend fun fetchIndex(client: OkHttpClient, url: String = DEFAULT_CATALOG_URL, timeoutMs: Long = DEFAULT_TIMEOUT_MS): Fetched<CatalogIndex> {
         val got = getCapped(client, url, timeoutMs, MAX_INDEX_BYTES)
         if (got is Got.Fail) return Fetched.Fail("index: ${got.reason}")
-        val parsed = parseJsonBytes((got as Got.Bytes).bytes)
+        val bytes = (got as Got.Bytes).bytes
+        // CPU work (parse, validate) never runs on the caller's dispatcher.
+        return cpu { parseIndex(url, bytes) }
+    }
+
+    private fun parseIndex(url: String, bytes: ByteArray): Fetched<CatalogIndex> {
+        val parsed = parseJsonBytes(bytes)
         if (parsed !is Parsed.Value) return Fetched.Fail("index: not valid JSON")
         val raw = parsed.json as? JsonObject
         if (raw == null || !isOne(raw["schema"])) {
@@ -52,12 +59,16 @@ object CatalogClient {
             } else if (status == "ok") {
                 val file = (e["file"] as? JsonPrimitive)?.takeIf { it.isString }?.content
                 val sha = (e["sha256"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-                if (file != null && sha != null && SHA256_RE.matches(sha)) entries[hash] = IndexEntry.Ok(file, sha)
+                if (file != null && sha != null && SHA256_RE.matches(sha)) entries[hash] = IndexEntry.Ok(file, sha, validInstant(e["added"]))
             }
         }
-        val updated = (raw["updated"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.length <= 64 && runCatching { Instant.parse(it) }.isSuccess }
+        val updated = validInstant(raw["updated"])
         return Fetched.Ok(CatalogIndex(url, entries, updated))
     }
+
+    /** An ISO-8601 instant string of sane length, or null. */
+    private fun validInstant(e: JsonElement?): String? =
+        (e as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.length <= 64 && runCatching { Instant.parse(it) }.isSuccess }
 
     private fun sameOrigin(a: HttpUrl, b: HttpUrl) = a.scheme == b.scheme && a.host == b.host && a.port == b.port
 
@@ -94,6 +105,10 @@ object CatalogClient {
         val got = getCapped(client, fileUrl.toString(), timeoutMs, MAX_FILE_BYTES)
         if (got is Got.Fail) return Fetched.Fail("adapter $hash: ${got.reason}")
         val bytes = (got as Got.Bytes).bytes
+        return cpu { verifyAdapterFile(hash, entry, bytes) }
+    }
+
+    private fun verifyAdapterFile(hash: String, entry: IndexEntry.Ok, bytes: ByteArray): Fetched<Pair<AdapterFile, String>> {
         val sha = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         if (sha != entry.sha256) return Fetched.Fail("adapter $hash: sha256 does not match the index")
         val parsed = parseJsonBytes(bytes)

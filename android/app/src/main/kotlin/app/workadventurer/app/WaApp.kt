@@ -171,14 +171,14 @@ class WaApp : Application() {
         }
         // A call's file opens when a Join sets Connecting and closes on Leave or a failed join; see CallLog.onConnection.
         appScope.launch {
-            var previous: Connection? = null
-            s.state.map { it.connection to it.roomName }.distinctUntilChanged().collect { (connection, room) ->
-                val before = previous
-                previous = connection
-                callLog.onConnection(connection, room)
+            var seenCallId = 0
+            s.state.map { Triple(it.connection, it.roomName, it.callId) }.distinctUntilChanged().collect { (connection, room, callId) ->
+                val before = seenCallId
+                seenCallId = callId
+                callLog.onConnection(connection, room, callId)
                 // Device events only while a call's file is open (the file exists by now: onConnection opened it first).
                 when (connection) {
-                    Connection.Connecting -> if (startsNewCall(before, connection)) { deviceEvents.start(); netHub.startSession() }
+                    Connection.Connecting -> if (startsNewCall(before, connection, callId)) { deviceEvents.stop(); deviceEvents.start(); netHub.startSession() }
                     Connection.Disconnected, is Connection.Failed -> deviceEvents.stop()
                     else -> {}
                 }

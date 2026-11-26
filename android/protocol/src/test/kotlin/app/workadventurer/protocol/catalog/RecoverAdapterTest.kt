@@ -2,6 +2,7 @@ package app.workadventurer.protocol.catalog
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -114,7 +115,7 @@ class RecoverAdapterTest {
         happy(); recover()
         hits.clear()
         val o = recover()
-        assertEquals(RecoverOutcome.Known(H, mapOf("Foo" to "bar", "T" to "{tabId}", "U" to "{uuid}")), o)
+        assertEquals(RecoverOutcome.Known(H, mapOf("Foo" to "bar", "T" to "{tabId}", "U" to "{uuid}"), fromCache = true), o)
         assertEquals(listOf("/"), hits)
     }
 
@@ -233,10 +234,10 @@ class RecoverAdapterTest {
 
     // ---- unavailable: page / index
 
-    @Test fun pageFailuresAreUnavailable() {
+    @Test fun pageFailuresAreUnavailableAndAMissingOrBadTagIsUnreadable() {
         assertUnavailable(recover())                                   // 404 home
-        serve("/", home(hash = null)); assertUnavailable(recover())   // no meta
-        serve("/", home(hash = "XYZ12345")); assertUnavailable(recover())
+        serve("/", home(hash = null)); assertEquals(RecoverOutcome.VersionUnreadable, recover()) // no meta
+        serve("/", home(hash = "XYZ12345")); assertEquals(RecoverOutcome.VersionUnreadable, recover())
     }
 
     @Test fun anIndex404IsUnavailable() { serve("/", home()); assertUnavailable(recover()) }
@@ -465,7 +466,7 @@ class RecoverAdapterTest {
 
     @Test fun theHomePageIsCappedAt512KiB() {
         serve("/", " ".repeat(512 * 1024 + 100) + home())
-        assertUnavailable(recover())
+        assertEquals(RecoverOutcome.VersionUnreadable, recover())
         serve("/", home() + " ".repeat(600 * 1024))
         happy().also { serve("/", home() + " ".repeat(600 * 1024)) }
         assertIs<RecoverOutcome.Applied>(recover())
@@ -475,7 +476,7 @@ class RecoverAdapterTest {
         routes["/"] = { MockResponse().setResponseCode(301).setHeader("Location", "/elsewhere") }
         serve("/elsewhere", home())
         val o = assertIs<RecoverOutcome.Unavailable>(recover())
-        assertEquals("could not read the server's version hash", o.reason)
+        assertEquals("page: unexpected redirect (HTTP 301)", o.reason)
         assertFalse(hits.contains("/elsewhere"))
     }
 
@@ -525,5 +526,123 @@ class RecoverAdapterTest {
 
     @Test fun aProtoFamilyThatIsNotAStringIsRejected() {
         happy(adapter().replace(""""protoFamily":"wa-9.99"""", """"protoFamily":3""")); assertFileFails("protoFamily")
+    }
+
+    // ---- follow-ups
+
+    @Test fun aPageWithoutTheVersionTagIsNotACatalogFailure() {
+        serve("/", home(hash = null).replace("v1.40.0", "no version here"))
+        assertEquals(RecoverOutcome.VersionUnreadable, recover())
+        assertEquals(listOf("/"), hits) // the catalog is never asked
+        serve("/", home(hash = null)) // a release string alone does not help: the hash is what the catalog is keyed on
+        assertEquals(RecoverOutcome.VersionUnreadable, recover())
+        routes["/"] = { MockResponse().setResponseCode(500) }
+        assertEquals("page: HTTP 500", assertIs<RecoverOutcome.Unavailable>(recover()).reason)
+    }
+
+    @Test fun aCachedFileIsKnownFromCacheAndABuiltinIsNot() {
+        store.save(H, adapter())
+        serve("/", home())
+        assertEquals(RecoverOutcome.Known(H, mapOf("Foo" to "bar", "T" to "{tabId}", "U" to "{uuid}"), fromCache = true), recover())
+        assertEquals(RecoverOutcome.Known(H, emptyMap(), fromCache = false), recover(builtins = setOf(H)))
+    }
+
+    @Test fun theStoreDeletesAFileAndToleratesAMissingOneOrABadHash() {
+        store.save(H, adapter())
+        assertNotNull(store.load(H))
+        store.delete(H)
+        assertNull(store.load(H))
+        assertEquals(0, dir.list()!!.size)
+        store.delete(H) // already gone
+        store.delete("../../etc/passwd") // not a hash: ignored
+    }
+
+    @Test fun anEntrysAddedInstantIsOfferedAndOnlyIfItParses() {
+        for ((added, expected) in listOf(
+            """"added":"2026-11-13T12:40:05.000Z"""" to "2026-11-13T12:40:05.000Z", """"added":"yesterday"""" to null,
+            """"added":5""" to null, """"added":null""" to null, """"x":1""" to null,
+        )) {
+            val bytes = adapter().toByteArray()
+            serve("/", home())
+            serve("/catalog/index.json", index(""""$H":{"status":"ok","file":"adapters/$H.json","sha256":"${sha(bytes)}",$added}"""))
+            var offered: AdapterOffer? = null
+            recover(AdapterUpdates.ASK, ask = { offered = it; AdapterAnswer.NO })
+            assertEquals(expected, offered?.adapterAdded, added)
+        }
+    }
+
+    @Test fun nonOverlappingScanSkipsPastACandidateTag() {
+        // One tag runs to its '>' (like the CLI's regex): a "<meta" inside it is not a new tag, so its first content= is the one read.
+        assertNull(ServerVersionReader.matchApiHash("""<meta content='1' <meta name="wa-api-version" content='$H'>"""))
+        assertEquals(H, ServerVersionReader.matchApiHash("""<meta x="1"><meta name='wa-api-version' content='$H'>"""))
+    }
+
+    /** A server that accepts the connection, reads the request and never answers; [closed] counts down when the client hangs up. */
+    private class SilentServer : AutoCloseable {
+        val socket = java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())
+        val accepted = java.util.concurrent.CountDownLatch(1)
+        val closed = java.util.concurrent.CountDownLatch(1)
+        private val t = Thread {
+            try {
+                socket.accept().use { s ->
+                    accepted.countDown()
+                    val input = s.getInputStream()
+                    val buf = ByteArray(4096)
+                    var sawRequest = false
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        sawRequest = true
+                    }
+                    if (sawRequest) closed.countDown()
+                }
+            } catch (e: Exception) { /* closed under us */ }
+        }.also { it.isDaemon = true; it.start() }
+        override fun close() { socket.close() }
+    }
+
+    @Test fun cancellingReallyCancelsTheCallSoTheServerSeesTheHangUp() {
+        SilentServer().use { silent ->
+            val url = "http://127.0.0.1:${silent.socket.localPort}/@/o/w/r"
+            runBlocking {
+                // A 30 s timeout: only a real call.cancel() can end the exchange within the assertion window.
+                val job = launch(Dispatchers.Default) { recoverAdapter(url, AdapterUpdates.AUTO, { error("no") }, {}, emptySet(), store, client, indexUrl, 30_000) }
+                assertTrue(silent.accepted.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                delay(200)
+                job.cancelAndJoin()
+            }
+            assertTrue(silent.closed.await(3, java.util.concurrent.TimeUnit.SECONDS), "the server must see the client hang up")
+        }
+    }
+
+    @Test fun nonBmpFormatCharactersBecomeOneSpaceEach() {
+        // U+E0001 LANGUAGE TAG and U+1D173 MUSICAL SYMBOL BEGIN BEAM are format characters outside the BMP; U+1F600 is a normal emoji.
+        assertEquals("a b c \uD83D\uDE00", sanitizeText("a\uDB40\uDC01b\uD834\uDD73c \uD83D\uDE00"))
+        assertEquals("a  b", sanitizeText("a\uDB40\uDC01\uDB40\uDC01b"))
+        val cut = sanitizeText("\uD83D\uDE00".repeat(150)) // 300 chars of surrogate pairs, capped without splitting one
+        assertTrue(cut.endsWith("…"))
+        assertTrue(!cut.dropLast(1).last().isHighSurrogate())
+    }
+
+    @Test fun cpuWorkRunsOnItsOwnDispatcherNotTheCallers() {
+        happy()
+        val seen = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        val pool = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "cpu-probe") }
+        val caller = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "caller-probe") }
+        val before = CpuWork.dispatcher
+        CpuWork.dispatcher = object : kotlinx.coroutines.CoroutineDispatcher() {
+            override fun dispatch(context: kotlin.coroutines.CoroutineContext, block: Runnable) = pool.execute { seen += Thread.currentThread().name; block.run() }
+        }
+        try {
+            val o = runBlocking(caller.asCoroutineDispatcher()) {
+                recoverAdapter(roomUrl, AdapterUpdates.AUTO, { error("no") }, {}, emptySet(), store, client, indexUrl, 3000)
+            }
+            assertIs<RecoverOutcome.Applied>(o)
+        } finally {
+            CpuWork.dispatcher = before; pool.shutdown(); caller.shutdown()
+        }
+        // page scan, index parse, sha256 + file parse
+        assertEquals(3, seen.size, seen.toString())
+        assertTrue(seen.all { it == "cpu-probe" })
     }
 }

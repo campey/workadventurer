@@ -21,6 +21,9 @@ import okhttp3.OkHttpClient
  */
 fun interface AdapterRecovery {
     suspend fun recover(roomUrl: String, ask: suspend (AdapterOffer) -> AdapterAnswer): RecoverOutcome
+
+    /** The server refused the config built from the cached adapter for [hash]: drop that file so the next join consults the catalog. */
+    suspend fun forget(hash: String) {}
 }
 
 /** Where the "adapter updates" preference lives (SharedPreferences in the app, memory in tests). */
@@ -53,6 +56,10 @@ class CatalogAdapterRecovery(
             run(roomUrl, settings.updates, ask, { settings.updates = AdapterUpdates.AUTO })
         }
 
+    override suspend fun forget(hash: String) {
+        withContext(Dispatchers.IO) { store.delete(hash) }
+    }
+
     companion object {
         val BUILTIN_HASHES: Set<String> = (Wa133.API_VERSION_HASHES + WaStaging.API_VERSION_HASH).toSet()
     }
@@ -60,6 +67,8 @@ class CatalogAdapterRecovery(
 
 /** What the user reads when the server refused our version and recovery did not produce a retry. Never includes unsanitised catalog text. */
 fun recoveryFailureMessage(outcome: RecoverOutcome, original: String): String = when (outcome) {
+    is RecoverOutcome.VersionUnreadable ->
+        "This server doesn't publish its version, so the app can't check for an update."
     is RecoverOutcome.Unavailable ->
         "This server runs a newer version than this app supports, and the app couldn't check for updates right now. Try again later."
     is RecoverOutcome.NoEntry ->
@@ -75,5 +84,5 @@ fun recoveryFailureMessage(outcome: RecoverOutcome, original: String): String = 
     is RecoverOutcome.Known, is RecoverOutcome.Applied -> original
 }
 
-/** A Connecting that follows the consent question is the same join carrying on, not a new call: logs and traffic totals must not restart. */
-fun startsNewCall(previous: Connection?, now: Connection): Boolean = now == Connection.Connecting && previous !is Connection.NeedsConsent
+/** A Connecting starts a new call only when its call id is one this log has not seen: an answer to the consent question keeps the id, a Join changes it. */
+fun startsNewCall(seenCallId: Int, now: Connection, callId: Int): Boolean = now == Connection.Connecting && callId != seenCallId

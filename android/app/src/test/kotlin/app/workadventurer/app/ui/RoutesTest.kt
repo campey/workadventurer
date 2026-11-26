@@ -52,4 +52,19 @@ class RoutesTest {
         assertEquals(Route.Users, routeFor(Connection.Connected))
         assertEquals(Route.Users, routeFor(Connection.Reconnecting(2, 1000)))
     }
+
+    // The adapter question is a dialog over the current screen: it must not pull you to Join (popUpTo would clear the back stack).
+    @Test
+    fun theAdapterQuestionKeepsTheCurrentScreen() {
+        val ask = Connection.NeedsConsent(app.workadventurer.protocol.catalog.AdapterOffer("deadbeef", null))
+        assertEquals(Route.Users, routeFor(ask, Route.Users))
+        assertEquals(Route.Join, routeFor(ask, Route.Join))
+        assertEquals(Route.Join, routeFor(ask)) // nothing shown yet: the front door
+        // The full path of a reconnect after an earlier success: Reconnecting -> question -> answered
+        var shown: Route = routeFor(Connection.Connected)
+        shown = routeFor(Connection.Reconnecting(1, 1000), shown); assertEquals(Route.Users, shown)
+        shown = routeFor(ask, shown); assertEquals(Route.Users, shown)
+        shown = routeFor(Connection.Reconnecting(1, 1000), shown); assertEquals(Route.Users, shown)
+        assertEquals(Route.Join, routeFor(Connection.Failed("x"), shown))
+    }
 }

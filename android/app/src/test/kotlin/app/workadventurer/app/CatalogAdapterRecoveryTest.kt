@@ -24,6 +24,7 @@ class CatalogAdapterRecoveryTest {
     private val store = object : AdapterStore {
         override fun load(hash: String) = null
         override fun save(hash: String, text: String) {}
+        override fun delete(hash: String) {}
     }
 
     @Test
@@ -57,6 +58,20 @@ class CatalogAdapterRecoveryTest {
         assertNotEquals(callerThread, seenThread, "recovery must not run on the caller's thread")
         r.recover("https://x/") { AdapterAnswer.NO }
         assertEquals(AdapterUpdates.AUTO, seenMode)
+    }
+
+    @Test
+    fun forgetDeletesTheCachedFileOffTheCallersThread() = runBlocking {
+        val deleted = mutableListOf<Pair<String, String>>()
+        val st = object : AdapterStore {
+            override fun load(hash: String) = null
+            override fun save(hash: String, text: String) {}
+            override fun delete(hash: String) { deleted += hash to Thread.currentThread().name }
+        }
+        val r = CatalogAdapterRecovery(AdapterUpdatesSetting(Mem()), st, OkHttpClient()) { _, _, _, _ -> RecoverOutcome.Declined("deadbeef") }
+        r.forget("deadbeef")
+        assertEquals(listOf("deadbeef"), deleted.map { it.first })
+        assertNotEquals(Thread.currentThread().name, deleted.single().second)
     }
 
     @Test

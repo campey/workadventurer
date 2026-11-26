@@ -6,7 +6,7 @@ import app.workadventurer.app.session.startsNewCall
 /**
  * The app's one place to log. Every line still goes to logcat ([logcat]); while a call is open it also goes to that call's
  * file ([files]). Calls open and close from the connection state: [Connection.Connecting] starts one (only a Join sets it),
- * a drop and reconnect stays in the same file, [Connection.Disconnected] (Leave) or [Connection.Failed] ends it.
+ * a drop and reconnect (or the consent question) stays in the same file, [Connection.Disconnected] (Leave) or [Connection.Failed] ends it.
  */
 class CallLog(
     private val files: CallLogFiles,
@@ -26,14 +26,15 @@ class CallLog(
         files.append(tag, "ERROR $message")
     }
 
-    private var previous: Connection? = null
+    private var seenCallId = 0
 
-    fun onConnection(connection: Connection, roomUrl: String) {
-        val before = previous
-        previous = connection
+    /** [callId] is [app.workadventurer.app.session.SessionState.callId]: a Connecting with an id not seen before opens a new file. */
+    fun onConnection(connection: Connection, roomUrl: String, callId: Int) {
+        val before = seenCallId
+        seenCallId = callId
         when (connection) {
             Connection.Connecting ->
-                if (startsNewCall(before, connection)) { files.start(roomUrl, header(roomUrl)); i(TAG, "connecting") } else i(TAG, "connecting (adapter question answered)")
+                if (startsNewCall(before, connection, callId)) { files.start(roomUrl, header(roomUrl)); i(TAG, "connecting") } else i(TAG, "connecting (adapter question answered)")
             Connection.Connected -> i(TAG, "connected")
             is Connection.Reconnecting -> i(TAG, "reconnecting (attempt ${connection.attempt}, in ${connection.inMs} ms)")
             is Connection.NeedsConsent -> i(TAG, "waiting for the answer to an adapter download")

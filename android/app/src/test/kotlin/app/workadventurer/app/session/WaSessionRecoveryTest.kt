@@ -11,6 +11,7 @@ import app.workadventurer.protocol.catalog.AdapterUpdates
 import app.workadventurer.protocol.catalog.RecoverOutcome
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -49,6 +50,8 @@ class WaSessionRecoveryTest {
         var offered: AdapterOffer? = null
         var answer: AdapterAnswer? = null
         var gate: CompletableDeferred<Unit>? = null
+        val forgotten = mutableListOf<String>()
+        override suspend fun forget(hash: String) { forgotten += hash }
         override suspend fun recover(roomUrl: String, ask: suspend (AdapterOffer) -> AdapterAnswer): RecoverOutcome {
             calls++
             gate?.await()
@@ -263,12 +266,97 @@ class WaSessionRecoveryTest {
     }
 
     @Test
-    fun startsNewCallIgnoresTheTransitionOutOfNeedsConsent() {
-        val ask = Connection.NeedsConsent(AdapterOffer("deadbeef", null))
-        assertTrue(!startsNewCall(ask, Connection.Connecting))
-        assertTrue(startsNewCall(null, Connection.Connecting))
-        assertTrue(startsNewCall(Connection.Failed("x"), Connection.Connecting))
-        assertTrue(startsNewCall(Connection.Disconnected, Connection.Connecting))
+    fun startsNewCallNeedsAnIdItHasNotSeen() {
+        assertTrue(!startsNewCall(1, Connection.Connecting, 1)) // the answer to the question: same id
+        assertTrue(startsNewCall(0, Connection.Connecting, 1))
+        assertTrue(startsNewCall(1, Connection.Connecting, 2)) // a Join, even straight after a Connecting
+        assertTrue(!startsNewCall(0, Connection.Connected, 1))
+    }
+
+    @Test
+    fun aJoinTakesTheNextCallIdAndAnAnswerDoesNot() = runTest {
+        val world = World(acceptHash = "deadbeef")
+        val s = session(world, FakeRecovery(RecoverOutcome.Applied("deadbeef", emptyMap(), "v9"), asks = true))
+        assertEquals(0, s.state.value.callId)
+        s.dispatch(Command.Join(cfg)); runCurrent()
+        assertIs<Connection.NeedsConsent>(s.state.value.connection)
+        assertEquals(1, s.state.value.callId)
+        s.dispatch(Command.AnswerAdapter(AdapterAnswer.YES))
+        assertEquals(Connection.Connecting, s.state.value.connection)
+        assertEquals(1, s.state.value.callId) // still the same call
+        runCurrent()
+        assertEquals(Connection.Connected, s.state.value.connection)
+        assertEquals(1, s.state.value.callId)
+        s.dispatch(Command.Leave)
+        assertEquals(0, s.state.value.callId)
+    }
+
+    @Test
+    fun aJoinWhileTheQuestionIsOpenIsANewCall() = runTest {
+        val world = World(acceptHash = "deadbeef")
+        val s = session(world, FakeRecovery(RecoverOutcome.Applied("deadbeef", emptyMap(), "v9"), asks = true))
+        s.dispatch(Command.Join(cfg)); runCurrent()
+        assertIs<Connection.NeedsConsent>(s.state.value.connection)
+        val seen = mutableListOf<Pair<Connection, Int>>()
+        backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) { s.state.collect { seen += it.connection to it.callId } }
+        s.dispatch(Command.Join(cfg.copy(name = "again"))); runCurrent()
+        assertEquals(2, s.state.value.callId)
+        // Straight from the question (call 1) to a Connecting of call 2: the pair differs although the connection looks like an answer.
+        assertEquals(Connection.Connecting, seen.first { it.second == 2 }.first)
+    }
+
+    @Test
+    fun aConflatedLeaveAndJoinStillShowsANewCallId() = runTest {
+        val world = World(acceptHash = "never")
+        val gate = CompletableDeferred<Unit>()
+        val s = session(world, FakeRecovery(RecoverOutcome.NoEntry("deadbeef")).also { it.gate = gate })
+        s.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(Connection.Connecting, s.state.value.connection)
+        val before = s.state.value
+        s.dispatch(Command.Leave); s.dispatch(Command.Join(cfg)) // a collector that was busy sees only the end result
+        val after = s.state.value
+        assertEquals(before.connection, after.connection)
+        assertEquals(before.callId + 1, after.callId)
+    }
+
+    @Test
+    fun aRefusedCachedAdapterIsForgottenSoTheCatalogIsAskedNextTime() = runTest {
+        val world = World(acceptHash = "never-matches")
+        val rec = FakeRecovery(RecoverOutcome.Known("deadbeef", mapOf("x" to "1"), fromCache = true))
+        val s = session(world, rec)
+        s.dispatch(Command.Join(cfg)); advanceTimeBy(120_000); runCurrent()
+        assertEquals(Connection.Failed("server says: refresh"), s.state.value.connection)
+        assertEquals(listOf("deadbeef"), rec.forgotten)
+        assertEquals(2, world.configs.size)
+    }
+
+    @Test
+    fun aDownloadedOrBuiltinAdapterTheServerRefusesIsNotForgotten() = runTest {
+        for (o in listOf(RecoverOutcome.Applied("deadbeef", emptyMap(), "v9"), RecoverOutcome.Known("deadbeef", emptyMap(), fromCache = false))) {
+            val rec = FakeRecovery(o)
+            val s = session(World(acceptHash = "never-matches"), rec)
+            s.dispatch(Command.Join(cfg)); advanceTimeBy(120_000); runCurrent()
+            assertIs<Connection.Failed>(s.state.value.connection)
+            assertEquals(emptyList(), rec.forgotten, "$o")
+        }
+    }
+
+    @Test
+    fun aCachedAdapterTheServerAcceptsIsKept() = runTest {
+        val rec = FakeRecovery(RecoverOutcome.Known("deadbeef", emptyMap(), fromCache = true))
+        val s = session(World(acceptHash = "deadbeef"), rec)
+        s.dispatch(Command.Join(cfg)); runCurrent()
+        assertEquals(Connection.Connected, s.state.value.connection)
+        assertEquals(emptyList(), rec.forgotten)
+    }
+
+    @Test
+    fun anUnpublishedVersionIsSaidApartFromACatalogFailure() = runTest {
+        val s = session(World(), FakeRecovery(RecoverOutcome.VersionUnreadable))
+        s.dispatch(Command.Join(cfg)); runCurrent()
+        val m = assertIs<Connection.Failed>(s.state.value.connection).message
+        assertEquals("This server doesn't publish its version, so the app can't check for an update.", m)
+        assertTrue(m != recoveryFailureMessage(RecoverOutcome.Unavailable("x"), "o"))
     }
 
     @Test
