@@ -41,9 +41,15 @@ export async function recoverAdapter({
   let deadline = timeoutMs == null ? null : Date.now() + timeoutMs;
   const left = () => (deadline == null ? undefined : Math.max(1, deadline - Date.now()));
   try {
-    const version = await readServerVersion(roomUrl, { fetch, timeoutMs: left(), matchRelease });
+    const t0 = Date.now();
+    const budget = left();
+    const version = await readServerVersion(roomUrl, { fetch, timeoutMs: budget, matchRelease });
     const hash = version?.hash;
-    if (!hash) return unavailable("could not read the server's version hash");
+    if (!hash) {
+      // readServerVersion returns null for everything; say "timed out" when the budget ran out reading the page.
+      const timedOut = Date.now() - t0 >= (budget ?? 8000) - 25;
+      return unavailable(timedOut ? "could not read the server's version hash: timed out" : "could not read the server's version hash");
+    }
 
     if (isBuiltinHash(hash)) return { status: "known", hash };
     // Known only if the cache file actually loads; a bad file is overwritten below.

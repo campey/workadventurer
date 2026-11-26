@@ -712,6 +712,7 @@ A route's waypoints are tile **centres**, so it ends up to about 22 px from the 
   not), else the adapter's first: after a rollback to v1.34.2 the server announces `62e25483`, which wa-1.34 lists second.
   `wa join` hands the hash it read to the daemon (`WA_PROBED_HASH`) so a failed second home-page GET cannot defeat a cached
   adapter. One `isBuiltinHash` (`src/adapters/index.mjs`) is the "is this built in" test; `recoverAdapter` takes it injected.
+- **`selfcheck`** (`scripts/selfcheck.mjs`) runs the same pre-flight as `wa join` (skipped with `--adapter-file`, a non-auto `--target` or `WA_VERSION`), honouring `adapterUpdates`: default `ask` has no prompt in a script, so it says how to allow it and exits 4; `WA_ADAPTER_UPDATES=auto` applies and caches the adapter, so `selfcheck --target production` passes on a server newer than the built-ins.
 - **Setting and consent.** The setting is `adapterUpdates` in the config file or
   `WA_ADAPTER_UPDATES`. `ask` (the default) prompts `[y/N/always]`; with no terminal
   (stdin or stderr not a TTY) the answer is no, never a silent download. `auto`

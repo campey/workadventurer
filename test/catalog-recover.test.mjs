@@ -97,6 +97,7 @@ test("unavailable: a silent home page gives up at timeoutMs", async () => {
   const t = Date.now();
   const o = await run({ timeoutMs: 200 });
   assert.equal(o.status, "unavailable");
+  assert.match(o.reason, /timed out/);
   assert.ok(Date.now() - t < 2000);
 });
 

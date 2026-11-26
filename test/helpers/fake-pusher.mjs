@@ -21,6 +21,7 @@ export async function startFakePusher({
   proto = "proto/wa-1.34/messages.proto",
   acceptHashes = null, // given: reject (errorScreen) any /ws/room whose `version` query isn't listed; GET / serves a home page carrying the first one
   pageHash = null, // with acceptHashes: the hash the home page advertises instead of acceptHashes[0] (a server that announces one hash and takes another)
+  pageBroken = false, // with acceptHashes: GET / answers 500 (the home page cannot be read)
   afterFirstJoin = null, // with acceptHashes: { acceptHashes, pageHash? } swapped in once the first client has joined; joinFirstMs then drops that socket (the server "upgrades" while we are up)
 } = {}) {
   const root = await protobuf.load(path.join(__dirname, "..", "..", proto));
@@ -54,6 +55,7 @@ export async function startFakePusher({
       return res.end(JSON.stringify({ authToken: "fake-token", userUuid: "fake-uuid" }));
     }
     if (acceptHashes && req.method === "GET" && req.url === "/") {
+      if (pageBroken) { res.statusCode = 500; return res.end("down"); }
       res.setHeader("content-type", "text/html");
       return res.end(`<html><head><meta name="wa-api-version" content="${accept.pageHash ?? accept.hashes[0]}"></head><body>v9.9.9</body></html>`);
     }

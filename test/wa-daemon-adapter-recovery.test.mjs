@@ -150,7 +150,7 @@ const daemonState = async (port) => { try { return (await fetch(`http://127.0.0.
 
 test("auto, reconnect: the server upgrades while we are up -> recover once, reconnect with the catalog adapter", async () => {
   await withSetup("auto", async ({ pusher, home, port, output }) => {
-    const rejoined = await until(() => pusher.stats.versions.includes(NEW_HASH) && pusher.stats.joins >= 2 || pusher.stats.versions.at(-1) === NEW_HASH);
+    const rejoined = await until(() => (pusher.stats.versions.includes(NEW_HASH) && pusher.stats.joins >= 2) || pusher.stats.versions.at(-1) === NEW_HASH);
     assert.ok(rejoined, `never reconnected with the catalog adapter:\n${output()}`);
     assert.ok(await until(() => daemonState(port)), output());
     assert.deepEqual(pusher.stats.versions.slice(0, 2), [BUILTIN, BUILTIN]);
@@ -194,4 +194,23 @@ test("auto: an unreachable catalog logs the sanitised reason, not just 'unavaila
     assert.equal(code, 4, output());
     assert.match(output(), /adapter recovery: unavailable \(index: [^)\n]+\)/);
   }, { env: { WA_CATALOG_URL: "http://127.0.0.1:1/catalog/index.json" } });
+});
+
+// --- WA_PROBED_HASH plumbing (#185): wa join's pre-flight hash -> env -> daemon -> client hint ---
+
+test("WA_PROBED_HASH: with the home page unreadable the daemon joins using the hint (a non-first built-in hash)", async () => {
+  await withSetup("ask", async ({ pusher, port, output }) => {
+    assert.ok(await until(() => daemonState(port)), `daemon never came up:\n${output()}`);
+    assert.deepEqual(pusher.stats.versions, ["62e25483"]);
+  }, { env: { WA_PROBED_HASH: "62e25483" }, pusherOpts: { acceptHashes: ["62e25483"], pageBroken: true } });
+});
+
+test("WA_PROBED_HASH: a malformed value is ignored (the daemon falls back and is refused)", async () => {
+  for (const bad of ["62e2548", "62E25483", "zzzzzzzz", "62e25483; rm"]) {
+    await withSetup("ask", async ({ pusher, exited, output }) => {
+      const code = await raceTimeout(exited, 15000);
+      assert.equal(code, REFUSED_EXIT, output());
+      assert.ok(!pusher.stats.versions.includes("62e25483"), `${bad} was used: ${pusher.stats.versions}`);
+    }, { env: { WA_PROBED_HASH: bad }, pusherOpts: { acceptHashes: ["62e25483"], pageBroken: true } });
+  }
 });
