@@ -19,6 +19,10 @@
 // (`checkoutCommit`, default `git rev-parse HEAD` in catalogDir) must equal main's tip,
 // else stage "stale" (the workflow re-checks out main and re-runs). This is simpler and
 // safer than rebuilding the index from the remote tree.
+// Three kinds of verdict: pass (adapter file + index), fail (placeholder, index only) and `seenOn` (an `ok` adapter
+// gated on the OTHER server: one record in its index entry, index only, the adapter file byte-identical).
+// A staging pass also prunes the catalog (scripts/watch/prune.mjs): the deleted adapter files and the rewritten index
+// go in the SAME commit; only catalog/adapters/<hash>.json can be deleted (assertCatalogDeletes).
 // An existing adapter file is never replaced: identical bytes is "already-published"
 // (success, no PR); different bytes fails at "validate".
 
@@ -28,11 +32,12 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { HASH_RE, validateAdapterFile } from "../../src/catalog/schema.mjs";
-import { ADAPTERS } from "../../src/adapters/index.mjs";
+import { ADAPTERS, isBuiltinHash } from "../../src/adapters/index.mjs";
 import { gateDetail } from "../../src/catalog/recover.mjs";
 import { rebuildIndex } from "../catalog-index.mjs";
+import { planPrune } from "./prune.mjs";
 import { normaliseVersion } from "./candidate.mjs";
-import { assertCatalogPaths, branchFor } from "./github-port.mjs";
+import { assertCatalogPaths, assertCatalogDeletes, branchFor } from "./github-port.mjs";
 
 const DEFAULT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "catalog");
 const SERVERS = ["production", "staging"];
@@ -55,17 +60,19 @@ const fail = (stage, error, extra = {}) => ({ ok: false, stage, error, ...extra 
  *   placeholder: { server, version, gate, issue?, commit? }     -> a fail verdict
  *     `commit` is REQUIRED and holds the code fingerprint (port.codeFingerprint(), see decide() in candidate.mjs),
  *     not a git commit.
- * Exactly one of the two.
+ *   seenOn:      { server, version, gate: "passed" | failing step text, commit? } -> an index-only record on an `ok` entry
+ *     (`commit`, the code fingerprint, is REQUIRED for a failing record: it is what retests compare against).
+ * Exactly one of the three.
  */
-export async function publish({ port, hash, adapterFile, placeholder, catalogDir = DEFAULT_DIR, now = new Date(), checkoutCommit, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 2000, maxWaitMs = 15000 } = {}) {
+export async function publish({ port, hash, adapterFile, placeholder, seenOn, catalogDir = DEFAULT_DIR, now = new Date(), isBuiltin = isBuiltinHash, checkoutCommit, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 2000, maxWaitMs = 15000 } = {}) {
   let branch;
   try {
     branch = branchFor(hash);
   } catch (e) {
     return fail("validate", msg(e));
   }
-  if ((adapterFile === undefined) === (placeholder === undefined)) {
-    return fail("validate", "give exactly one of adapterFile (pass) or placeholder (fail)");
+  if ([adapterFile, placeholder, seenOn].filter((v) => v !== undefined).length !== 1) {
+    return fail("validate", "give exactly one of adapterFile (pass), placeholder (fail) or seenOn");
   }
 
   const adapterRel = `catalog/adapters/${hash}.json`;
@@ -73,6 +80,7 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
   const adapterPath = path.join(catalogDir, "adapters", `${hash}.json`);
   const indexPath = path.join(catalogDir, "index.json");
   const files = [adapterFile !== undefined ? { path: adapterRel } : null, { path: indexRel }].filter(Boolean);
+  let deletes = [];
   try {
     assertCatalogPaths(files.map((f) => f.path));
   } catch (e) {
@@ -107,7 +115,9 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
   // Local files first, restored if anything below fails before the PR exists.
   const snapshot = (p) => { try { return fs.readFileSync(p); } catch { return null; } };
   const before = { adapter: snapshot(adapterPath), index: snapshot(indexPath) };
+  const pruned = []; // [{ path, bytes }]: adapter files deleted locally, put back by restore()
   const restore = () => {
+    for (const { path: p, bytes } of pruned) { try { fs.writeFileSync(p, bytes); } catch { /* best effort */ } }
     for (const [p, b] of [[adapterPath, before.adapter], [indexPath, before.index]]) {
       try { if (b === null) fs.rmSync(p, { force: true }); else fs.writeFileSync(p, b); } catch { /* best effort */ }
     }
@@ -115,6 +125,7 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
 
   let message;
   let title;
+  let stagingPass = false;
   try {
     if (adapterFile !== undefined) {
       const text = typeof adapterFile === "string" ? adapterFile : JSON.stringify(adapterFile, null, 2) + "\n";
@@ -136,8 +147,32 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
         fs.mkdirSync(path.dirname(adapterPath), { recursive: true });
         fs.writeFileSync(adapterPath, text);
       }
+      stagingPass = checked.file.server === "staging";
       message = `Adapter ${hash}: add (gate passed)`;
       title = `Adapter ${hash} (gate passed)`;
+    } else if (seenOn !== undefined) {
+      const r = seenOn;
+      if (!SERVERS.includes(r?.server)) return fail("validate", `seenOn server must be one of ${SERVERS.join(", ")}`);
+      if (before.index === null || before.adapter === null) return fail("validate", `${hash} has no adapter file and index entry to record a sighting on`);
+      const index = JSON.parse(before.index.toString("utf8"));
+      const entry = index.entries?.[hash];
+      const sha256 = createHash("sha256").update(before.adapter).digest("hex");
+      if (entry?.status !== "ok" || entry.sha256 !== sha256) return fail("validate", `${hash} is not an ok catalog entry matching its adapter file`);
+      if (entry.server === r.server) return fail("validate", `${hash} is already an ok ${r.server} adapter; seenOn records the OTHER server`);
+      const version = normaliseVersion(r.server, r.version);
+      if (version != null && !/^[\w.@-]{1,40}$/.test(version)) return fail("validate", "seenOn version has unexpected characters or is too long");
+      let gate;
+      if (r.gate === "passed") gate = "passed";
+      else {
+        gate = gateDetail(r.gate);
+        if (!gate || gate === "passed") return fail("validate", "a failing seenOn record needs the failing step text");
+        if (typeof r.commit !== "string" || !/^[0-9a-f]{7,40}$/.test(r.commit)) return fail("validate", "a failing seenOn record needs the code fingerprint (hex) as commit");
+      }
+      const record = { server: r.server, version, checked: now.toISOString(), gate, ...(gate !== "passed" ? { commit: r.commit } : {}) };
+      entry.seenOn = [...(Array.isArray(entry.seenOn) ? entry.seenOn.filter((x) => x?.server !== r.server) : []), record].sort((a, b) => (a.server < b.server ? -1 : 1));
+      fs.writeFileSync(indexPath, JSON.stringify(index, null, 2) + "\n");
+      message = `Adapter ${hash}: seen on ${r.server} (gate ${gate === "passed" ? "passed" : "failed"})`;
+      title = `Adapter ${hash} seen on ${r.server}`;
     } else {
       const p = placeholder;
       if (!SERVERS.includes(p?.server)) return fail("validate", `placeholder server must be one of ${SERVERS.join(", ")}`);
@@ -166,6 +201,28 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
       title = `Adapter ${hash} needs attention`;
     }
     rebuildIndex(catalogDir, { now });
+    if (stagingPass) {
+      // Staging pruning, same PR: plan from the rebuilt index (the new entry has its `added`), delete the adapter
+      // files, drop the superseded staging placeholders, rebuild once more. The entry published here is never pruned.
+      const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+      const plan = planPrune(index, { keepHash: hash, isBuiltin });
+      deletes = plan.adapters.map((h) => `catalog/adapters/${h}.json`);
+      assertCatalogDeletes(deletes);
+      if (deletes.includes(adapterRel)) throw new Error("refusing to prune the adapter being published");
+      for (const h of plan.adapters) {
+        const p = path.join(catalogDir, "adapters", `${h}.json`);
+        pruned.push({ path: p, bytes: fs.readFileSync(p) });
+        fs.rmSync(p);
+      }
+      if (plan.placeholders.length) {
+        for (const h of plan.placeholders) delete index.entries[h];
+        fs.writeFileSync(indexPath, JSON.stringify(index, null, 2) + "\n");
+      }
+      if (plan.adapters.length || plan.placeholders.length) {
+        rebuildIndex(catalogDir, { now });
+        message += `; pruned ${[...plan.adapters, ...plan.placeholders].join(", ")}`;
+      }
+    }
   } catch (e) {
     restore();
     return fail("write", msg(e));
@@ -177,7 +234,7 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
   try {
     await port.createBranch(branch, mainSha);
     stage = "commit";
-    const made = await port.commit({ branch, message, files: out, parent: mainSha });
+    const made = await port.commit({ branch, message, files: out, ...(deletes.length ? { deletes } : {}), parent: mainSha });
     const commitSha = made?.sha;
     if (typeof commitSha !== "string" || !commitSha) throw new Error("commit returned no sha");
     stage = "pr";
@@ -206,5 +263,5 @@ export async function publish({ port, hash, adapterFile, placeholder, catalogDir
     restore();
     return fail(stage, msg(e), pr ? { pr: pr.number, branch } : { branch });
   }
-  return { ok: true, merged: true, branch, pr: pr.number, files: out.map((f) => f.path) };
+  return { ok: true, merged: true, branch, pr: pr.number, files: out.map((f) => f.path), ...(deletes.length ? { deleted: deletes } : {}) };
 }

@@ -7,15 +7,17 @@
 //                                         limited to FINGERPRINT_ENTRIES (R14): it changes when gate-relevant code
 //                                         changes, not when the watcher publishes (R11) or docs change; one non-recursive GET /git/trees/<base>
 //   createBranch(name, sha)               -> create the branch, or reset it to `sha` if it exists
-//   commit({ branch, message, files, parent }) -> { sha }: one commit of [{ path, content }] whose parent is
-//                                         exactly `parent` (the sha given to createBranch); the branch is
-//                                         force-moved to it
+//   commit({ branch, message, files, deletes?, parent }) -> { sha }: one commit of [{ path, content }] (and
+//                                         `deletes`: catalog/adapters/<hash>.json paths removed in the SAME commit)
+//                                         whose parent is exactly `parent` (the sha given to createBranch); the
+//                                         branch is force-moved to it
 //   findOpenPr(branch)                    -> { number, headSha, headRepo } | null
 //   openPr({ branch, title, body })       -> { number }
 //   merge(number, { expectedHeadSha })    -> { merged: true } (throws or { merged:false } otherwise); GitHub
 //                                         refuses (409) if the PR head is no longer expectedHeadSha
 //   repo                                  -> "owner/name", so callers can check a PR's head repo
-//   findIssues({ label?, state })         -> { issues: [{ number, title, state, body, author }], truncated }
+//   findIssues({ label?, state })         -> { issues: [{ number, title, state, body, author, labels }], truncated }
+//                                         (author = login, labels = names: the adoption rule needs both)
 //                                         oldest first, pull requests excluded; label optional; state is
 //                                         open | closed | all; up to 5 pages of 100, truncated:true if more
 //   createIssue({ title, body, labels })  -> { number, labels }: labels as GitHub actually applied them
@@ -41,6 +43,17 @@ export function assertCatalogPaths(paths) {
     if (bad || norm !== p || !p.startsWith("catalog/") || p.split("/").includes("..") || p.endsWith("/")) {
       throw new Error(`refusing to publish "${String(p).slice(0, 80)}": only files under catalog/ may be published`);
     }
+  }
+}
+
+/**
+ * Deletions are allowed only for adapter files: catalog/adapters/<8 hex>.json. Everything else under catalog/
+ * (the index above all) can only be written, never removed.
+ */
+export function assertCatalogDeletes(paths) {
+  assertCatalogPaths(paths);
+  for (const p of paths) {
+    if (!/^catalog\/adapters\/[0-9a-f]{8}\.json$/.test(p)) throw new Error(`refusing to delete "${String(p).slice(0, 80)}": only catalog/adapters/<hash>.json may be deleted`);
   }
 }
 
@@ -125,13 +138,18 @@ export function createGithubPort({ repo, token, fetch: fetchFn = globalThis.fetc
         await api("PATCH", updateRoute(name), { sha, force: true });
       }
     },
-    async commit({ branch, message, files, parent }) {
+    async commit({ branch, message, files, deletes = [], parent }) {
       assertCatalogPaths(files.map((f) => f.path));
+      assertCatalogDeletes(deletes);
+      if (deletes.some((d) => files.some((f) => f.path === d))) throw new Error("a path cannot be both written and deleted");
       if (!/^[0-9a-f]{40}$/.test(parent ?? "")) throw new Error("commit needs the parent sha the branch was cut from");
       const base = (await api("GET", `/git/commits/${parent}`)).data;
       const tree = (await api("POST", "/git/trees", {
         base_tree: base.tree.sha,
-        tree: files.map((f) => ({ path: f.path, mode: "100644", type: "blob", content: f.content })),
+        tree: [
+          ...files.map((f) => ({ path: f.path, mode: "100644", type: "blob", content: f.content })),
+          ...deletes.map((d) => ({ path: d, mode: "100644", type: "blob", sha: null })),
+        ],
       })).data;
       const made = (await api("POST", "/git/commits", { message, tree: tree.sha, parents: [parent] })).data;
       await api("PATCH", updateRoute(branch), { sha: made.sha, force: true });
@@ -164,7 +182,7 @@ export function createGithubPort({ repo, token, fetch: fetchFn = globalThis.fetc
         if (!Array.isArray(data)) break;
         for (const i of data) {
           if (i.pull_request) continue;
-          issues.push({ number: i.number, title: String(i.title ?? ""), state: i.state, body: String(i.body ?? ""), author: i.user?.login ?? null });
+          issues.push({ number: i.number, title: String(i.title ?? ""), state: i.state, body: String(i.body ?? ""), author: i.user?.login ?? null, labels: (Array.isArray(i.labels) ? i.labels : []).map((l) => (typeof l === "string" ? l : l?.name)).filter((n) => typeof n === "string") });
         }
         if (data.length < 100) break;
         if (page === MAX_PAGES) truncated = true;

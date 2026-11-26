@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import {
-  readServer, decide, buildCandidate, pickBase, waVersionFor, computeHashForVersion,
+  readServer, decide, okOnServer, buildCandidate, pickBase, waVersionFor, computeHashForVersion,
 } from "../scripts/watch/candidate.mjs";
 import { computeProtoHash } from "../scripts/vendor-proto.mjs";
 import { validateAdapterFile } from "../src/catalog/schema.mjs";
@@ -179,4 +179,42 @@ test("decide ownership (R13): staging never re-gates a production placeholder; p
   assert.equal(decide({ ...base, server: "production", catalogIndex: stagingOwned }).action, "gate");
   assert.equal(decide({ ...base, server: "production", catalogIndex: prodOwned }).action, "skip");
   assert.equal(decide({ ...base, server: "staging", catalogIndex: stagingOwned }).action, "skip");
+});
+
+test("decide seenOn: an ok hash of the other server gates once; pass is final; a fail retests only on force, code or version", () => {
+  const entry = (seenOn) => ({ ...ok("staging", "master@621f2bf2", "adapters/dcadccc6.json"), ...(seenOn ? { seenOn } : {}) });
+  const rec = (gate, version = "v1.35.0") => ({ server: "production", version, checked: "2026-11-26T00:00:00.000Z", gate, commit: "abc123" });
+  const d = (e, o = {}) => decide({ hash: "dcadccc6", server: "production", version: "v1.35.0", catalogIndex: index({ dcadccc6: e }), codeFingerprint: "abc123", ...o });
+  const first = d(entry());
+  assert.deepEqual([first.action, first.seenOn], ["gate", true]);
+  assert.equal(d(entry([rec("passed")]), { force: true, codeFingerprint: "zzz", version: "v9.9.9" }).action, "skip");
+  const failed = entry([rec("scenarios: boom")]);
+  assert.equal(d(failed).action, "skip");
+  assert.deepEqual([d(failed, { force: true }).action, d(failed, { force: true }).seenOn], ["gate", true]);
+  assert.equal(d(failed, { codeFingerprint: "zzz" }).action, "gate");
+  assert.equal(d(failed, { version: "v1.35.1" }).action, "gate");
+  // the entry's own server never takes this path
+  assert.equal(decide({ hash: "dcadccc6", server: "staging", version: "master@621f2bf2", catalogIndex: index({ dcadccc6: entry() }), force: true }).action, "skip");
+  // a record for the other server does not count
+  assert.equal(decide({ hash: "dcadccc6", server: "staging", version: "x", catalogIndex: index({ dcadccc6: { ...entry(), server: "production", seenOn: [rec("passed")] } }) }).seenOn, true);
+});
+
+test("okOnServer: own server or a passed record; a failed record is not ok there", () => {
+  const e = { ...ok("staging", "master@1", "adapters/x.json"), seenOn: [{ server: "production", gate: "x: bad" }] };
+  assert.equal(okOnServer(e, "staging"), true);
+  assert.equal(okOnServer(e, "production"), false);
+  assert.equal(okOnServer({ ...e, seenOn: [{ server: "production", gate: "passed" }] }, "production"), true);
+  assert.equal(okOnServer({ status: "needs-attention", server: "production" }, "production"), false);
+});
+
+test("buildCandidate useExisting: returns the catalog's own file untouched, refuses a mismatched hash or a non-ok entry", async () => {
+  const file = { schema: 1, id: "wa-master-621f2bf2", waVersion: "master-621f2bf2", apiVersionHash: "dcadccc6", server: "staging", protoFamily: "wa-master" };
+  const ci = index({ dcadccc6: ok("staging", "master@621f2bf2", "adapters/dcadccc6.json"), eeeeeee1: { status: "needs-attention", server: "staging" } });
+  const r = await buildCandidate({ hash: "dcadccc6", version: "v1.35.0", server: "production", catalogIndex: ci, useExisting: true, fetchBase: async () => ({ ok: true, file }) });
+  assert.deepEqual([r.ok, r.existing], [true, true]);
+  assert.deepEqual(r.file, file);
+  const wrong = await buildCandidate({ hash: "dcadccc6", version: "v1.35.0", server: "production", catalogIndex: ci, useExisting: true, fetchBase: async () => ({ ok: true, file: { ...file, apiVersionHash: "11111111" } }) });
+  assert.equal(wrong.ok, false);
+  assert.equal((await buildCandidate({ hash: "eeeeeee1", version: "v1.35.0", server: "production", catalogIndex: ci, useExisting: true, fetchBase: async () => ({ ok: true, file }) })).ok, false);
+  assert.equal((await buildCandidate({ hash: "dcadccc6", version: "v1.35.0", server: "production", catalogIndex: ci, useExisting: true, fetchBase: async () => ({ ok: false, reason: "HTTP 500" }) })).reason, "adapter dcadccc6: HTTP 500");
 });

@@ -35,7 +35,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { HASH_RE } from "../../src/catalog/schema.mjs";
 import { gateDetail } from "../../src/catalog/recover.mjs";
-import { readServer, decide, buildCandidate, computeHashForVersion, normaliseVersion } from "./candidate.mjs";
+import { readServer, decide, okOnServer, buildCandidate, computeHashForVersion, normaliseVersion } from "./candidate.mjs";
 import { runGate, defaultRunners, STEP_NAMES } from "./gate.mjs";
 import { publish } from "./publish.mjs";
 import { reportFailure, reportPass } from "./issues.mjs";
@@ -220,7 +220,7 @@ export async function runGatePhase(deps, { force = false, only = {}, targets = T
       log(`${target}: ${hash} (${release}) gate: ${decision.reason}`);
       handled.set(hash, target);
 
-      const cand = await deps.buildCandidate({ hash, version: rawRelease, server: target, catalogIndex });
+      const cand = await deps.buildCandidate({ hash, version: rawRelease, server: target, catalogIndex, useExisting: decision.seenOn === true });
       let gate;
       if (!cand.ok) {
         gate = { pass: false, steps: [{ name: "candidate", status: "fail", detail: cand.reason }] };
@@ -280,7 +280,9 @@ export async function runPublishPhase(deps, { dryRun = false, force = false, onl
         res.outcome = "skip"; res.reason = "no verdict from the gate"; log(`${target}: no verdict, nothing to publish`);
         // A merge whose issue close failed would leave its issue open for good (the gate skips an ok hash): close it now.
         const server = await deps.readServer(target);
-        if (server?.hash && deps.loadIndex().entries?.[server.hash]?.status === "ok") {
+        // Only for a hash that is ok for THIS server (its own, or a passed seenOn): a failed seenOn gate on an ok
+        // adapter keeps its issue open.
+        if (server?.hash && okOnServer(deps.loadIndex().entries?.[server.hash], target)) {
           const rep = await deps.reportPass({ port: github, server: target, hash: server.hash, version: server.release ? normaliseVersion(target, server.release) : null, runUrl });
           if (!rep.ok) warnings.push(`${target}: could not check for a stale issue (${rep.stage}: ${rep.error})`);
           else if (rep.closed?.length) log(`${target}: closed stale issue(s) ${rep.closed.map((n) => `#${n}`).join(", ")} for the already published ${server.hash}`);
@@ -316,15 +318,20 @@ export async function runPublishPhase(deps, { dryRun = false, force = false, onl
       const decision = decide({ hash, version: release, server: target, catalogIndex, force, codeFingerprint });
       if (decision.action === "skip") { res.outcome = "skip"; res.reason = decision.reason; log(`${target}: ${hash} (${release}) skip: ${decision.reason}`); continue; }
 
-      const cand = await deps.buildCandidate({ hash, version: rawRelease, server: target, catalogIndex });
+      const seenOn = decision.seenOn === true; // an ok adapter of the other server: the record goes in the index only
+      const cand = await deps.buildCandidate({ hash, version: rawRelease, server: target, catalogIndex, useExisting: seenOn });
 
       if (verdict.pass) {
         if (!cand.ok) { fault(`gate passed but the candidate adapter cannot be rebuilt: ${cand.reason}`); continue; }
         res.outcome = "pass";
         if (dryRun) {
-          log(`${target}: ${hash} gate PASSED; [dry-run] would publish catalog/adapters/${hash}.json and close the issue`);
+          log(seenOn
+            ? `${target}: ${hash} gate PASSED; [dry-run] would record it as seen on ${target} (index only) and close the issue`
+            : `${target}: ${hash} gate PASSED; [dry-run] would publish catalog/adapters/${hash}.json and close the issue`);
         } else {
-          const pub = await deps.publish({ port: github, hash, adapterFile: cand.file, catalogDir });
+          const pub = await deps.publish(seenOn
+            ? { port: github, hash, seenOn: { server: target, version: release, gate: "passed" }, catalogDir }
+            : { port: github, hash, adapterFile: cand.file, catalogDir });
           if (pub.merged) dirty = true;
           if (!pub.ok) { fault(`publish failed at ${pub.stage}: ${pub.error}`); continue; }
           log(`${target}: ${hash} published (${pub.status ?? `PR #${pub.pr}`})`);
@@ -352,10 +359,13 @@ export async function runPublishPhase(deps, { dryRun = false, force = false, onl
         if (rep.extras?.length) warnings.push(`${target}: duplicate open issues ${rep.extras.map((n) => `#${n}`).join(", ")}`);
       }
       if (dryRun) {
-        log(`${target}: [dry-run] would publish a needs-attention placeholder for ${hash} (issue ${issue ?? "none"})`);
+        log(`${target}: [dry-run] would publish ${seenOn ? "a failed seenOn record" : "a needs-attention placeholder"} for ${hash} (issue ${issue ?? "none"})`);
       } else {
         // Published even when the issue write failed: otherwise the next hour would gate (and put avatars on the server) again.
-        const pub = await deps.publish({ port: github, hash, placeholder: { server: target, version: release, gate: why, issue: issue ?? undefined, commit: codeFingerprint }, catalogDir });
+        // An ok adapter that fails on the other server stays ok (clients still apply it): record the failure on it.
+        const pub = await deps.publish(seenOn
+          ? { port: github, hash, seenOn: { server: target, version: release, gate: why, commit: codeFingerprint }, catalogDir }
+          : { port: github, hash, placeholder: { server: target, version: release, gate: why, issue: issue ?? undefined, commit: codeFingerprint }, catalogDir });
         if (pub.merged) dirty = true;
         if (!pub.ok) fault(`placeholder publish failed at ${pub.stage}: ${pub.error}`);
       }

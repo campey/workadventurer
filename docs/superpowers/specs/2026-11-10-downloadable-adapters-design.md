@@ -74,7 +74,8 @@ behaves as it does today.
 
 ### 1. The catalog (`catalog/`)
 
-- `catalog/index.json`: `{ "schema": 1, "updated": "<ISO time>", "entries": { "<apiVersionHash>": { "status": "ok" | "needs-attention", "server": "production" | "staging", "version": "1.34.4" or "master@10b19f83", "file": "adapters/<hash>.json", "sha256": "<of the file>", "gate": {...}, "issue": <number|null> } } }`
+- `catalog/index.json`: `{ "schema": 1, "updated": "<ISO time>", "entries": { "<apiVersionHash>": { "status": "ok" | "needs-attention", "server": "production" | "staging", "version": "1.34.4" or "master@10b19f83", "file": "adapters/<hash>.json", "sha256": "<of the file>", "gate": {...}, "issue": <number|null>, "added": "<ISO instant, optional>", "seenOn": [ { "server", "version", "checked": "<ISO>", "gate": "passed" | "<failing step>", "commit": "<code fingerprint, failing records only>" } ] (optional) } } }`
+  `added`: when the adapter was first listed `ok` (set once by `rebuildIndex`; clients keep it only when it parses as an instant). `seenOn`: outcomes of gating an `ok` hash on the OTHER server, recorded in the index only (the adapter file never changes); clients ignore it. See `docs/field-notes.md` "When the watcher says needs attention".
 - `catalog/adapters/<hash>.json`: the adapter data, shaped like today's `wa-1.34` adapter minus code and proto path:
   `{ "schema": 1, "id", "waVersion", "apiVersionHash": "<one hash, equal to its index key>", "protoFamily": "wa-1.34", "meeting": {...}, "movement": {...}, "handshake": { "query": { "<name>": "<value>" } } }`
   (`handshake` is optional).
@@ -97,7 +98,7 @@ behaves as it does today.
 - URL: `https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json` (my call; a client setting
   `WA_CATALOG_URL` / an app setting overrides it, which the gate and tests use).
 - Seeded with the hashes we already know and have verified (production v1.34.0, .1, .2, .4; staging `d2d82672`; v1.34.3 is left out because it was never seen live). Staging is already past its seed entry: the watcher's first run produces the current one.
-- **Staging entries should be pruned (NOT implemented yet, follow-up)**: the catalog keeps the newest five staging entries, because staging produces a new hash every few days and old ones are never asked for again. Production entries are kept forever. Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
+- **Staging entries are pruned** by the publish step of a new staging adapter, in the same PR: the catalog keeps the newest five `ok` staging entries (by `added`), because staging produces a new hash every few days and old ones are never asked for again. Production entries are kept forever, and so are built-in hashes and any entry production has `seenOn` (rule and details in `docs/field-notes.md`). Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
 
 ### Handshake parameters
 

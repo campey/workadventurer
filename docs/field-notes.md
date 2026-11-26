@@ -764,11 +764,14 @@ into `catalog/index.json` and opens or updates an issue. Both go through branch
   and closed when a staging hash passes (staging's hash churns; per-hash issues would
   flood). The body holds the failing step as `name: detail` in a code fence, the candidate's
   `waVersion` and `protoFamily`, the run link, and a hidden marker
-  `<!-- adapter-watch:<hash|staging> -->`. Label `adapter-watch`. The watcher only edits or
-  closes an issue whose body carries its marker (anyone can file a lookalike), and if
-  the label is later removed it still finds a production issue by title plus marker, so it does
-  not open a duplicate (production only: the staging issue is found by label plus marker, so a
-  removed label there means a second staging issue). If several open issues match, the oldest is updated and the rest are
+  `<!-- adapter-watch:<hash|staging> -->`. Label `adapter-watch`. **Adoption rule (marker spoofing):** the watcher edits or closes an
+  open issue only if its body carries the marker AND it either carries the `adapter-watch`
+  label (only people with triage rights can add it) or was authored by `github-actions[bot]`
+  (`BOT_LOGIN`; `findIssues` returns the author login and label names). The marker alone is
+  not enough: anyone can paste it into a lookalike issue, and that issue is never edited or
+  closed. If the label is later removed, both targets still find their issue by title plus
+  marker plus the bot author (the unlabelled fallback search), so no duplicate is opened
+  (staging used to be label-only). If several open issues match, the oldest is updated and the rest are
   reported as warnings, never closed (a pass closes them all).
 - **The placeholder** in `catalog/index.json`: `status: "needs-attention"`, `server`,
   `version`, `gate` (the issue's failing step, control characters stripped), `issue`
@@ -839,8 +842,46 @@ into `catalog/index.json` and opens or updates an issue. Both go through branch
   repository variable `ADAPTER_WATCH_ENABLED` is `true` (Settings, Secrets and variables,
   Actions, Variables). Default OFF; a manual `workflow_dispatch` always runs. Setting it is the
   go-live step, after the Task 8 dry run.
-- **Not implemented:** pruning old staging entries (the spec says keep the newest five). Staging
-  hashes churn, so the catalog grows until that follow-up lands.
+- **One hash on both servers (`seenOn`).** A hash can be `ok` in the catalog (published after
+  gating on one server) and later be announced by the OTHER server (seen live 2026-11-26:
+  production v1.35.0 announced `dcadccc6`, published from staging `master@621f2bf2`, gated on
+  staging only, so with no live scenarios). `decide` used to skip it as "already ok". Now an `ok`
+  hash that a server announces and that has no record for THAT server (not the entry's own
+  `server`, no `seenOn` item for it) is gated there once, against the catalog's own adapter file
+  (`buildCandidate` with `useExisting`: the bytes clients apply, nothing rebuilt); production
+  includes the live scenarios. The outcome is written to the index entry ONLY, as the optional
+  list `seenOn: [{ server, version, checked (ISO), gate: "passed" | failing step text, commit? }]`
+  (`publish` with `seenOn`; the adapter file stays byte-identical, and `publish` still refuses to
+  replace an existing adapter file). A failing record carries `commit`, the code fingerprint, so
+  the code-change retest works like a placeholder's. A failed gate opens the normal issue for that
+  server (production: `Server v1.35.0 needs attention (adapter <hash>)`) but does NOT demote the
+  adapter: the entry stays `ok`, clients still apply it, and its own server may keep using it.
+  Loop-free: once `seenOn` has the server, a pass is final (not even `force` re-gates it) and a
+  failure is retested only on `force`, a code-fingerprint change or a version change, exactly like
+  a placeholder. The "no verdict" stale-issue closer only closes an issue for a hash that is `ok`
+  for that server (its own, or a passed `seenOn`), so a failed `seenOn` keeps its issue open. R13
+  ownership of `needs-attention` placeholders is unchanged. Clients ignore `seenOn` (the CLI drops
+  it from the parsed index; the Android parser ignores unknown fields).
+- **`added` and staging pruning.** An `ok` index entry carries an optional `added` ISO instant:
+  set by `rebuildIndex` the first time an entry is `ok` (a placeholder turning `ok` gets one),
+  never rewritten for an existing entry, preserved across rebuilds together with `seenOn`. Clients keep
+  it only when it parses as an instant (`isInstant`). The existing entries were backfilled once from
+  the commit that added each adapter file: `node scripts/catalog-index.mjs --backfill-added` (no
+  network; it names any date that is only a shallow-clone boundary commit, and skips files
+  with no history; this repo's clone was shallow but the adapter files' own commits were present).
+  **Pruning rule** (`scripts/watch/prune.mjs`, run by `publish` after a successful STAGING adapter
+  publish, in the same PR and the same commit as the new adapter): rank the `ok` entries with
+  `server: staging` by `added` (none counts as oldest), newest first, ties by higher hash newer,
+  the entry being published always first; those beyond the newest five are deleted (file and
+  index entry) unless protected. Never pruned: production entries (`server: production`, kept
+  forever), built-in hashes (`isBuiltinHash`, i.e. in the `src/adapters` hash lists), an entry with
+  any production `seenOn` record (production runs it), and the entry being published. Protected
+  entries still occupy a rank, so more than five can remain. Staging `needs-attention`
+  placeholders are dropped as soon as a new staging entry is `ok` (a placeholder has no date; the
+  new entry is newer than every one); production placeholders stay. Only
+  `catalog/adapters/<8 hex>.json` can be deleted: `assertCatalogDeletes` (the port's `commit` takes
+  `deletes`, sent as null-sha tree entries) refuses the index and anything else, so the watcher
+  still touches only `catalog/`. A failed merge puts the deleted files back locally.
 - **Repo settings it needs.** Settings, Actions, General: "Allow GitHub Actions to create and
   approve pull requests" ticked; `main` requires a PR with 0 approvals but **no required status checks** (a
   PR opened with the default token starts no workflows, so a required check would never
