@@ -94,6 +94,8 @@ sealed interface InviteStatus {
 data class SessionState(
     val connection: Connection = Connection.Disconnected,
     val roomName: String = "",
+    /** Which call this is: every [Command.Join] makes it a new number, a consent answer or a reconnect never does; 0 when no call (Leave). */
+    val callId: Int = 0,
     val players: List<Player> = emptyList(), // sorted by name, case-insensitive
     val areas: List<Area> = emptyList(),
     val inAreas: List<Area> = emptyList(),
@@ -117,8 +119,6 @@ data class SessionState(
     val muted: Boolean = true,
     /** The status we announce (#111). Kept across leaving and rejoining; the server treats some of them as "not in any conversation". */
     val myStatus: app.workadventurer.proto.AvailabilityStatus = app.workadventurer.proto.AvailabilityStatus.ONLINE,
-    /** Which call this is: every [Command.Join] makes it a new number, a consent answer or a reconnect never does; 0 when no call (Leave). */
-    val callId: Int = 0,
 )
 
 typealias ConnectionFactory = (RoomConfig) -> PusherConnection
@@ -427,6 +427,11 @@ class WaSession(
         }
         // A Known that changes nothing (a built-in hash the server refused anyway) would only repeat the refusal.
         if (next != null && next != cfg) return Recovered.Retry(next, (outcome as? RecoverOutcome.Known)?.takeIf { it.fromCache }?.hash)
+        // A cached file the server refuses (even though it changes nothing) is bad: drop it so the next join asks the catalog.
+        if (outcome is RecoverOutcome.Known && outcome.fromCache) {
+            log("cached adapter ${outcome.hash} refused by the server, dropping it")
+            try { port.forget(outcome.hash) } catch (e: CancellationException) { throw e } catch (e: Exception) { log("forget failed: ${e.javaClass.simpleName}") }
+        }
         return Recovered.Fail(recoveryFailureMessage(outcome, original))
     }
 

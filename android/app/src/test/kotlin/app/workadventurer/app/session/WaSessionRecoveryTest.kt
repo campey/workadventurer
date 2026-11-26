@@ -331,6 +331,16 @@ class WaSessionRecoveryTest {
     }
 
     @Test
+    fun aCachedAdapterThatChangesNothingButIsRefusedIsForgottenToo() = runTest {
+        // The cached file carries the very hash and query the config already has: no retry, but the file is bad.
+        val rec = FakeRecovery(RecoverOutcome.Known(cfg.apiVersionHash, cfg.handshakeQuery, fromCache = true))
+        val s = session(World(), rec)
+        s.dispatch(Command.Join(cfg)); advanceTimeBy(60_000); runCurrent()
+        assertEquals(Connection.Failed("server says: refresh"), s.state.value.connection)
+        assertEquals(listOf(cfg.apiVersionHash), rec.forgotten)
+    }
+
+    @Test
     fun aDownloadedOrBuiltinAdapterTheServerRefusesIsNotForgotten() = runTest {
         for (o in listOf(RecoverOutcome.Applied("deadbeef", emptyMap(), "v9"), RecoverOutcome.Known("deadbeef", emptyMap(), fromCache = false))) {
             val rec = FakeRecovery(o)

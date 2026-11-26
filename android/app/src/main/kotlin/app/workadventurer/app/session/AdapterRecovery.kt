@@ -32,8 +32,8 @@ interface AdapterSettings {
 }
 
 /**
- * The production [AdapterRecovery]: reads the preference at call time, runs [recoverAdapter] off the caller's thread (the JSON parse,
- * meta scan and sha256 would otherwise run on the session's dispatcher) and remembers "Don't ask again" as `auto`.
+ * The production [AdapterRecovery]: reads the preference at call time, runs [recoverAdapter] on the caller's dispatcher (the library itself moves the JSON parse,
+ * meta scan and sha256 to Default and disk to IO; only the preference read hops to IO here) and remembers "Don't ask again" as `auto`.
  * [run] is [recoverAdapter] unless a test swaps it.
  */
 class CatalogAdapterRecovery(
@@ -41,7 +41,7 @@ class CatalogAdapterRecovery(
     private val store: AdapterStore,
     private val client: OkHttpClient,
     private val indexUrl: String = DEFAULT_CATALOG_URL,
-    private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val run: suspend (
         roomUrl: String, mode: AdapterUpdates, ask: suspend (AdapterOffer) -> AdapterAnswer, onAlways: () -> Unit,
     ) -> RecoverOutcome = { roomUrl, mode, ask, onAlways ->
@@ -52,9 +52,8 @@ class CatalogAdapterRecovery(
     },
 ) : AdapterRecovery {
     override suspend fun recover(roomUrl: String, ask: suspend (AdapterOffer) -> AdapterAnswer): RecoverOutcome =
-        withContext(dispatcher) {
-            run(roomUrl, settings.updates, ask, { settings.updates = AdapterUpdates.AUTO })
-        }
+        // Only the preference read (SharedPreferences, disk) goes to IO; the library moves its own CPU and IO work, and [ask] stays on the caller's dispatcher.
+        run(roomUrl, withContext(dispatcher) { settings.updates }, ask, { settings.updates = AdapterUpdates.AUTO })
 
     override suspend fun forget(hash: String) {
         withContext(Dispatchers.IO) { store.delete(hash) }

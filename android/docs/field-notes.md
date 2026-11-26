@@ -576,10 +576,10 @@ The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when pro
   route it last showed), so a refusal after an earlier success leaves you on Users or a conversation instead of `popUpTo` clearing
   the back stack. The dialog itself is drawn at AppRoot level over whatever is showing.
 - **A refused cached adapter is dropped.** When a `Known` outcome with `fromCache = true` (a file from `filesDir/adapters`) builds the
-  retry config and the server refuses that too, the session calls `AdapterRecovery.forget(hash)`, which deletes the file
+  retry config (or is itself the unchanged config) and the server refuses that too, the session calls `AdapterRecovery.forget(hash)`, which deletes the file
   (`AdapterStore.delete`), so the next join consults the catalog again instead of replaying the bad file. A built-in or freshly
   downloaded adapter is never deleted this way.
-- **Where work runs.** `ask` runs on the caller's dispatcher (it shows UI); the JSON parse, meta scan and sha256 run on
+- **Where work runs.** `ask` runs on the caller's dispatcher (it shows UI; `CatalogAdapterRecovery` adds no dispatcher hop except the preference read on IO); the JSON parse, meta scan and sha256 run on
   `Dispatchers.Default` (`cpu {}` in the protocol library), disk on IO. The meta scan is non-overlapping (resumes after a tag's `>`),
   and `sanitizeText` walks code points, so non-BMP format characters (e.g. U+E0001) are blanked too.
 - **What it applies.** Only the `apiVersionHash` and the adapter's handshake query, for that server and room (never persisted as if
@@ -592,3 +592,4 @@ The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when pro
   with a fake recovery port). On a device: point a debug build at a local catalog (`-PcatalogUrl`), run a fake pusher that refuses
   the built-in hash, and watch the dialog. The dialog and the Settings sheet are only compile-checked; they have not been
   exercised on a device yet.
+- Known gaps: the dialog's open state is not saved across a configuration change (rotation) in a way that has been checked on a device; follow-up.
