@@ -268,6 +268,12 @@ export async function runPublishPhase(deps, { dryRun = false, force = false, onl
   // The code fingerprint is taken ONCE, before any sync or merge, from the commit the gate also ran on, and used for
   // every target: later merges (and syncs) must not change what a placeholder records.
   let fingerprint;
+  // Hashes either server announces right now: staging pruning keeps them (a faulted seenOn publish must not lose its file).
+  const announcedHashes = async () => {
+    const out = [];
+    for (const t of TARGET_NAMES) { try { const sv = await deps.readServer(t); if (sv?.hash) out.push(sv.hash); } catch { /* best effort */ } }
+    return out;
+  };
   const fingerprintOnce = async () => (fingerprint ??= await deps.codeFingerprint());
 
   for (const target of targets) {
@@ -331,7 +337,7 @@ export async function runPublishPhase(deps, { dryRun = false, force = false, onl
         } else {
           const pub = await deps.publish(seenOn
             ? { port: github, hash, seenOn: { server: target, version: release, gate: "passed" }, catalogDir }
-            : { port: github, hash, adapterFile: cand.file, catalogDir });
+            : { port: github, hash, adapterFile: cand.file, catalogDir, announced: await announcedHashes() });
           if (pub.merged) dirty = true;
           if (!pub.ok) { fault(`publish failed at ${pub.stage}: ${pub.error}`); continue; }
           log(`${target}: ${hash} published (${pub.status ?? `PR #${pub.pr}`})`);

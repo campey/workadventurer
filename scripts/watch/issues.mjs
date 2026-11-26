@@ -96,9 +96,9 @@ function failureBody({ server, hash, version, runUrl, gate, candidate }) {
 /** Open issues this watcher owns for the target, oldest first: { matches, truncated }. */
 async function findOwned(port, server, hash) {
   const marker = markerFor(server, hash);
-  // Marker AND (the label OR the bot as author). Results of the labelled search carry the label by construction.
-  const mine = (labelled) => (i) => typeof i.body === "string" && i.body.includes(marker)
-    && (labelled || (Array.isArray(i.labels) && i.labels.includes(LABEL)) || i.author === BOT_LOGIN);
+  // Marker AND (the label OR the bot as author), checked on the issue itself (search provenance is not trusted).
+  const mine = () => (i) => typeof i.body === "string" && i.body.includes(marker)
+    && ((Array.isArray(i.labels) && i.labels.includes(LABEL)) || i.author === BOT_LOGIN);
   const shape = server === "staging" ? (t) => t === STAGING_TITLE : titleOk(hash);
   const pick = (r, labelled) => ({ matches: r.issues.filter((i) => shape(i.title) && mine(labelled)(i)).sort((a, b) => a.number - b.number), truncated: !!r.truncated });
   let r = pick(await port.findIssues({ label: LABEL, state: "open" }), true);

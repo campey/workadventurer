@@ -862,6 +862,13 @@ into `catalog/index.json` and opens or updates an issue. Both go through branch
   for that server (its own, or a passed `seenOn`), so a failed `seenOn` keeps its issue open. R13
   ownership of `needs-attention` placeholders is unchanged. Clients ignore `seenOn` (the CLI drops
   it from the parsed index; the Android parser ignores unknown fields).
+- **Undoing a wrong or forged `seenOn`.** A passed record is final: `force` does not re-gate it. If
+  one is wrong (a forged "pass" from a compromised gate job, or a gate that was too lenient), edit
+  `catalog/index.json` by hand through a PR: remove that `seenOn` record (the next run gates the
+  server's hash again as new) or set its `gate` to a failing text with a `commit` (then it retests
+  by the usual triggers: `force`, code change, version change). `rebuildIndex` keeps only
+  well-formed records (known server, valid version and instant, capped text, at most one per
+  server). Staging pruning never deletes a hash either server announces in the run.
 - **`added` and staging pruning.** An `ok` index entry carries an optional `added` ISO instant:
   set by `rebuildIndex` the first time an entry is `ok` (a placeholder turning `ok` gets one),
   never rewritten for an existing entry, preserved across rebuilds together with `seenOn`. Clients keep

@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { ADAPTERS } from "../src/adapters/index.mjs";
+import { gateDetail } from "../src/catalog/recover.mjs";
 import { validateAdapterFile, isInstant } from "../src/catalog/schema.mjs";
 
 const DEFAULT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "catalog");
@@ -29,6 +30,20 @@ export function displayVersion(waVersion) {
   const m = waVersion.match(/^master-([0-9a-f]+)$/);
   if (m) return `master@${m[1]}`;
   return /^\d/.test(waVersion) ? `v${waVersion}` : waVersion;
+}
+
+/** A copied `seenOn`: known servers only, well-formed records only, at most one per server (max 2). */
+export function cleanSeenOn(list) {
+  if (!Array.isArray(list)) return [];
+  const out = new Map();
+  for (const r of list) {
+    if (!r || typeof r !== "object" || !["production", "staging"].includes(r.server) || out.has(r.server)) continue;
+    if (r.version !== null && !(typeof r.version === "string" && /^[\w.@-]{1,40}$/.test(r.version))) continue;
+    if (!isInstant(r.checked) || typeof r.gate !== "string" || !r.gate) continue;
+    if (r.commit !== undefined && !(typeof r.commit === "string" && /^[0-9a-f]{7,40}$/.test(r.commit))) continue;
+    out.set(r.server, { server: r.server, version: r.version, checked: r.checked, gate: gateDetail(r.gate), ...(r.commit !== undefined ? { commit: r.commit } : {}) });
+  }
+  return [...out.values()].sort((a, b) => (a.server < b.server ? -1 : 1));
 }
 
 /** Rebuild `<dir>/index.json`; returns the index written. Throws on an invalid or misnamed adapter file. */
@@ -87,7 +102,7 @@ export function rebuildIndex(dir = DEFAULT_DIR, { now = new Date() } = {}) {
       gate: null,
       issue: null,
       ...(added ? { added } : {}),
-      ...(wasOk && Array.isArray(old.seenOn) && old.seenOn.length ? { seenOn: old.seenOn } : {}),
+      ...(wasOk && cleanSeenOn(old.seenOn).length ? { seenOn: cleanSeenOn(old.seenOn) } : {}),
     };
   }
   const sorted = Object.fromEntries(Object.entries(entries).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));

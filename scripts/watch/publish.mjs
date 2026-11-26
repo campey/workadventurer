@@ -64,7 +64,7 @@ const fail = (stage, error, extra = {}) => ({ ok: false, stage, error, ...extra 
  *     (`commit`, the code fingerprint, is REQUIRED for a failing record: it is what retests compare against).
  * Exactly one of the three.
  */
-export async function publish({ port, hash, adapterFile, placeholder, seenOn, catalogDir = DEFAULT_DIR, now = new Date(), isBuiltin = isBuiltinHash, checkoutCommit, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 2000, maxWaitMs = 15000 } = {}) {
+export async function publish({ port, hash, adapterFile, placeholder, seenOn, catalogDir = DEFAULT_DIR, now = new Date(), isBuiltin = isBuiltinHash, announced = [], checkoutCommit, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 2000, maxWaitMs = 15000 } = {}) {
   let branch;
   try {
     branch = branchFor(hash);
@@ -205,7 +205,7 @@ export async function publish({ port, hash, adapterFile, placeholder, seenOn, ca
       // Staging pruning, same PR: plan from the rebuilt index (the new entry has its `added`), delete the adapter
       // files, drop the superseded staging placeholders, rebuild once more. The entry published here is never pruned.
       const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
-      const plan = planPrune(index, { keepHash: hash, isBuiltin });
+      const plan = planPrune(index, { keepHash: hash, isBuiltin, announced: announced.filter((h) => typeof h === "string" && HASH_RE.test(h)) });
       deletes = plan.adapters.map((h) => `catalog/adapters/${h}.json`);
       assertCatalogDeletes(deletes);
       if (deletes.includes(adapterRel)) throw new Error("refusing to prune the adapter being published");

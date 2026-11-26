@@ -136,3 +136,31 @@ test("backfillAdded: an adapter file with no git history is skipped and reported
   assert.equal(r.skipped[0].hash, "aaaaaaa1");
   assert.equal(readIndex(dir).entries.aaaaaaa1.added, undefined);
 });
+
+test("rebuildIndex cleans a copied seenOn: known servers, well-formed records, one per server", () => {
+  const dir = tmp();
+  writeAdapter(dir, "aaaaaaa1");
+  rebuildIndex(dir);
+  const good = { server: "production", version: "v1.35.0", checked: "2026-11-26T00:00:00.000Z", gate: "passed" };
+  const idx = readIndex(dir);
+  idx.entries.aaaaaaa1.seenOn = [
+    good,
+    { ...good, gate: "dup server" },
+    { ...good, server: "moon" },
+    { ...good, server: "staging", checked: "yesterday" },
+    { ...good, server: "staging", version: "bad version!" },
+    { ...good, server: "staging", gate: "x".repeat(900), commit: "b".repeat(40), extra: "dropped" },
+    "junk",
+  ];
+  fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify(idx));
+  rebuildIndex(dir);
+  const s = readIndex(dir).entries.aaaaaaa1.seenOn;
+  assert.deepEqual(s.map((r) => r.server), ["production", "staging"]);
+  assert.equal(s[0].gate, "passed");
+  assert.ok(s[1].gate.length <= 201);
+  assert.equal(s[1].extra, undefined);
+  idx.entries.aaaaaaa1.seenOn = [{ server: "moon" }];
+  fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify(idx));
+  rebuildIndex(dir);
+  assert.equal(readIndex(dir).entries.aaaaaaa1.seenOn, undefined);
+});

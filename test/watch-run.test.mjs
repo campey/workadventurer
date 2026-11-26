@@ -830,3 +830,24 @@ test("pruning through the whole run: the sixth staging adapter prunes the oldest
   assert.ok(!fs.existsSync(path.join(s.catalogDir, "adapters", `${mk(2)}.json`)));
   assert.equal(s.github.writes.filter((w) => w === "commit").length, 1, "adapter, index and the deletion are one commit");
 });
+
+test("pruning keeps a hash a server announces this run even when its seenOn publish faulted", async () => {
+  const s = setup({ pages: { staging: stagingPage, production: { hash: "40000001", release: "v1.35.0" } } });
+  const mk = (n) => `4000000${n}`;
+  for (let n = 1; n <= 6; n++) {
+    fs.writeFileSync(path.join(s.catalogDir, "adapters", `${mk(n)}.json`), JSON.stringify({ ...baseFile, apiVersionHash: mk(n), server: "staging", id: `wa-${mk(n)}`, waVersion: `master-${mk(n)}` }, null, 2) + "\n");
+  }
+  rebuildIndex(s.catalogDir, { now: new Date("2026-11-01T00:00:00Z") });
+  const idx = readIndex(s.catalogDir);
+  for (let n = 1; n <= 6; n++) idx.entries[mk(n)].added = `2026-11-0${n}T00:00:00.000Z`;
+  fs.writeFileSync(path.join(s.catalogDir, "index.json"), JSON.stringify(idx, null, 2) + "\n");
+  const realPublish = s.deps.publish;
+  s.deps.publish = async (a) => (a.seenOn ? { ok: false, stage: "merge", error: "boom" } : realPublish(a));
+  const r = await run(s);
+  assert.match(r.faults[0], /^production: publish failed/);
+  assert.equal(r.results[1].outcome, "pass");
+  const after = readIndex(s.catalogDir).entries;
+  assert.ok(after[mk(1)], "announced by production: kept although it is the oldest");
+  assert.ok(fs.existsSync(path.join(s.catalogDir, "adapters", `${mk(1)}.json`)));
+  assert.equal(after[mk(2)], undefined, "the next oldest goes instead");
+});
