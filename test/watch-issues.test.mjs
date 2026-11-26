@@ -15,7 +15,7 @@ function fakeIssues({ failAt, dropLabels = false, dropAlways = false, truncated 
   const boom = (m) => { if (failAt === m) throw new Error(`${m} boom`); };
   f.findIssues = async ({ label, state }) => {
     f.calls.push("find"); f.queries.push({ label, state }); boom("find");
-    const issues = f.issues.filter((i) => (!label || i.labels.includes(label)) && (state === "all" || i.state === state)).map(({ number, title, state: s, body }) => ({ number, title, state: s, body: body ?? "" }));
+    const issues = f.issues.filter((i) => (!label || i.labels.includes(label)) && (state === "all" || i.state === state)).map(({ number, title, state: s, body, labels: l, author }) => ({ number, title, state: s, body: body ?? "", labels: [...l], author: author ?? "github-actions[bot]" }));
     return { issues, truncated };
   };
   f.createIssue = async ({ title, body, labels }) => { f.calls.push("create"); boom("create"); const i = { number: ++n, title, body, labels: dropLabels ? [] : labels, state: "open", comments: [] }; f.issues.push(i); return { number: i.number, labels: [...i.labels] }; };
@@ -228,6 +228,45 @@ test("I2: a labelless watcher issue is found by title and marker, not duplicated
   assert.equal(port.issues.length, 1);
   assert.deepEqual(port.queries.at(-1), { label: undefined, state: "open" });
   assert.equal((await reportPass({ port, server: "production", hash: H1 })).closed[0], 101);
+});
+
+test("D: a staging issue whose label was removed is found by title, marker and author, not duplicated", async () => {
+  const port = fakeIssues();
+  await reportFailure({ port, server: "staging", hash: H1, version: "master@118dd84c", gate: "x" });
+  port.issues[0].labels = [];
+  const r = await reportFailure({ port, server: "staging", hash: H2, version: "master@118dd84d", gate: "y" });
+  assert.deepEqual([r.action, r.issue], ["updated", 101]);
+  assert.equal(port.issues.length, 1);
+  assert.deepEqual(port.queries.at(-1), { label: undefined, state: "open" });
+  assert.equal((await reportPass({ port, server: "staging", hash: H2 })).closed[0], 101);
+});
+
+test("E: marker spoofing: the marker alone (someone else's issue, no label) is never adopted; the label or the bot author is", async () => {
+  const port = fakeIssues();
+  const spoof = (number, server, extra) => ({ number, title: server === "staging" ? STAGING_TITLE : `Server v1.34.5 needs attention (adapter ${H1})`, body: marker(server === "staging" ? "staging" : H1), labels: [], state: "open", comments: [], ...extra });
+  // by a stranger, unlabelled: ignored for both servers
+  port.issues.push(spoof(7, "production", { author: "mallory" }), spoof(8, "staging", { author: "mallory" }));
+  assert.equal((await fail1(port)).action, "created");
+  assert.equal((await reportFailure({ port, server: "staging", hash: H2, gate: "x" })).action, "created");
+  await reportPass({ port, server: "production", hash: H1 });
+  await reportPass({ port, server: "staging", hash: H2 });
+  assert.equal(port.issues.find((i) => i.number === 7).state, "open");
+  assert.equal(port.issues.find((i) => i.number === 8).state, "open");
+  assert.equal(port.issues.find((i) => i.number === 7).comments.length, 0);
+  // by a stranger WITH the label (triage rights): adopted
+  const p2 = fakeIssues();
+  p2.issues.push(spoof(9, "production", { author: "maintainer", labels: ["adapter-watch"] }));
+  assert.deepEqual([(await fail1(p2)).action, p2.issues.length], ["updated", 1]);
+  // by the bot without the label: adopted
+  const p3 = fakeIssues();
+  p3.issues.push(spoof(10, "production", { author: "github-actions[bot]" }));
+  assert.deepEqual([(await fail1(p3)).action, p3.issues.length], ["updated", 1]);
+});
+
+test("REST: findIssues returns the author login and label names", async () => {
+  const f = fakeFetch(() => ({ status: 200, body: [{ number: 1, title: "t", state: "open", body: "b", user: { login: "github-actions[bot]" }, labels: [{ name: "adapter-watch" }, "x"] }] }));
+  const r = await createGithubPort({ repo: REPO, token: TOKEN, fetch: f }).findIssues({ state: "open" });
+  assert.deepEqual([r.issues[0].author, r.issues[0].labels], ["github-actions[bot]", ["adapter-watch", "x"]]);
 });
 
 test("M2: lookalike issues without the watcher's marker are never adopted, updated or closed", async () => {
