@@ -20,6 +20,8 @@ export async function startFakePusher({
   joinFirstMs = 0, // >0: the first connection joins, then is dropped after this many ms
   proto = "proto/wa-1.34/messages.proto",
   acceptHashes = null, // given: reject (errorScreen) any /ws/room whose `version` query isn't listed; GET / serves a home page carrying the first one
+  pageHash = null, // with acceptHashes: the hash the home page advertises instead of acceptHashes[0] (a server that announces one hash and takes another)
+  afterFirstJoin = null, // with acceptHashes: { acceptHashes, pageHash? } swapped in once the first client has joined; joinFirstMs then drops that socket (the server "upgrades" while we are up)
 } = {}) {
   const root = await protobuf.load(path.join(__dirname, "..", "..", proto));
   const S2C = root.lookupType("ServerToClientMessage");
@@ -43,7 +45,8 @@ export async function startFakePusher({
   const joinedFrame = () =>
     framer._wrap(S2C.encode(S2C.fromObject({ roomJoinedMessage: { currentUserId: 1 } })).finish());
 
-  const stats = { logins: 0, connections: 0, versions: [] };
+  const stats = { logins: 0, connections: 0, versions: [], joins: 0 };
+  const accept = { hashes: acceptHashes, pageHash };
   const server = http.createServer((req, res) => {
     res.setHeader("content-type", "application/json");
     if (req.method === "POST" && req.url.startsWith("/anonymLogin")) {
@@ -52,7 +55,7 @@ export async function startFakePusher({
     }
     if (acceptHashes && req.method === "GET" && req.url === "/") {
       res.setHeader("content-type", "text/html");
-      return res.end(`<html><head><meta name="wa-api-version" content="${acceptHashes[0]}"></head><body>v9.9.9</body></html>`);
+      return res.end(`<html><head><meta name="wa-api-version" content="${accept.pageHash ?? accept.hashes[0]}"></head><body>v9.9.9</body></html>`);
     }
     res.end("{}");
   });
@@ -62,8 +65,13 @@ export async function startFakePusher({
     if (acceptHashes) {
       const v = new URL(req.url, "http://x").searchParams.get("version");
       stats.versions.push(v);
-      if (acceptHashes.includes(v)) {
+      if (accept.hashes.includes(v)) {
         ws.send(joinedFrame());
+        if (afterFirstJoin && stats.joins++ === 0) {
+          accept.hashes = afterFirstJoin.acceptHashes;
+          accept.pageHash = afterFirstJoin.pageHash ?? null;
+          if (joinFirstMs > 0) setTimeout(() => ws.terminate(), joinFirstMs);
+        }
         return;
       }
       ws.send(frame());

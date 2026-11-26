@@ -8,6 +8,7 @@ import {
   ADAPTERS,
   matchVersion,
   resolveAdapter,
+  isBuiltinHash,
 } from "../src/adapters/index.mjs";
 
 // Whatever sha wa-master currently tracks — so a staging refresh doesn't break these tests.
@@ -241,4 +242,51 @@ test("WorkAdventureClient.connect hands its cachedFor option to resolveAdapter; 
   assert.match(client, /cachedFor:\s*this\._cachedFor/);
   const daemon = fs.readFileSync(path.join(dir, "wa-daemon.mjs"), "utf8");
   assert.match(daemon, /cachedFor:\s*\(h\)\s*=>\s*loadCached\(h,\s*\{\s*builtins:\s*ADAPTERS\s*\}\)/);
+});
+
+// --- one built-in hash check, and the hash to send (#185) ---
+
+test("isBuiltinHash is true for every built-in hash, first or not, and false otherwise", () => {
+  for (const a of Object.values(ADAPTERS)) for (const h of a.apiVersionHashes) assert.equal(isBuiltinHash(h), true, h);
+  assert.equal(isBuiltinHash("62e25483"), true);
+  assert.equal(isBuiltinHash("5ec0de01"), false);
+  assert.equal(isBuiltinHash(undefined), false);
+  assert.equal(isBuiltinHash(null), false);
+});
+
+test("resolveAdapter: the hash to send is the probed one when the chosen adapter lists it", async () => {
+  const r = await resolveAdapter({
+    roomUrl: "https://x.example/_/a/b",
+    probeFn: async () => ({ kind: "release", minor: "1.34", raw: "v1.34.2", hash: "62e25483" }),
+  });
+  assert.equal(r.adapter, ADAPTERS["wa-1.34"]);
+  assert.equal(r.hash, "62e25483");
+});
+
+test("resolveAdapter: an unknown probed hash is never the hash to send", async () => {
+  const r = await resolveAdapter({ roomUrl: "https://x.example/_/a/b", probeFn: unknownHashProbe });
+  assert.equal(r.hash, undefined);
+});
+
+test("resolveAdapter: probedHint stands in when the probe fails (built-in hash picks its adapter)", async () => {
+  const r = await resolveAdapter({ roomUrl: "https://x.example/_/a/b", probeFn: async () => null, probedHint: "62e25483" });
+  assert.equal(r.adapter, ADAPTERS["wa-1.34"]);
+  assert.equal(r.hash, "62e25483");
+  assert.equal(r.warn, undefined);
+});
+
+test("resolveAdapter: probedHint finds the cached adapter when the second page GET fails", async () => {
+  const r = await resolveAdapter({
+    roomUrl: "https://x.example/_/a/b", probeFn: async () => null, probedHint: "deadbeef", cachedFor: async () => cachedAdapter,
+  });
+  assert.equal(r.adapter, cachedAdapter);
+});
+
+test("resolveAdapter: a live probe's hash wins over the hint", async () => {
+  const r = await resolveAdapter({
+    roomUrl: "https://x.example/_/a/b", probedHint: "deadbeef", cachedFor: async () => cachedAdapter,
+    probeFn: async () => ({ kind: "release", minor: "1.34", raw: "v1.34.4", hash: "f4cfe455" }),
+  });
+  assert.equal(r.adapter, ADAPTERS["wa-1.34"]);
+  assert.equal(r.hash, "f4cfe455");
 });

@@ -11,7 +11,9 @@ import { fetchIndex, fetchAdapterFile, catalogUrl } from "./client.mjs";
 import { saveCached, loadCached } from "./store.mjs";
 import { buildAdapter } from "./schema.mjs";
 
-const unavailable = (reason) => ({ status: "unavailable", reason });
+// The reason can carry text from the network (an error message, a response), and it is printed:
+// sanitised and capped like a gate detail.
+const unavailable = (reason) => ({ status: "unavailable", reason: gateDetail(reason) ?? "unknown" });
 
 /** One line out of a needs-attention placeholder's `gate` (a string or an object summary). */
 // The text is untrusted and ends up on the terminal: control characters become
@@ -26,19 +28,28 @@ export function gateDetail(gate) {
   return text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL)}…` : text;
 }
 
+/**
+ * `timeoutMs` is ONE budget for the whole recovery (page, index, file), not per fetch; the
+ * time spent waiting for the person's answer is not charged to it. Without it each fetch
+ * keeps its own default timeout. `isBuiltinHash` is injected (this module must not import
+ * src/adapters/index.mjs); it defaults to checking `builtins`.
+ */
 export async function recoverAdapter({
   roomUrl, mode, ask, onAlways, fetch, indexUrl = catalogUrl(), dir, builtins, matchRelease, timeoutMs, log = () => {},
+  isBuiltinHash = (h) => Object.values(builtins).some((a) => a.apiVersionHashes?.includes(h)),
 }) {
+  let deadline = timeoutMs == null ? null : Date.now() + timeoutMs;
+  const left = () => (deadline == null ? undefined : Math.max(1, deadline - Date.now()));
   try {
-    const version = await readServerVersion(roomUrl, { fetch, timeoutMs, matchRelease });
+    const version = await readServerVersion(roomUrl, { fetch, timeoutMs: left(), matchRelease });
     const hash = version?.hash;
     if (!hash) return unavailable("could not read the server's version hash");
 
-    if (Object.values(builtins).some((a) => a.apiVersionHashes?.includes(hash))) return { status: "known", hash };
+    if (isBuiltinHash(hash)) return { status: "known", hash };
     // Known only if the cache file actually loads; a bad file is overwritten below.
     if (await loadCached(hash, { dir, builtins })) return { status: "known", hash };
 
-    const idx = await fetchIndex({ url: indexUrl, fetch, timeoutMs });
+    const idx = await fetchIndex({ url: indexUrl, fetch, timeoutMs: left() });
     if (!idx.ok) return unavailable(idx.reason);
     const entry = idx.index.entries[hash];
     if (!entry) return { status: "unsupported", hash, reason: "no-entry" };
@@ -50,7 +61,9 @@ export async function recoverAdapter({
 
     if (mode === "ask") {
       // No way to ask means no consent: never download silently.
+      const asked = Date.now();
       const answer = ask ? await ask(`This server has a new world adapter for ${version.release ?? hash}. Download it?`) : "no";
+      if (deadline != null) deadline += Date.now() - asked; // thinking time is not network time
       // Fail closed: only an exact "yes" or "always" is consent.
       if (answer !== "yes" && answer !== "always") return { status: "declined", hash };
       if (answer === "always") {
@@ -58,7 +71,7 @@ export async function recoverAdapter({
       }
     }
 
-    const got = await fetchAdapterFile({ indexUrl: idx.url, hash, entry, builtins, fetch, timeoutMs });
+    const got = await fetchAdapterFile({ indexUrl: idx.url, hash, entry, builtins, fetch, timeoutMs: left() });
     if (!got.ok) return unavailable(got.reason);
     await saveCached(hash, got.text, { dir });
     return { status: "applied", hash, adapter: buildAdapter(got.file, builtins) };

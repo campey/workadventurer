@@ -52,8 +52,8 @@ async function freePort() {
   return port;
 }
 
-async function withSetup(mode, body, { entries = true, env = {} } = {}) {
-  const pusher = await startFakePusher({ acceptHashes: [NEW_HASH] });
+async function withSetup(mode, body, { entries = true, env = {}, pusherOpts = { acceptHashes: [NEW_HASH] } } = {}) {
+  const pusher = await startFakePusher(pusherOpts);
   const catalog = await startCatalog({ entries });
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "wa-daemon-recovery-"));
   const port = await freePort();
@@ -140,4 +140,58 @@ test("auto with an adapter file: a refused candidate is not replaced from the ca
   } finally {
     fs.rmSync(file, { force: true });
   }
+});
+
+// --- #186: the reconnect path and the second refusal ---
+
+const BUILTIN = "f4cfe455";
+const OTHER = "feedbeef"; // a hash the server takes but the catalog knows nothing about
+const daemonState = async (port) => { try { return (await fetch(`http://127.0.0.1:${port}/state`)).ok; } catch { return false; } };
+
+test("auto, reconnect: the server upgrades while we are up -> recover once, reconnect with the catalog adapter", async () => {
+  await withSetup("auto", async ({ pusher, home, port, output }) => {
+    const rejoined = await until(() => pusher.stats.versions.includes(NEW_HASH) && pusher.stats.joins >= 2 || pusher.stats.versions.at(-1) === NEW_HASH);
+    assert.ok(rejoined, `never reconnected with the catalog adapter:\n${output()}`);
+    assert.ok(await until(() => daemonState(port)), output());
+    assert.deepEqual(pusher.stats.versions.slice(0, 2), [BUILTIN, BUILTIN]);
+    assert.equal(pusher.stats.versions.at(-1), NEW_HASH);
+    assert.ok(fs.existsSync(path.join(home, ".workadventurer", "adapters", `${NEW_HASH}.json`)));
+  }, { pusherOpts: { acceptHashes: [BUILTIN], joinFirstMs: 300, afterFirstJoin: { acceptHashes: [NEW_HASH] } } });
+});
+
+test("auto, reconnect: no catalog entry -> the daemon gives up and exits REFUSED_EXIT", async () => {
+  await withSetup("auto", async ({ pusher, exited, output }) => {
+    const code = await raceTimeout(exited, 20000);
+    assert.equal(code, REFUSED_EXIT, output());
+    assert.match(output(), /reconnect gave up/);
+    assert.match(output(), /no adapter for this server version yet/);
+    assert.equal(pusher.stats.versions[0], BUILTIN);
+  }, { entries: false, pusherOpts: { acceptHashes: [BUILTIN], joinFirstMs: 300, afterFirstJoin: { acceptHashes: [NEW_HASH] } } });
+});
+
+test("auto, initial connect: the catalog adapter is also rejected -> one retry, then REFUSED_EXIT", async () => {
+  await withSetup("auto", async ({ pusher, exited, output }) => {
+    const code = await raceTimeout(exited, 15000);
+    assert.equal(code, REFUSED_EXIT, output());
+    assert.deepEqual(pusher.stats.versions, [BUILTIN, NEW_HASH], "one recovery per refusal, never a second");
+    assert.match(output(), /not retrying/);
+  }, { pusherOpts: { acceptHashes: [OTHER], pageHash: NEW_HASH } });
+});
+
+test("auto, reconnect: the catalog adapter is also rejected -> one retry, then REFUSED_EXIT", async () => {
+  await withSetup("auto", async ({ pusher, exited, output }) => {
+    const code = await raceTimeout(exited, 20000);
+    assert.equal(code, REFUSED_EXIT, output());
+    assert.equal(pusher.stats.versions.filter((v) => v === NEW_HASH).length, 1, "the recovered adapter is tried once");
+    assert.equal(pusher.stats.versions.at(-1), NEW_HASH);
+    assert.match(output(), /reconnect gave up/);
+  }, { pusherOpts: { acceptHashes: [BUILTIN], joinFirstMs: 300, afterFirstJoin: { acceptHashes: [OTHER], pageHash: NEW_HASH } } });
+});
+
+test("auto: an unreachable catalog logs the sanitised reason, not just 'unavailable'", async () => {
+  await withSetup("auto", async ({ exited, output }) => {
+    const code = await raceTimeout(exited, 15000);
+    assert.equal(code, 4, output());
+    assert.match(output(), /adapter recovery: unavailable \(index: [^)\n]+\)/);
+  }, { env: { WA_CATALOG_URL: "http://127.0.0.1:1/catalog/index.json" } });
 });

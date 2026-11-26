@@ -283,3 +283,82 @@ test("process: wa join with no TTY and mode ask exits 4 and says how to allow it
   assert.match(out, /WA_ADAPTER_UPDATES=auto/);
   assert.equal(fs.existsSync(path.join(home, ".workadventurer", "adapters")), false);
 });
+
+// --- #187 follow-ups ---
+
+test("unavailable: the reason is sanitised (no control characters, capped)", async () => {
+  setup({ entry: okEntry() });
+  const failing = (msg) => async (u) => {
+    if (String(u).endsWith("/")) return new Response(page(HASH, "v1.99.0"));
+    throw new Error(msg);
+  };
+  const o = await run({ fetch: failing("boom\x1b[2J\nline2") });
+  assert.equal(o.status, "unavailable");
+  assert.doesNotMatch(o.reason, /[\x00-\x1f\x7f-\x9f]/);
+  assert.match(o.reason, /boom/);
+  const long = await run({ fetch: failing("y".repeat(5000)) });
+  assert.ok(long.reason.length <= 201, long.reason.length);
+});
+
+test("the timeout is one total budget across the page, the index and the file", async () => {
+  setup({ entry: okEntry() });
+  const slow = (body, type) => (req, res) => setTimeout(() => { res.writeHead(200, { "content-type": type }); res.end(body); }, 150);
+  handlers.set("/", slow(page(HASH), "text/html"));
+  handlers.set("/catalog/index.json", slow(JSON.stringify({ schema: 1, updated: "x", entries: { [HASH]: okEntry() } }), "application/json"));
+  // Each fetch alone (150 ms) fits in 250 ms; the two together do not.
+  const t = Date.now();
+  const o = await run({ timeoutMs: 250 });
+  assert.equal(o.status, "unavailable");
+  assert.match(o.reason, /timed out/);
+  assert.ok(Date.now() - t < 450, `took ${Date.now() - t} ms`);
+  // With room for all three fetches it works.
+  handlers.set("/catalog/adapters/" + HASH + ".json", slow(text, "application/json"));
+  const ok = await run({ timeoutMs: 2000 });
+  assert.equal(ok.status, "applied");
+});
+
+test("the time spent waiting for the person's answer is not charged to the budget", async () => {
+  setup({ entry: okEntry() });
+  const o = await run({ mode: "ask", timeoutMs: 400, ask: async () => { await new Promise((r) => setTimeout(r, 600)); return "yes"; } });
+  assert.equal(o.status, "applied");
+});
+
+test("a built-in hash is decided by the injected isBuiltinHash", async () => {
+  setup({ entry: okEntry() });
+  const o = await run({ isBuiltinHash: (h) => h === HASH, ask: boom });
+  assert.deepEqual(o, { status: "known", hash: HASH });
+  assert.ok(!seen.includes("/catalog/index.json"), "no catalog fetch for a built-in hash");
+});
+
+test("a repo rename (301 on the index) is unavailable with the new host named", async () => {
+  setup({ entry: okEntry() });
+  handlers.set("/catalog/index.json", (req, res) => { res.writeHead(301, { location: "https://example.org/x/y" }); res.end(); });
+  const o = await run();
+  assert.equal(o.status, "unavailable");
+  assert.equal(o.reason, "index: the catalog moved (HTTP 301 to example.org)");
+});
+
+test("process: wa join says why the catalog could not be checked and carries on (#187)", async () => {
+  setup({ entry: okEntry() });
+  handlers.delete("/catalog/index.json"); // 404
+  const home = tmp();
+  const probe = net.createServer();
+  await new Promise((r) => probe.listen(0, "127.0.0.1", r));
+  const freePort = probe.address().port;
+  await new Promise((r) => probe.close(r));
+  const child = spawn(process.execPath, [WA, "join"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"),
+      WA_ROOM: base + "/room", WA_CATALOG_URL: `${base}/catalog/index.json`, WA_PUSHER_URL: "http://127.0.0.1:1", // the daemon it starts cannot connect and exits
+      WA_ADAPTER_UPDATES: "auto", WA_DAEMON_PORT: String(freePort), WA_VERSION: "", WA_TARGET: "auto",
+    },
+  });
+  let out = "";
+  child.stdout.on("data", (d) => (out += d));
+  child.stderr.on("data", (d) => (out += d));
+  const timer = setTimeout(() => child.kill("SIGKILL"), 20000);
+  await new Promise((r) => child.on("exit", r));
+  clearTimeout(timer);
+  assert.match(out, /could not check the adapter catalog \(index: HTTP 404\); carrying on/);
+});

@@ -703,7 +703,15 @@ A route's waypoints are tile **centres**, so it ends up to about 22 px from the 
   placeholder entry; its `gate` text is shown with control characters stripped and
   capped at about 200 characters), or `an adapter for this server version (<hash>) is
   available but was not downloaded; ...` (declined, or `never`, each saying how to
-  allow it). If the page or the catalog can't be read, `wa join` carries on as before.
+  allow it). If the page or the catalog can't be read, `wa join` carries on as before, now saying why
+  (`could not check the adapter catalog (<reason>); carrying on`; the daemon logs `adapter recovery: unavailable (<reason>)`;
+  the reason is sanitised like a gate detail). The 3 s pre-flight timeout is one budget for the page, the index and the file
+  (the time spent at the y/N prompt is not charged). A 3xx from the catalog is a failure by design and is never followed, but it
+  names the new host (`the catalog moved (HTTP 301 to <host>)`), so a repo rename is diagnosable.
+- **Which hash is sent (#185).** The handshake sends the hash the server announced when the chosen adapter lists it (first or
+  not), else the adapter's first: after a rollback to v1.34.2 the server announces `62e25483`, which wa-1.34 lists second.
+  `wa join` hands the hash it read to the daemon (`WA_PROBED_HASH`) so a failed second home-page GET cannot defeat a cached
+  adapter. One `isBuiltinHash` (`src/adapters/index.mjs`) is the "is this built in" test; `recoverAdapter` takes it injected.
 - **Setting and consent.** The setting is `adapterUpdates` in the config file or
   `WA_ADAPTER_UPDATES`. `ask` (the default) prompts `[y/N/always]`; with no terminal
   (stdin or stderr not a TTY) the answer is no, never a silent download. `auto`

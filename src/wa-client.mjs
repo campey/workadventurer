@@ -59,6 +59,10 @@ export class WorkAdventureClient extends EventEmitter {
     // An already-built adapter from an explicit adapter file (--adapter-file), supplied by the
     // outer layer like cachedFor; resolveAdapter ranks it above the probe but below a target override.
     this._fileAdapter = opts.fileAdapter ?? undefined;
+    // A server hash `wa join`'s pre-flight already read (#185); resolveAdapter uses it when this
+    // client's own probe fails. The hash actually sent in the handshake is `_sendHash`.
+    this._probedHint = opts.probedHint ?? undefined;
+    this._sendHash = undefined;
     // Driven-port seam: swap the network (recorders, fakes). Defaults are the real ones.
     this._fetch = opts.fetch ?? ((...a) => globalThis.fetch(...a));
     this._WebSocket = opts.WebSocketImpl ?? WebSocket;
@@ -172,7 +176,7 @@ export class WorkAdventureClient extends EventEmitter {
     u.protocol = u.protocol.replace("http", "ws");
     u.searchParams.set("roomId", this.cfg.roomUrl);
     u.searchParams.append("characterTextureIds", this.cfg.wokaId);
-    u.searchParams.set("version", this.cfg.version || this.adapter.apiVersionHashes[0]);
+    u.searchParams.set("version", this.cfg.version || this._sendHash || this.adapter.apiVersionHashes[0]);
     u.searchParams.set("roomName", "");
     u.searchParams.set("cameraState", "false");
     u.searchParams.set("microphoneState", this.micOn ? "true" : "false");
@@ -272,13 +276,15 @@ export class WorkAdventureClient extends EventEmitter {
 
   async connect() {
     if (!this.adapter) {
-      const { adapter, why, warn } = await resolveAdapter({
+      const { adapter, why, warn, hash } = await resolveAdapter({
         roomUrl: this.cfg.roomUrl,
         override: this._target,
         cachedFor: this._cachedFor,
         fileAdapter: this._fileAdapter,
+        probedHint: this._probedHint,
       });
       this.adapter = adapter;
+      this._sendHash = hash;
       this.emit("log", `${warn ? "⚠ " : ""}adapter ${adapter.id} (${why})`);
     }
     if (this.adapter.envelope !== "seq-len-v1") {
