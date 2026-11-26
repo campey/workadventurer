@@ -44,6 +44,17 @@ done in the watcher; confirm and close).
   entry (never rewritten for an existing one) and preserved across rebuilds. Backfill the current entries from git history
   (commit date of each adapter file) in one catalog commit made by the same script run, no network. Both clients ignore
   unknown fields today; the validators keep it only when it parses as an instant.
+- **One hash on both servers (seen live 2026-11-26):** production moved to v1.35.0 and announced hash `dcadccc6`, which the
+  watcher had already published from staging (`master@621f2bf2`, `server: staging`, gated on staging only: no live
+  scenarios). Today `decide` skips it as "already ok", so production never gets its own gate. Add: when a server announces
+  an `ok` hash that has no record for *that* server, gate it on that server once (production includes the live scenarios);
+  record the outcome in the index entry only (the adapter file stays byte-identical: the publish step must keep refusing to
+  replace an existing adapter file) as an optional `seenOn` list of `{server, version, checked (ISO), gate: "passed" | the
+  failing step text}`; a failed production gate opens the production issue ("Server v1.35.0 needs attention (adapter
+  <hash>)") but does not demote the adapter (clients still apply it, and staging may use it). Clients ignore `seenOn`.
+  Also make `selfcheck` run the same catalog pre-flight as `wa join` (honouring `WA_ADAPTER_UPDATES`, default `ask`
+  = no prompt in a script, so a script run needs `WA_ADAPTER_UPDATES=auto`), so `selfcheck --target production` works
+  on a server newer than the built-ins instead of failing with NEW_VERSION.
 - **Staging issue without its label:** staging issues are found by label only, so removing the label makes a duplicate.
   Use the same unlabelled marker-based fallback production has.
 - **Marker spoofing:** adopt an issue only if it carries the marker AND was authored by the Actions bot or carries the
