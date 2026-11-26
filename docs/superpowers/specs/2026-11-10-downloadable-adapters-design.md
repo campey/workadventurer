@@ -24,6 +24,14 @@ The sections below are the design as approved. What was built differs in these w
 - **Android applies any `ok` entry's hash, and the handshake query only.** It does not take the entry's other behaviours.
 - **Per-entry `added`** (when the adapter was first listed `ok`) is in the index, used by Android's consent dialog and by
   staging pruning.
+- **Android UI**: Settings (ask / auto / never) on the Join screen, and a dialog showing the server version, the server
+  hash, the adapter file URL and "Adapter added" (or "Catalog updated" for an entry without `added`).
+- **`selfcheck` runs the catalog pre-flight**, as `wa join` does.
+- **A cached adapter for the server's hash is used without asking** again.
+- **The daemon under `--keep-alive`** with a mode other than `auto` only logs the refusal and how to allow it; `wa join`
+  does the asking.
+- **Failing `seenOn` records carry `checked` and the code-fingerprint `commit`**, so they retest like a placeholder.
+- **`WA_CATALOG_URL`** overrides the catalog index URL (the gate and tests use it).
 - **Staging pruning**: the publishing PR also removes older staging entries (keeping the newest five, and never a built-in,
   production or just-announced hash).
 
@@ -98,7 +106,7 @@ behaves as it does today.
 
 ### 1. The catalog (`catalog/`)
 
-- `catalog/index.json`: `{ "schema": 1, "updated": "<ISO time>", "entries": { "<apiVersionHash>": { "status": "ok" | "needs-attention", "server": "production" | "staging", "version": "1.34.4" or "master@10b19f83", "file": "adapters/<hash>.json", "sha256": "<of the file>", "gate": {...}, "issue": <number|null>, "added": "<ISO instant, optional>", "seenOn": [ { "server", "version", "checked": "<ISO>", "gate": "passed" | "<failing step>", "commit": "<code fingerprint, failing records only>" } ] (optional) } } }`
+- `catalog/index.json`: `{ "schema": 1, "updated": "<ISO time>", "entries": { "<apiVersionHash>": { "status": "ok" | "needs-attention", "server": "production" | "staging", "version": "1.34.4" or "master@10b19f83", "file": "adapters/<hash>.json", "sha256": "<of the file>", "gate": <capped string, null for ok entries>, "issue": <number|null>, "added": "<ISO instant, optional>", "seenOn": [ { "server", "version", "checked": "<ISO>", "gate": "passed" | "<failing step>", "commit": "<code fingerprint, failing records only>" } ] (optional) } } }`
   `added`: when the adapter was first listed `ok` (set once by `rebuildIndex`; clients keep it only when it parses as an instant). `seenOn`: outcomes of gating an `ok` hash on the OTHER server, recorded in the index only (the adapter file never changes); clients ignore it. See `docs/field-notes.md` "When the watcher says needs attention".
 - `catalog/adapters/<hash>.json`: the adapter data, shaped like today's `wa-1.34` adapter minus code and proto path:
   `{ "schema": 1, "id", "waVersion", "apiVersionHash": "<one hash, equal to its index key>", "protoFamily": "wa-1.34", "meeting": {...}, "movement": {...}, "handshake": { "query": { "<name>": "<value>" } } }`
@@ -149,15 +157,14 @@ On the server's "new version" refusal (CLI: `isVersionRejection`; Android: the e
 join... please refresh"):
 
 1. Read the server's hash and release string from its home page. If that fails, behave as today (report the refusal).
-   Two pieces do not exist yet and are part of the work: the Node `probeVersion` only parses the release string (it
-   must also read the `wa-api-version` tag), and the Android app turns the error screen into a plain message and drops
-   its `code` (`PusherConnection.kt`), so it must keep a typed "new version" refusal. Reading the home page and the small
+   Two pieces were missing and are now built: the Node `probeVersion` also reads the `wa-api-version` tag, and the Android
+   app keeps a typed "new version" refusal instead of dropping the error screen's `code` (`PusherConnection.kt`). Reading the home page and the small
    index is not "downloading an adapter": consent covers fetching and applying the adapter file (my call).
 2. Fetch `index.json`. No entry for the hash: say "no adapter for this server version yet" and stop (no retry storm).
 3. Entry `needs-attention`: say "this server version isn't supported yet, it needs attention" and stop.
 4. Entry `ok`: if the user's saved choice is "auto", go on. Otherwise ask. CLI: a y / N / always prompt when attached to
    a terminal; in the daemon (no terminal) the refusal is reported with the exact command or flag to allow it. Android:
-   a dialog with Download and "Don't ask again". The connecting happens in the detached daemon, so `wa join` (which is
+   a dialog with Download and Cancel and an "Auto-download next time" checkbox (ticked + Download persists `auto`). The connecting happens in the detached daemon, so `wa join` (which is
    attached to the terminal) learns of the refusal from the daemon and does the prompt and the retry itself; under
    `--keep-alive` a bump mid-session with the choice "ask" exits with the existing refusal code rather than waiting, and
    with "auto" the daemon applies the adapter by itself (my call).

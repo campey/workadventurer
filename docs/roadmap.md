@@ -30,7 +30,7 @@ repo once G4 passes. Progress is tracked as learning gates, one at a time:
 | G1 | Does presence survive on a phone (screen locked)? | done |
 | G2 | Can it move (pathfinding port)? | done |
 | G3 | Two-way mesh audio with browser peers? | live-checked; review minors in #105 |
-| G4 | LiveKit escalation and switch-back (4+ person meetings) | in progress (#134): main hears LiveKit invitations and logs offers it cannot answer; the LiveKit join itself is on the `android-livekit-escalation` branch, in review, not on `main` yet |
+| G4 | LiveKit escalation and switch-back (4+ person meetings) | in progress (#134): main only logs the shape of an offer it cannot answer (dcd8965); hearing and logging LiveKit invitations and joining the LiveKit room are on the `android-livekit-escalation` branch, not yet on `main` |
 | G5 | Hands-free seam (media-session mute, TalkBack, Bluetooth earbuds) | partly done: Bluetooth audio routing (#164). Checked on hardware by the maintainer: a Bluetooth headset works, stays stable on long calls, and switching between audio sources works. Not done: media-key (play/pause) mute, TalkBack |
 
 Audio routing (what is built for G5): speaker by default, a headset takes over when it connects, the microphone

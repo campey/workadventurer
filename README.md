@@ -260,12 +260,13 @@ proven sufficient. When the server answers with a hash no built-in adapter knows
 - **Android**: a `NEW_VERSION` refusal triggers one recovery attempt with a consent dialog and a Settings choice
   (ask / auto / never); see `android/docs/field-notes.md` "How the app recovers".
 - **`--adapter-file <f>`** (`wa join`, `wa selfcheck`; `WA_ADAPTER_FILE`; `adapterFile` config key) loads a candidate
-  adapter file that is not in the catalog. The watcher's gate uses it to test a new hash before publishing.
+  adapter file that is not in the catalog. `WA_CATALOG_URL` points the clients at a different `index.json` (tests, the gate). The watcher's gate uses it to test a new hash before publishing.
 - **The watcher** (`.github/workflows/adapter-watch.yml`, `scripts/watch/`) re-reads production's and
   staging's home pages every hour. For a hash the catalog does not have it runs the gate (proto-diff,
   `selfcheck`, the live scenarios on production, the Kotlin smoke) in a job with no write access; a second job then
   publishes the adapter to `catalog/` through a PR (pass), or records a needs-attention placeholder and opens an
-  issue (fail). The schedule only runs when the repository variable `ADAPTER_WATCH_ENABLED` is `true` (off by
+  issue (fail). The hourly schedule and the optional `wa-release` `repository_dispatch` hook (a push from WorkAdventure, never
+  trusted: the run re-reads the servers) only run when the repository variable `ADAPTER_WATCH_ENABLED` is `true` (off by
   default); the manual "Adapter watch" run always works. Design:
   [the spec](docs/superpowers/specs/2026-11-10-downloadable-adapters-design.md).
 

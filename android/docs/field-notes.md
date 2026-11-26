@@ -540,12 +540,15 @@ Emulator: Pixel-class AVD `Medium_Phone_API_35` (Android 15), debug APK, 2026-10
 
 The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when prod moved to v1.34.1 (hash `23c8eb8c` -> `b82fc568`, same `messages.proto`) the app showed "couldn't join... please refresh" (the server's NEW_VERSION error screen). Fixed by putting `b82fc568` first. Verified with `wa-cli` against prod: login, join, nav grid, walk to "Red Table" (ARRIVED). **Resolved:** the app now recovers from this on its own by fetching the hash from the adapter catalog (#126, #188); see "How the app recovers" below.
 
-### First real bump through the system (2026-11-26) [live]
+### First real bump through the system (2026-11-26)
 
 Production moved to v1.35.0 with hash `dcadccc6`, which the watcher had already published from staging (`master@621f2bf2`).
-The CLI and the app recover through the catalog with no release. `selfcheck --target production` needed the catalog
-pre-flight to pass on it (it has it now), and the production gate for that hash runs once, through `seenOn`
-(`docs/field-notes.md` "When the watcher says needs attention").
+- **Verified live (CLI only) [live]:** `selfcheck --target production` with `WA_ADAPTER_UPDATES=auto` applied the catalog
+  adapter on production v1.35.0. It needed the catalog pre-flight to do so (selfcheck has it now).
+- **The app [code]:** its recovery is covered by unit tests only; it has not yet been exercised against production
+  v1.35.0 on a device.
+- **Still to come:** the production gate for that hash through `seenOn` (`docs/field-notes.md` "When the watcher says
+  needs attention") happens on the first real, enabled run. `catalog/index.json` has no `seenOn` for `dcadccc6` yet.
 
 ## Adapter recovery, catalog client (#188, `:protocol` `catalog` package) [code]
 
