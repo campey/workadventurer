@@ -80,13 +80,29 @@ test("buildCandidate: production copies numbers and family, passes the schema", 
   assert.equal(validateAdapterFile(r.file, ADAPTERS).ok, true);
 });
 
-test("buildCandidate: staging is named master-<sha8>", async () => {
+test("buildCandidate: staging is named master-<sha8> and inherits production's numbers", async () => {
   const r = await buildCandidate({ hash: "33334444", version: "master@abcdef0123456789", server: "staging", catalogIndex: catalog, fetchBase });
   assert.equal(r.ok, true);
   assert.equal(r.file.waVersion, "master-abcdef01");
   assert.equal(r.file.server, "staging");
-  assert.deepEqual(r.file.meeting, { areaDwellMs: 1500, areaLingerMs: 2500 });
+  assert.equal(r.base, "f4cfe455");
+  assert.equal(r.file.protoFamily, "wa-master");
+  assert.deepEqual(r.file.meeting, { areaDwellMs: 0, areaLingerMs: 0 });
+  assert.deepEqual(r.file.movement, { walkPxPerS: 180, runPxPerS: 460 });
+  assert.equal(validateAdapterFile(r.file, ADAPTERS).ok, true);
   assert.equal(waVersionFor("staging", "master@118dd84c"), "master-118dd84c");
+});
+
+test("buildCandidate: staging with no ok production entry takes the newest staging numbers", async () => {
+  const stagingOnly = index({ d2d82672: ok("staging", "master@118dd84c", "adapters/d2d82672.json") });
+  const r = await buildCandidate({ hash: "33334444", version: "master@abcdef0", server: "staging", catalogIndex: stagingOnly, fetchBase });
+  assert.equal(r.ok, true);
+  assert.equal(r.base, "d2d82672");
+  assert.deepEqual(r.file.meeting, { areaDwellMs: 1500, areaLingerMs: 2500 });
+  assert.equal(r.file.movement, undefined);
+  // a needs-attention production entry is not a base
+  const attn = index({ ...stagingOnly.entries, aaaaaaa1: { status: "needs-attention", server: "production", version: "v1.35.0" } });
+  assert.equal((await buildCandidate({ hash: "33334444", version: "master@abcdef0", server: "staging", catalogIndex: attn, fetchBase })).base, "d2d82672");
 });
 
 test("buildCandidate: staging without a base falls back to wa-master; production without one fails", async () => {

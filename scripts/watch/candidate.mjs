@@ -136,11 +136,23 @@ export function normaliseVersion(server, version) {
 const NUMBER_KEYS = ["meeting", "movement", "handshake"];
 
 /**
+ * Where a staging candidate takes its behaviour numbers from: the newest `ok` PRODUCTION entry when one exists
+ * (production numbers are scenario-validated by the production gate; staging numbers never are, the staging gate
+ * runs no scenarios), else the newest ok staging entry, else null (built-in wa-master, no numbers).
+ * Production candidates use pickBase(index, "production") as before.
+ */
+export function pickNumbersBase(catalogIndex, server) {
+  if (server !== "staging") return pickBase(catalogIndex, server);
+  return pickBase(catalogIndex, "production") ?? pickBase(catalogIndex, "staging");
+}
+
+/**
  * Build the candidate adapter file for `hash` running `version` on `server`.
  * Base = the newest `ok` entry for that server (its file is fetched through
  * `fetchBase`, default: the catalog client, sha256-checked); its protoFamily and
- * behaviour numbers are copied. Staging with no base falls back to wa-master with
- * no numbers. Returns { ok: true, file, base } or { ok: false, reason }.
+ * behaviour numbers are copied. Staging takes the NUMBERS from the newest ok production entry when
+ * there is one (see pickNumbersBase), else the newest ok staging entry, else wa-master with
+ * no numbers; its protoFamily is always wa-master. Returns { ok: true, file, base } or { ok: false, reason }.
  */
 export async function buildCandidate({ hash, version, server, catalogIndex, indexUrl, fetch, builtins = ADAPTERS, fetchBase, useExisting = false }) {
   const get = fetchBase ?? ((h, entry) => fetchAdapterFile({ indexUrl, hash: h, entry, builtins, fetch }));
@@ -156,7 +168,7 @@ export async function buildCandidate({ hash, version, server, catalogIndex, inde
   }
   const waVersion = waVersionFor(server, version);
   if (!waVersion) return { ok: false, reason: `cannot name an adapter for ${server} version "${version}"` };
-  const base = pickBase(catalogIndex, server);
+  const base = pickNumbersBase(catalogIndex, server);
   let baseFile = null;
   if (base) {
     const got = await get(base.hash, base.entry);
@@ -171,7 +183,8 @@ export async function buildCandidate({ hash, version, server, catalogIndex, inde
     waVersion,
     apiVersionHash: hash,
     server,
-    protoFamily: baseFile?.protoFamily ?? "wa-master",
+    // A staging candidate always needs the wa-master proto family, whatever the (production) numbers base uses.
+    protoFamily: server === "staging" ? "wa-master" : (baseFile?.protoFamily ?? "wa-master"),
   };
   for (const k of NUMBER_KEYS) if (baseFile?.[k] !== undefined) file[k] = structuredClone(baseFile[k]);
   const checked = validateAdapterFile(file, builtins);
