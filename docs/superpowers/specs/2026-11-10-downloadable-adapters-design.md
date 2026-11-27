@@ -19,6 +19,9 @@ The sections below are the design as approved. What was built differs in these w
 - **`decide` is server-aware, and `seenOn` records a hash on both servers.** A hash published from one server's gate and
   later announced by the other is gated once on that server too (production includes the live scenarios); the outcome goes
   on the index entry as `seenOn`, never on the adapter file, and a failed `seenOn` opens an issue without demoting the entry.
+- **A staging candidate takes production's behaviour numbers** (newest `ok` production entry, else staging, else
+  wa-master; `protoFamily` stays `wa-master`), because the staging gate runs no scenarios and staging numbers were
+  never validated (`dcadccc6`, corrected by hand 2026-11-27; see `docs/field-notes.md`).
 - **`ADAPTER_WATCH_ENABLED`**: scheduled and dispatch runs only happen once this repository variable is `true`; manual runs
   always work.
 - **Android applies any `ok` entry's hash, and the handshake query only.** It does not take the entry's other behaviours.

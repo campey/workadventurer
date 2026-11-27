@@ -758,6 +758,12 @@ the index entry, and closes the issue. A fail merges a `needs-attention` placeho
 into `catalog/index.json` and opens or updates an issue. Both go through branch
 `adapter/<hash>`, touching only `catalog/` (`assertCatalogPaths`).
 
+**Staging adapters take production's behaviour numbers.** A staging candidate's `meeting` and `movement`
+come from the newest `ok` production entry's adapter file when one exists, else the newest `ok` staging
+entry, else the built-in wa-master (`pickNumbersBase` in `scripts/watch/candidate.mjs`); its `protoFamily`
+stays `wa-master`. Reason: the staging gate runs no scenarios, so staging numbers are never validated, while
+production numbers are. Staging-derived numbers broke `dcadccc6` (see "Correcting an `ok` adapter file by hand").
+
 - **The issue.** Production: one issue per hash, titled `Server v1.34.5 needs attention
   (adapter <hash>)` (just `Server needs attention (adapter <hash>)` with no version).
   Staging: ONE issue, `Staging needs attention`, rewritten to name the newest failing hash
@@ -869,6 +875,18 @@ into `catalog/index.json` and opens or updates an issue. Both go through branch
   by the usual triggers: `force`, code change, version change). `rebuildIndex` keeps only
   well-formed records (known server, valid version and instant, capped text, at most one per
   server). Staging pruning never deletes a hash either server announces in the run.
+- **Correcting an `ok` adapter file by hand.** An `ok` adapter file is immutable in normal operation:
+  the watcher never replaces one with different bytes. A manual correction is a PR that edits
+  `catalog/adapters/<hash>.json` and runs `node scripts/catalog-index.mjs` (recomputes the entry's
+  `sha256`, keeps `added`). The CLI caches an adapter file by hash (`~/.workadventurer/adapters/<hash>.json`)
+  and never re-validates it against the index, so anyone who already cached the old bytes keeps the
+  old numbers: delete that cache file (the cache must keep working offline, so there is no automatic
+  re-check). The Android app likewise keeps its old copy until the entry is refused (it clears its
+  cache via `forget` only then) or the app data is cleared. First such correction: `dcadccc6`
+  (2026-11-27). It was published from the staging gate with the staging base's numbers (meeting
+  1500/2500, no movement), which were never validated; production v1.35.0 runs the same hash and
+  failed the live "quick pass through a meeting area" scenario with them. Corrected to the
+  production numbers (meeting 0/0, movement 180/460), after which all live scenarios pass.
 - **`added` and staging pruning.** An `ok` index entry carries an optional `added` ISO instant:
   set by `rebuildIndex` the first time an entry is `ok` (a placeholder turning `ok` gets one),
   never rewritten for an existing entry, preserved across rebuilds together with `seenOn`. Clients keep
