@@ -676,7 +676,7 @@ A route's waypoints are tile **centres**, so it ends up to about 22 px from the 
 **With the catalog (#126).**
 
 - **Android does the same** (#188): a typed NEW_VERSION refusal triggers one recovery attempt that applies the catalog adapter's hash
-  and handshake query (nothing else), with an ask/auto/never setting and a Download / Don't ask again / Cancel dialog; see
+  and handshake query (nothing else), with an ask/auto/never setting and a consent dialog (Download, Cancel, an "Auto-download next time" checkbox); see
   `android/docs/field-notes.md` "How the app recovers".
 
 - **Candidate adapter from a file.** `--adapter-file <f>` (`wa join`, `wa selfcheck`,
@@ -703,7 +703,16 @@ A route's waypoints are tile **centres**, so it ends up to about 22 px from the 
   placeholder entry; its `gate` text is shown with control characters stripped and
   capped at about 200 characters), or `an adapter for this server version (<hash>) is
   available but was not downloaded; ...` (declined, or `never`, each saying how to
-  allow it). If the page or the catalog can't be read, `wa join` carries on as before.
+  allow it). If the page or the catalog can't be read, `wa join` carries on as before, now saying why
+  (`could not check the adapter catalog (<reason>); carrying on`; the daemon logs `adapter recovery: unavailable (<reason>)`;
+  the reason is sanitised like a gate detail). The 3 s pre-flight timeout is one budget for the page, the index and the file
+  (the time spent at the y/N prompt is not charged). A 3xx from the catalog is a failure by design and is never followed, but it
+  names the new host (`the catalog moved (HTTP 301 to <host>)`), so a repo rename is diagnosable.
+- **Which hash is sent (#185).** The handshake sends the hash the server announced when the chosen adapter lists it (first or
+  not), else the adapter's first: after a rollback to v1.34.2 the server announces `62e25483`, which wa-1.34 lists second.
+  `wa join` hands the hash it read to the daemon (`WA_PROBED_HASH`) so a failed second home-page GET cannot defeat a cached
+  adapter. One `isBuiltinHash` (`src/adapters/index.mjs`) is the "is this built in" test; `recoverAdapter` takes it injected.
+- **`selfcheck`** (`scripts/selfcheck.mjs`) runs the same pre-flight as `wa join` (skipped with `--adapter-file`, a non-auto `--target` or `WA_VERSION`), honouring `adapterUpdates`: default `ask` has no prompt in a script, so it says how to allow it and exits 4; `WA_ADAPTER_UPDATES=auto` applies and caches the adapter, so `selfcheck --target production` passes on a server newer than the built-ins.
 - **Setting and consent.** The setting is `adapterUpdates` in the config file or
   `WA_ADAPTER_UPDATES`. `ask` (the default) prompts `[y/N/always]`; with no terminal
   (stdin or stderr not a TTY) the answer is no, never a silent download. `auto`
@@ -749,17 +758,26 @@ the index entry, and closes the issue. A fail merges a `needs-attention` placeho
 into `catalog/index.json` and opens or updates an issue. Both go through branch
 `adapter/<hash>`, touching only `catalog/` (`assertCatalogPaths`).
 
+**Staging adapters take production's behaviour numbers.** A staging candidate's `meeting` and `movement`
+come from the newest `ok` production entry's adapter file when one exists, else the newest `ok` staging
+entry, else the built-in wa-master (`pickNumbersBase` in `scripts/watch/candidate.mjs`); its `protoFamily`
+stays `wa-master`. Reason: the staging gate runs no scenarios, so staging numbers are never validated, while
+production numbers are. Staging-derived numbers broke `dcadccc6` (see "Correcting an `ok` adapter file by hand").
+
 - **The issue.** Production: one issue per hash, titled `Server v1.34.5 needs attention
   (adapter <hash>)` (just `Server needs attention (adapter <hash>)` with no version).
   Staging: ONE issue, `Staging needs attention`, rewritten to name the newest failing hash
   and closed when a staging hash passes (staging's hash churns; per-hash issues would
   flood). The body holds the failing step as `name: detail` in a code fence, the candidate's
   `waVersion` and `protoFamily`, the run link, and a hidden marker
-  `<!-- adapter-watch:<hash|staging> -->`. Label `adapter-watch`. The watcher only edits or
-  closes an issue whose body carries its marker (anyone can file a lookalike), and if
-  the label is later removed it still finds a production issue by title plus marker, so it does
-  not open a duplicate (production only: the staging issue is found by label plus marker, so a
-  removed label there means a second staging issue). If several open issues match, the oldest is updated and the rest are
+  `<!-- adapter-watch:<hash|staging> -->`. Label `adapter-watch`. **Adoption rule (marker spoofing):** the watcher edits or closes an
+  open issue only if its body carries the marker AND it either carries the `adapter-watch`
+  label (only people with triage rights can add it) or was authored by `github-actions[bot]`
+  (`BOT_LOGIN`; `findIssues` returns the author login and label names). The marker alone is
+  not enough: anyone can paste it into a lookalike issue, and that issue is never edited or
+  closed. If the label is later removed, both targets still find their issue by title plus
+  marker plus the bot author (the unlabelled fallback search), so no duplicate is opened
+  (staging used to be label-only). If several open issues match, the oldest is updated and the rest are
   reported as warnings, never closed (a pass closes them all).
 - **The placeholder** in `catalog/index.json`: `status: "needs-attention"`, `server`,
   `version`, `gate` (the issue's failing step, control characters stripped), `issue`
@@ -830,8 +848,65 @@ into `catalog/index.json` and opens or updates an issue. Both go through branch
   repository variable `ADAPTER_WATCH_ENABLED` is `true` (Settings, Secrets and variables,
   Actions, Variables). Default OFF; a manual `workflow_dispatch` always runs. Setting it is the
   go-live step, after the Task 8 dry run.
-- **Not implemented:** pruning old staging entries (the spec says keep the newest five). Staging
-  hashes churn, so the catalog grows until that follow-up lands.
+- **One hash on both servers (`seenOn`).** A hash can be `ok` in the catalog (published after
+  gating on one server) and later be announced by the OTHER server (seen live 2026-11-26:
+  production v1.35.0 announced `dcadccc6`, published from staging `master@621f2bf2`, gated on
+  staging only, so with no live scenarios). `decide` used to skip it as "already ok". Now an `ok`
+  hash that a server announces and that has no record for THAT server (not the entry's own
+  `server`, no `seenOn` item for it) is gated there once, against the catalog's own adapter file
+  (`buildCandidate` with `useExisting`: the bytes clients apply, nothing rebuilt); production
+  includes the live scenarios. The outcome is written to the index entry ONLY, as the optional
+  list `seenOn: [{ server, version, checked (ISO), gate: "passed" | failing step text, commit? }]`
+  (`publish` with `seenOn`; the adapter file stays byte-identical, and `publish` still refuses to
+  replace an existing adapter file). A failing record carries `commit`, the code fingerprint, so
+  the code-change retest works like a placeholder's. A failed gate opens the normal issue for that
+  server (production: `Server v1.35.0 needs attention (adapter <hash>)`) but does NOT demote the
+  adapter: the entry stays `ok`, clients still apply it, and its own server may keep using it.
+  Loop-free: once `seenOn` has the server, a pass is final (not even `force` re-gates it) and a
+  failure is retested only on `force`, a code-fingerprint change or a version change, exactly like
+  a placeholder. The "no verdict" stale-issue closer only closes an issue for a hash that is `ok`
+  for that server (its own, or a passed `seenOn`), so a failed `seenOn` keeps its issue open. R13
+  ownership of `needs-attention` placeholders is unchanged. Clients ignore `seenOn` (the CLI drops
+  it from the parsed index; the Android parser ignores unknown fields).
+- **Undoing a wrong or forged `seenOn`.** A passed record is final: `force` does not re-gate it. If
+  one is wrong (a forged "pass" from a compromised gate job, or a gate that was too lenient), edit
+  `catalog/index.json` by hand through a PR: remove that `seenOn` record (the next run gates the
+  server's hash again as new) or set its `gate` to a failing text with a `commit` (then it retests
+  by the usual triggers: `force`, code change, version change). `rebuildIndex` keeps only
+  well-formed records (known server, valid version and instant, capped text, at most one per
+  server). Staging pruning never deletes a hash either server announces in the run.
+- **Correcting an `ok` adapter file by hand.** An `ok` adapter file is immutable in normal operation:
+  the watcher never replaces one with different bytes. A manual correction is a PR that edits
+  `catalog/adapters/<hash>.json` and runs `node scripts/catalog-index.mjs` (recomputes the entry's
+  `sha256`, keeps `added`). The CLI caches an adapter file by hash (`~/.workadventurer/adapters/<hash>.json`)
+  and never re-validates it against the index, so anyone who already cached the old bytes keeps the
+  old numbers: delete that cache file (the cache must keep working offline, so there is no automatic
+  re-check). The Android app likewise keeps its old copy until the entry is refused (it clears its
+  cache via `forget` only then) or the app data is cleared. First such correction: `dcadccc6`
+  (2026-11-27). It was published from the staging gate with the staging base's numbers (meeting
+  1500/2500, no movement), which were never validated; production v1.35.0 runs the same hash and
+  failed the live "quick pass through a meeting area" scenario with them. Corrected to the
+  production numbers (meeting 0/0, movement 180/460), after which all live scenarios pass.
+- **`added` and staging pruning.** An `ok` index entry carries an optional `added` ISO instant:
+  set by `rebuildIndex` the first time an entry is `ok` (a placeholder turning `ok` gets one),
+  never rewritten for an existing entry, preserved across rebuilds together with `seenOn`. Clients keep
+  it only when it parses as an instant (`isInstant`). The existing entries were backfilled once from
+  the commit that added each adapter file: `node scripts/catalog-index.mjs --backfill-added` (no
+  network; it names any date that is only a shallow-clone boundary commit, and skips files
+  with no history; this repo's clone was shallow but the adapter files' own commits were present).
+  **Pruning rule** (`scripts/watch/prune.mjs`, run by `publish` after a successful STAGING adapter
+  publish, in the same PR and the same commit as the new adapter): rank the `ok` entries with
+  `server: staging` by `added` (none counts as oldest), newest first, ties by higher hash newer,
+  the entry being published always first; those beyond the newest five are deleted (file and
+  index entry) unless protected. Never pruned: production entries (`server: production`, kept
+  forever), built-in hashes (`isBuiltinHash`, i.e. in the `src/adapters` hash lists), an entry with
+  any production `seenOn` record (production runs it), and the entry being published. Protected
+  entries still occupy a rank, so more than five can remain. Staging `needs-attention`
+  placeholders are dropped as soon as a new staging entry is `ok` (a placeholder has no date; the
+  new entry is newer than every one); production placeholders stay. Only
+  `catalog/adapters/<8 hex>.json` can be deleted: `assertCatalogDeletes` (the port's `commit` takes
+  `deletes`, sent as null-sha tree entries) refuses the index and anything else, so the watcher
+  still touches only `catalog/`. A failed merge puts the deleted files back locally.
 - **Repo settings it needs.** Settings, Actions, General: "Allow GitHub Actions to create and
   approve pull requests" ticked; `main` requires a PR with 0 approvals but **no required status checks** (a
   PR opened with the default token starts no workflows, so a required check would never

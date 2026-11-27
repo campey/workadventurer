@@ -20,8 +20,39 @@ const readJson = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
 const files = fs.readdirSync(path.join(catalogDir, "adapters")).filter((f) => f.endsWith(".json")).sort();
 const SEEDS = { "23c8eb8c": "production", b82fc568: "production", "62e25483": "production", f4cfe455: "production", d2d82672: "staging" };
 
-test("the seed has exactly the known hashes", () => {
-  assert.deepEqual(files, Object.keys(SEEDS).map((h) => `${h}.json`).sort());
+// The watcher adds entries after the seed (each one a new hash no built-in knows); the seed's own
+// entries must all still be there, and anything else must be a watcher addition in the index.
+const indexEntries = readJson(path.join(catalogDir, "index.json")).entries;
+const serverOf = (hash) => SEEDS[hash] ?? indexEntries[hash]?.server;
+
+test("the seed's hashes are all present, and every other file is an indexed watcher addition", () => {
+  for (const h of Object.keys(SEEDS)) assert.ok(files.includes(`${h}.json`), `${h} missing`);
+  for (const f of files) {
+    const hash = f.replace(".json", "");
+    if (!SEEDS[hash]) assert.equal(indexEntries[hash]?.status, "ok", `${f} is neither seed nor indexed`);
+  }
+});
+
+test("seed hashes agree with each proto SOURCE and the built-in hash lists (spec section 1)", () => {
+  const sourceHash = (dir) => fs.readFileSync(path.join(root, "proto", dir, "SOURCE"), "utf8").match(/^apiVersionHash:\s*([0-9a-f]{8})\s*$/m)?.[1];
+  // Each built-in adapter's own proto hash is in its list and, for the families the catalog mirrors, in the seed.
+  for (const [id, a] of Object.entries(ADAPTERS)) {
+    const h = sourceHash(a.protoPath.split("/")[1]);
+    assert.ok(h, `${id}: no apiVersionHash in its SOURCE`);
+    assert.ok(a.apiVersionHashes.includes(h), `${id}: SOURCE ${h} not in its apiVersionHashes ${a.apiVersionHashes}`);
+  }
+  // Every built-in hash that is a seed hash sits in the family its file names; every seed hash that the
+  // built-ins list at all is listed under exactly that family.
+  for (const hash of Object.keys(SEEDS)) {
+    const family = readJson(path.join(catalogDir, "adapters", `${hash}.json`)).protoFamily;
+    const owners = Object.entries(ADAPTERS).filter(([, a]) => a.apiVersionHashes.includes(hash)).map(([id]) => id);
+    assert.deepEqual(owners, [family], `${hash}: built-in owner(s) ${owners} vs file family ${family}`);
+  }
+  // And the reverse: every non-first built-in hash that production could announce is in the seed too.
+  for (const [id, a] of Object.entries(ADAPTERS)) {
+    if (id === "wa-1.33") continue; // old releases, never seeded
+    for (const h of a.apiVersionHashes) assert.ok(SEEDS[h], `${id} hash ${h} is not seeded`);
+  }
 });
 
 test("every seed file validates and its hash belongs to its protoFamily", () => {
@@ -30,8 +61,8 @@ test("every seed file validates and its hash belongs to its protoFamily", () => 
     const checked = validateAdapterFile(readJson(path.join(catalogDir, "adapters", f)), ADAPTERS);
     assert.equal(checked.ok, true, `${f}: ${checked.reason}`);
     assert.equal(checked.file.apiVersionHash, hash);
-    assert.equal(checked.file.server, SEEDS[hash]);
-    assert.ok(ADAPTERS[checked.file.protoFamily].apiVersionHashes.includes(hash), `${f} not in ${checked.file.protoFamily}`);
+    assert.equal(checked.file.server, serverOf(hash));
+    if (SEEDS[hash]) assert.ok(ADAPTERS[checked.file.protoFamily].apiVersionHashes.includes(hash), `${f} not in ${checked.file.protoFamily}`);
   }
 });
 
@@ -39,6 +70,7 @@ test("seed meeting/movement match the built-in adapter they mirror", () => {
   for (const f of files) {
     const file = readJson(path.join(catalogDir, "adapters", f));
     const base = ADAPTERS[file.protoFamily];
+    if (!SEEDS[f.replace(".json", "")]) continue; // watcher additions need not mirror a built-in
     assert.equal(file.meeting.areaDwellMs, base.meeting.areaDwellMs);
     assert.equal(file.meeting.areaLingerMs, base.meeting.areaLingerMs);
     if (base.movement) assert.deepEqual(file.movement, base.movement);
@@ -53,7 +85,7 @@ test("index has one correct entry per file", () => {
   for (const [hash, e] of Object.entries(index.entries)) {
     const bytes = fs.readFileSync(path.join(catalogDir, "adapters", `${hash}.json`));
     assert.equal(e.status, "ok");
-    assert.equal(e.server, SEEDS[hash]);
+    assert.equal(e.server, serverOf(hash));
     assert.equal(e.file, `adapters/${hash}.json`);
     assert.equal(e.sha256, sha(bytes));
     assert.equal(e.gate, null);

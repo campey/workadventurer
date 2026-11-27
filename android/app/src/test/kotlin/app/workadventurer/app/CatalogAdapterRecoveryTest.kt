@@ -24,6 +24,7 @@ class CatalogAdapterRecoveryTest {
     private val store = object : AdapterStore {
         override fun load(hash: String) = null
         override fun save(hash: String, text: String) {}
+        override fun delete(hash: String) {}
     }
 
     @Test
@@ -40,23 +41,43 @@ class CatalogAdapterRecoveryTest {
 
     @Test
     fun alwaysAnswerPersistsAutoAndModeIsReadAtCallTime() = runBlocking {
-        val settings = AdapterUpdatesSetting(Mem())
+        val inner = AdapterUpdatesSetting(Mem())
+        var readThread = ""
+        val settings = object : AdapterSettings {
+            override var updates: AdapterUpdates
+                get() { readThread = Thread.currentThread().name; return inner.updates }
+                set(v) { inner.updates = v }
+        }
         var seenMode: AdapterUpdates? = null
-        var seenThread = ""
+        var askThread = ""
         val callerThread = Thread.currentThread().name
         val r = CatalogAdapterRecovery(settings, store, OkHttpClient()) { _, mode, ask, onAlways ->
             seenMode = mode
-            seenThread = Thread.currentThread().name
             if (ask(AdapterOffer("deadbeef", null)) == AdapterAnswer.ALWAYS) onAlways()
             RecoverOutcome.Declined("deadbeef")
         }
-        r.recover("https://x/") { AdapterAnswer.ALWAYS }
-        assertEquals(AdapterUpdates.AUTO, settings.flow.value) // the Settings sheet follows this
+        r.recover("https://x/") { askThread = Thread.currentThread().name; AdapterAnswer.ALWAYS }
+        assertEquals(AdapterUpdates.AUTO, inner.flow.value) // the Settings sheet follows this
         assertEquals(AdapterUpdates.ASK, seenMode)
-        assertEquals(AdapterUpdates.AUTO, settings.updates)
-        assertNotEquals(callerThread, seenThread, "recovery must not run on the caller's thread")
+        assertEquals(AdapterUpdates.AUTO, inner.updates)
+        assertEquals(callerThread, askThread, "ask (it shows UI) stays on the caller's dispatcher")
+        assertNotEquals(callerThread, readThread, "the preference read (disk) is off the caller's thread")
         r.recover("https://x/") { AdapterAnswer.NO }
         assertEquals(AdapterUpdates.AUTO, seenMode)
+    }
+
+    @Test
+    fun forgetDeletesTheCachedFileOffTheCallersThread() = runBlocking {
+        val deleted = mutableListOf<Pair<String, String>>()
+        val st = object : AdapterStore {
+            override fun load(hash: String) = null
+            override fun save(hash: String, text: String) {}
+            override fun delete(hash: String) { deleted += hash to Thread.currentThread().name }
+        }
+        val r = CatalogAdapterRecovery(AdapterUpdatesSetting(Mem()), st, OkHttpClient()) { _, _, _, _ -> RecoverOutcome.Declined("deadbeef") }
+        r.forget("deadbeef")
+        assertEquals(listOf("deadbeef"), deleted.map { it.first })
+        assertNotEquals(Thread.currentThread().name, deleted.single().second)
     }
 
     @Test

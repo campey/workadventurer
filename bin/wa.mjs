@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveConfig, configToEnv, explicitPort, writeConfigField } from "../src/config.mjs";
-import { ADAPTERS, matchVersion } from "../src/adapters/index.mjs";
+import { ADAPTERS, matchVersion, isBuiltinHash } from "../src/adapters/index.mjs";
 import { recoverAdapter, refusalMessage, alwaysHandler } from "../src/catalog/recover.mjs";
 import { askYesNoAlways } from "../src/catalog/prompt.mjs";
 import { loadAdapterFile } from "../src/catalog/adapter-file.mjs";
@@ -145,8 +145,10 @@ async function daemonReachable() {
   }
 }
 
-function spawnDaemon({ detached, roomUrl, keepAlive }) {
+function spawnDaemon({ detached, roomUrl, keepAlive, probedHash }) {
   const env = { ...process.env, ...configToEnv(cfg) };
+  // The hash the pre-flight read, so a failed second home-page GET cannot lose it (#185).
+  if (probedHash) env.WA_PROBED_HASH = probedHash; else delete env.WA_PROBED_HASH;
   // --keep-alive runs the daemon under a restart-on-kill supervisor (#138).
   const entry = keepAlive ? SUPERVISOR : DAEMON;
   if (roomUrl) env.WA_ROOM = roomUrl;
@@ -220,24 +222,27 @@ switch (cmd) {
       note("already joined");
       process.exit(0);
     }
+    let probedHash;
     // Unknown server hash? Offer the catalog's adapter before the daemon starts (#126).
     if (!cfg.version && cfg.target === "auto" && !cfg.adapterFile) {
       const outcome = await recoverAdapter({
         roomUrl: roomUrl ?? cfg.roomUrl, mode: cfg.adapterUpdates, ask: askYesNoAlways,
         onAlways: alwaysHandler(cfg, writeConfigField), timeoutMs: 3000, // pre-flight: a black-holed page must not stall every join
-        builtins: ADAPTERS, matchRelease: matchVersion, log: note,
+        builtins: ADAPTERS, isBuiltinHash, matchRelease: matchVersion, log: note,
       });
+      probedHash = outcome.hash;
+      if (outcome.status === "unavailable") note(`could not check the adapter catalog (${outcome.reason}); carrying on`);
       if (outcome.status === "applied") note(`using adapter ${outcome.adapter.id} (${outcome.hash})`);
       const refusal = refusalMessage(outcome);
       if (refusal) die(refusal, REFUSED_EXIT);
     }
     if (flags.detach) {
-      spawnDaemon({ detached: true, roomUrl, keepAlive: flags["keep-alive"] });
+      spawnDaemon({ detached: true, roomUrl, keepAlive: flags["keep-alive"], probedHash });
       if (!(await waitForDaemon())) die("daemon did not come up in time");
       const s = (await api("GET", "/state")).json;
       process.stdout.write(flags.json ? JSON.stringify(s, null, 2) + "\n" : `joined as ${s.name}\n`);
     } else {
-      const child = spawnDaemon({ detached: false, roomUrl, keepAlive: flags["keep-alive"] });
+      const child = spawnDaemon({ detached: false, roomUrl, keepAlive: flags["keep-alive"], probedHash });
       child.on("exit", (code) => process.exit(code ?? 0));
     }
     break;

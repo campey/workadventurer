@@ -13,6 +13,10 @@ export const ADAPTERS = {
   "wa-master": waMaster,
 };
 
+/** True when a built-in adapter lists this hash (first or not). The one check; callers outside this module get it injected. */
+export const isBuiltinHash = (hash) =>
+  typeof hash === "string" && Object.values(ADAPTERS).some((a) => a.apiVersionHashes?.includes(hash));
+
 // Released adapters, oldest first; last is "newest released".
 const RELEASED = [wa133, wa134];
 
@@ -60,9 +64,13 @@ const shaDrift = (a, b) => !(a.startsWith(b) || b.startsWith(a));
  * adapter for the probed hash > server probe > host allowlist > warned default
  * (wa-1.33). `cachedFor` is injected by the outer layer so the core client
  * never touches the catalog cache; it only runs for a hash no built-in knows.
- * @param {{roomUrl?:string, override?:string, fileAdapter?:object, probeFn?:(url:string)=>Promise<any>, cachedFor?:(hash:string)=>Promise<object|null>}} opts
+ * `probedHint` is a hash `wa join`'s pre-flight already read: it stands in for the probe's
+ * hash when this probe fails or finds none (a live probe's hash wins). The result's `hash`,
+ * when set, is the server-announced hash the chosen adapter itself lists: the handshake sends
+ * it instead of the adapter's first hash (#185: a rollback to a known, non-first hash).
+ * @param {{roomUrl?:string, override?:string, fileAdapter?:object, probeFn?:(url:string)=>Promise<any>, cachedFor?:(hash:string)=>Promise<object|null>, probedHint?:string}} opts
  */
-export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion, cachedFor, fileAdapter } = {}) {
+export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion, cachedFor, fileAdapter, probedHint } = {}) {
   if (override && override !== "auto") {
     const a = ADAPTERS[override];
     if (!a) {
@@ -77,13 +85,17 @@ export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion
     return { adapter: fileAdapter, why: `adapter file ${fileAdapter.id} (${fileAdapter.apiVersionHashes?.[0]})` };
   }
 
-  const probe = roomUrl ? await probeFn(roomUrl) : null;
+  let probe = roomUrl ? await probeFn(roomUrl) : null;
+  if (!probe?.hash && probedHint) probe = { ...(probe ?? {}), hash: probedHint };
 
-  if (cachedFor && probe?.hash && !Object.values(ADAPTERS).some((a) => a.apiVersionHashes?.includes(probe.hash))) {
+  // The hash to send: the announced one when the chosen adapter lists it. Never an unknown hash.
+  const withHash = (r) => (probe?.hash && r.adapter.apiVersionHashes?.includes(probe.hash) ? { ...r, hash: probe.hash } : r);
+
+  if (cachedFor && probe?.hash && !isBuiltinHash(probe.hash)) {
     try {
       const cached = await cachedFor(probe.hash);
       if (cached) {
-        return { adapter: cached, why: `catalog adapter ${cached.id} (${probe.hash}) from the local cache` };
+        return withHash({ adapter: cached, why: `catalog adapter ${cached.id} (${probe.hash}) from the local cache` });
       }
     } catch {
       /* a broken cache must never break connecting: fall through */
@@ -92,27 +104,33 @@ export async function resolveAdapter({ roomUrl, override, probeFn = probeVersion
 
   if (probe?.kind === "release") {
     const key = `wa-${probe.minor}`;
-    if (ADAPTERS[key]) return { adapter: ADAPTERS[key], why: `probed ${probe.raw}` };
+    if (ADAPTERS[key]) return withHash({ adapter: ADAPTERS[key], why: `probed ${probe.raw}` });
     const newest = RELEASED[RELEASED.length - 1];
-    return {
+    return withHash({
       adapter: newest,
       why:
         `probed ${probe.raw} — no ${key} adapter, using ${newest.id} behaviours; ` +
         `the server may reject its hash (NEW_VERSION) — see "When the watcher says needs attention" in docs/field-notes.md`,
       warn: true,
-    };
+    });
   }
 
   if (probe?.kind === "master") {
     const a = ADAPTERS["wa-master"];
     const drift = a.trackedSha && shaDrift(probe.sha, a.trackedSha);
-    return {
+    return withHash({
       adapter: a,
       why: drift
         ? `probed master@${probe.sha} — adapter tracks master@${a.trackedSha} (${a.verifiedDate}), behaviours may have drifted`
         : `probed master@${probe.sha}`,
       ...(drift ? { warn: true } : {}),
-    };
+    });
+  }
+
+  // No release string (the page could not be read now), but a hash a built-in adapter lists: that adapter.
+  if (probe?.hash && isBuiltinHash(probe.hash)) {
+    const owner = Object.values(ADAPTERS).find((a) => a.apiVersionHashes?.includes(probe.hash));
+    return withHash({ adapter: owner, why: `server hash ${probe.hash}` });
   }
 
   try {

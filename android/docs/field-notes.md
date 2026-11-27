@@ -538,7 +538,17 @@ Emulator: Pixel-class AVD `Medium_Phone_API_35` (Android 15), debug APK, 2026-10
 
 ## Prod bump to v1.34.1 broke the APK (2026-10-13) [live]
 
-The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when prod moved to v1.34.1 (hash `23c8eb8c` -> `b82fc568`, same `messages.proto`) the app showed "couldn't join... please refresh" (the server's NEW_VERSION error screen). Fixed by putting `b82fc568` first. Verified with `wa-cli` against prod: login, join, nav grid, walk to "Red Table" (ARRIVED). This is exactly what the downloadable adapter (#126) removes: the app should fetch the hash for the server's version instead of shipping one.
+The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when prod moved to v1.34.1 (hash `23c8eb8c` -> `b82fc568`, same `messages.proto`) the app showed "couldn't join... please refresh" (the server's NEW_VERSION error screen). Fixed by putting `b82fc568` first. Verified with `wa-cli` against prod: login, join, nav grid, walk to "Red Table" (ARRIVED). **Resolved:** the app now recovers from this on its own by fetching the hash from the adapter catalog (#126, #188); see "How the app recovers" below.
+
+### First real bump through the system (2026-11-26)
+
+Production moved to v1.35.0 with hash `dcadccc6`, which the watcher had already published from staging (`master@621f2bf2`).
+- **Verified live (CLI only) [live]:** `selfcheck --target production` with `WA_ADAPTER_UPDATES=auto` applied the catalog
+  adapter on production v1.35.0. It needed the catalog pre-flight to do so (selfcheck has it now).
+- **The app [code]:** its recovery is covered by unit tests only; it has not yet been exercised against production
+  v1.35.0 on a device.
+- **Still to come:** the production gate for that hash through `seenOn` (`docs/field-notes.md` "When the watcher says
+  needs attention") happens on the first real, enabled run. `catalog/index.json` has no `seenOn` for `dcadccc6` yet.
 
 ## Adapter recovery, catalog client (#188, `:protocol` `catalog` package) [code]
 
@@ -555,19 +565,33 @@ The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when pro
 - **One attempt per refusal, no loop.** `Applied` (or a `Known` cached adapter with a handshake query) rebuilds the `RoomConfig` with the
   catalog hash and handshake query and retries once. If that is refused again, or recovery has nothing to apply, the session ends in
   `Connection.Failed` with a specific message (no adapter for this server version yet / needs attention / updates turned off /
-  declined / couldn't check). That includes a refusal after an earlier successful connect (ruling A2: no bounded retries).
+  declined / couldn't check / "This server doesn't publish its version, so the app can't check for an update." for a page without the
+  `wa-api-version` tag: `RecoverOutcome.VersionUnreadable`, kept apart from catalog failures, which are `Unavailable`). That includes a refusal after an earlier successful connect (ruling A2: no bounded retries).
 - **Consent.** Setting `ask | auto | never` (default ask; Settings on the Join screen). With `ask` the session shows a dialog
   ("Compatibility update available", `ui/AdapterConsent.kt`, text/rows built by `session/ConsentFormat.kt`): one plain sentence (only the
   version the app speaks to this server changes; no code is downloaded or run), then key/value rows: **Server version** (release string if
-  the page had a plain one, else "unknown"), **Server hash** (monospace), **Catalog updated** (local `dd MMM HH:mm`, else "unknown") and the
+  the page had a plain one, else "unknown"), **Server hash** (monospace), **Adapter added** (the index entry's `added`, local `dd MMM HH:mm`; the app takes it only if it parses) or, when the entry has none,
+  **Catalog updated** (the index's top-level `updated`, else "unknown"), and the
   **Adapter file** URL the library would fetch (monospace, selectable, with a "View on GitHub" link). The URL is only offered when it passed
-  the same-origin / under-directory checks and is https; the date is the index's top-level `updated`, kept only if it parses.
-  **Limitation:** the catalog has no per-entry date, so this is when the catalog was last updated, not when this adapter was published.
+  the same-origin / under-directory checks and is https. Older index entries may lack `added`; then the row says "Catalog updated", which is
+  when the catalog changed, not when this adapter was published.
   Buttons: **Download** (filled pill) and **Cancel** (outlined pill). A checkbox **"Auto-download next time"** ("Applies when you tap Download.
   Change this in Settings."): ticked + Download persists `auto` and applies (ALWAYS), unticked + Download applies once (YES);
   Cancel / Back / outside tap is a no and ignores the checkbox (nothing is remembered). Only an exact yes
-  or always counts; the pre-ask connection state is restored on answering, so the answer is not treated as a new Join (no new
-  call log, no net-totals reset).
+  or always counts; the pre-ask connection state is restored on answering. **Call identity:** `SessionState.callId` is a join counter
+  that only `Command.Join` increments (Leave resets it to 0; a consent answer or a reconnect leaves it). The call log, device events
+  and net totals open a new call when a `Connecting` carries a call id they have not seen (`startsNewCall`), so an answer is not a
+  new call, while a Join during the question, or a Leave+Join the state flow conflated into `Connecting -> Connecting`, is.
+- **The dialog never moves you.** `routeFor(connection, current)` keeps the current screen for `NeedsConsent` (AppRoot passes the
+  route it last showed), so a refusal after an earlier success leaves you on Users or a conversation instead of `popUpTo` clearing
+  the back stack. The dialog itself is drawn at AppRoot level over whatever is showing.
+- **A refused cached adapter is dropped.** When a `Known` outcome with `fromCache = true` (a file from `filesDir/adapters`) builds the
+  retry config (or is itself the unchanged config) and the server refuses that too, the session calls `AdapterRecovery.forget(hash)`, which deletes the file
+  (`AdapterStore.delete`), so the next join consults the catalog again instead of replaying the bad file. A built-in or freshly
+  downloaded adapter is never deleted this way.
+- **Where work runs.** `ask` runs on the caller's dispatcher (it shows UI; `CatalogAdapterRecovery` adds no dispatcher hop except the preference read on IO); the JSON parse, meta scan and sha256 run on
+  `Dispatchers.Default` (`cpu {}` in the protocol library), disk on IO. The meta scan is non-overlapping (resumes after a tag's `>`),
+  and `sanitizeText` walks code points, so non-BMP format characters (e.g. U+E0001) are blanked too.
 - **What it applies.** Only the `apiVersionHash` and the adapter's handshake query, for that server and room (never persisted as if
   built in). Behaviour numbers (`meeting`, `movement`) and `protoFamily` are ignored: the app has its own behaviour, and the
   watcher's gate (proto-diff against wa-1.33 plus a Kotlin smoke with the hash) is what keeps a hash-only adapter safe on the
@@ -578,5 +602,4 @@ The APK hardcodes the API version hash (`Wa133.API_VERSION_HASHES`), so when pro
   with a fake recovery port). On a device: point a debug build at a local catalog (`-PcatalogUrl`), run a fake pusher that refuses
   the built-in hash, and watch the dialog. The dialog and the Settings sheet are only compile-checked; they have not been
   exercised on a device yet.
-- Known gaps: `startsNewCall` infers "same call" from the previous state, so a Join sent while the dialog is open would not open
-  a new call log (the UI makes that unlikely); while asking after an earlier success the route shows Join and then goes back.
+- Known gaps: the dialog's open state is not saved across a configuration change (rotation) in a way that has been checked on a device; follow-up.

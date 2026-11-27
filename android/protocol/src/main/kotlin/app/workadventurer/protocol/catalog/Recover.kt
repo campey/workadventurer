@@ -16,15 +16,21 @@ enum class AdapterAnswer { YES, NO, ALWAYS }
 /**
  * What the consent question is about: the server's hash and release string (e.g. `v1.35.0`), if the page had one.
  * [adapterUrl] is the https URL the library would fetch (set only when it passed the same-origin / under-directory checks) and
- * [catalogUpdated] the index's top-level `updated` instant (only if it parsed). The catalog has no per-entry date.
+ * [catalogUpdated] the index's top-level `updated` instant and [adapterAdded] the entry's own `added` instant (each only if it parsed;
+ * the latter only when the index has it).
  */
-data class AdapterOffer(val hash: String, val release: String?, val adapterUrl: String? = null, val catalogUpdated: String? = null)
+data class AdapterOffer(
+    val hash: String, val release: String?, val adapterUrl: String? = null, val catalogUpdated: String? = null,
+    val adapterAdded: String? = null,
+)
 
 sealed class RecoverOutcome {
     /** [reason] is sanitised (no control/format characters, capped). */
     data class Unavailable(val reason: String) : RecoverOutcome()
     /** A built-in adapter or a loadable cached file covers this hash; [handshakeQuery] is the cached file's (empty for built-ins). */
-    data class Known(val hash: String, val handshakeQuery: Map<String, String> = emptyMap()) : RecoverOutcome()
+    data class Known(val hash: String, val handshakeQuery: Map<String, String> = emptyMap(), val fromCache: Boolean = false) : RecoverOutcome()
+    /** The page loaded but publishes no usable version hash (a self-hosted server without the `wa-api-version` tag): not a catalog failure. */
+    data object VersionUnreadable : RecoverOutcome()
     data class NoEntry(val hash: String) : RecoverOutcome()
     data class NeedsAttention(val hash: String, val detail: String?) : RecoverOutcome()
     data class Never(val hash: String) : RecoverOutcome()
@@ -60,15 +66,21 @@ suspend fun recoverAdapter(
     indexUrl: String = DEFAULT_CATALOG_URL,
     timeoutMs: Long = CatalogClient.DEFAULT_TIMEOUT_MS,
 ): RecoverOutcome = try {
-    val version = ServerVersionReader.read(client, roomUrl, timeoutMs)
+    var failedPage: String? = null
+    val version = when (val v = ServerVersionReader.readPage(client, roomUrl, timeoutMs)) {
+        is Fetched.Fail -> null.also { failedPage = v.reason }
+        is Fetched.Ok -> v.value
+    }
     val hash = version?.hash
-    if (hash == null) {
-        unavailable("could not read the server's version hash")
+    if (version == null) {
+        unavailable(failedPage ?: "could not read the server's page")
+    } else if (hash == null) {
+        RecoverOutcome.VersionUnreadable
     } else if (hash in builtinHashes) {
         RecoverOutcome.Known(hash)
     } else {
         val cached = withContext(Dispatchers.IO) { store.load(hash) }
-        if (cached != null) RecoverOutcome.Known(hash, cached.handshakeQuery) else recoverFromCatalog(
+        if (cached != null) RecoverOutcome.Known(hash, cached.handshakeQuery, fromCache = true) else recoverFromCatalog(
             hash, version.release, mode, ask, onAlways, store, client, indexUrl, timeoutMs,
         )
     }
@@ -94,7 +106,7 @@ private suspend fun recoverFromCatalog(
     if (mode == AdapterUpdates.ASK) {
         // Fail closed: only an exact YES or ALWAYS is consent; an ask that throws is a no.
         val answer = try {
-            ask(AdapterOffer(hash, release, CatalogClient.displayAdapterUrl(idx.url, entry), idx.updated))
+            ask(AdapterOffer(hash, release, CatalogClient.displayAdapterUrl(idx.url, entry), idx.updated, entry.added))
         } catch (e: CancellationException) {
             // Our own cancellation propagates; a CancellationException thrown by the ask itself (e.g. a timeout) is a no.
             if (!currentCoroutineContext().isActive) throw e

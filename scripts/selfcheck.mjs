@@ -5,7 +5,12 @@
 //   node scripts/selfcheck.mjs [--target <id>] [--room <url>] [--adapter-file <f>]
 
 import { WorkAdventureClient } from "../src/wa-client.mjs";
-import { ADAPTERS } from "../src/adapters/index.mjs";
+import { ADAPTERS, matchVersion, isBuiltinHash } from "../src/adapters/index.mjs";
+import { recoverAdapter, refusalMessage } from "../src/catalog/recover.mjs";
+import { catalogUrl } from "../src/catalog/client.mjs";
+import { loadCached } from "../src/catalog/store.mjs";
+import { askYesNoAlways } from "../src/catalog/prompt.mjs";
+import { REFUSED_EXIT } from "../src/supervise.mjs";
 import { loadAdapterFile } from "../src/catalog/adapter-file.mjs";
 import { resolveConfig } from "../src/config.mjs";
 import { isVersionRejection } from "../src/server-rejected.mjs";
@@ -37,6 +42,25 @@ const line = (status, step, detail = "") => {
   console.log(`${status.padEnd(4)}  ${step}${detail ? "  — " + detail : ""}`);
 };
 
+// Same catalog pre-flight as `wa join`, so a server newer than the built-ins can be checked with its
+// catalog adapter. Skipped when something pins or supplies the adapter (version, explicit target, file).
+let probedHint;
+if (!cfg.version && cfg.target === "auto" && !cfg.adapterFile) {
+  const outcome = await recoverAdapter({
+    roomUrl: cfg.roomUrl, mode: cfg.adapterUpdates, ask: askYesNoAlways, indexUrl: catalogUrl(), timeoutMs: 3000,
+    builtins: ADAPTERS, isBuiltinHash, matchRelease: matchVersion, log: (m) => console.error(`selfcheck: ${m}`),
+  });
+  probedHint = outcome.hash;
+  if (outcome.status === "applied") console.error(`selfcheck: using adapter ${outcome.adapter.id} (${outcome.hash})`);
+  if (outcome.status === "unavailable") console.error(`selfcheck: could not check the adapter catalog (${outcome.reason}); carrying on`);
+  const refusal = refusalMessage(outcome);
+  if (refusal) {
+    line("FAIL", "adapter available", refusal);
+    console.log("\nFAIL");
+    process.exit(REFUSED_EXIT);
+  }
+}
+
 const client = new WorkAdventureClient({
   WebSocketImpl: DefaultWebSocket, // goes through HTTPS_PROXY when set
   name: "selfcheck",
@@ -46,6 +70,8 @@ const client = new WorkAdventureClient({
   version: cfg.version,
   wokaId: cfg.wokaId,
   fileAdapter,
+  cachedFor: (h) => loadCached(h, { builtins: ADAPTERS }),
+  probedHint,
 });
 
 const errors = [];

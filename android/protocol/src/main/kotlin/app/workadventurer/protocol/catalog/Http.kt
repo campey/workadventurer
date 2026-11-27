@@ -74,3 +74,10 @@ internal suspend fun getCapped(client: OkHttpClient, url: String, timeoutMs: Lon
         })
     }
 }
+
+/** Where CPU-bound work (JSON parse, meta scan, sha256) runs, so it never lands on the caller's dispatcher. Tests swap it to observe that. */
+internal object CpuWork {
+    @Volatile var dispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Default
+}
+
+internal suspend fun <T> cpu(block: () -> T): T = kotlinx.coroutines.withContext(CpuWork.dispatcher) { block() }

@@ -60,10 +60,24 @@ export function pickBase(catalogIndex, server) {
   return best;
 }
 
+/** The `seenOn` record for `server` on an index entry, or undefined. */
+export function seenRecord(entry, server) {
+  return Array.isArray(entry?.seenOn) ? entry.seenOn.find((r) => r?.server === server) : undefined;
+}
+
+/** True when the entry is an adapter clients may apply AND this server's own gate verdict is not a failure. */
+export function okOnServer(entry, server) {
+  if (entry?.status !== "ok") return false;
+  if (entry.server === server) return true;
+  const rec = seenRecord(entry, server);
+  return rec?.gate === "passed";
+}
+
 /**
  * Decide whether a server hash needs the gate.
  *   skip: the hash is already `ok`, or it is `needs-attention` with no retest trigger.
- *   gate: new hash, or a retest trigger fired.
+ *   gate: new hash, or a retest trigger fired, or (`seenOn: true` in the result) an `ok` hash that the OTHER server
+ *         announces and that has no record for this server yet.
  * Ownership (R13): a placeholder written by production is never re-gated or replaced from staging; production
  * gates over a staging-written placeholder once (and the new placeholder or ok entry is then production's).
  * Retest triggers for a `needs-attention` placeholder of the same server: `force` (manual run), the code
@@ -76,7 +90,20 @@ export function decide({ hash, version, server, catalogIndex, force = false, cod
   if (server !== "production" && server !== "staging") throw new Error(`decide: server must be production or staging, got "${server}"`);
   const e = catalogIndex?.entries?.[hash];
   if (!e) return { action: "gate", reason: "new hash" };
-  if (e.status === "ok") return { action: "skip", reason: "already ok" };
+  if (e.status === "ok") {
+    // An ok hash gated on its own server is done. Announced by the OTHER server it has no record there yet: gate it
+    // once (index-only `seenOn`, the adapter file never changes). After that, a pass is final and a fail retests only on
+    // the placeholder triggers (force, code fingerprint, version), so this never loops.
+    if (e.server === server) return { action: "skip", reason: "already ok" };
+    const rec = seenRecord(e, server);
+    if (!rec) return { action: "gate", reason: `ok for ${e.server}, not yet gated on ${server}`, seenOn: true };
+    if (rec.gate === "passed") return { action: "skip", reason: `already ok, gated on ${server}` };
+    if (force) return { action: "gate", reason: "manual run", seenOn: true };
+    if (codeFingerprint && rec.commit !== codeFingerprint) return { action: "gate", reason: "code changed since the failed gate", seenOn: true };
+    const shown = normaliseVersion(server, version);
+    if (shown && shown !== normaliseVersion(server, rec.version)) return { action: "gate", reason: "server version changed", seenOn: true };
+    return { action: "skip", reason: `ok, gate failed on ${server}, nothing changed` };
+  }
   if (e.status !== "needs-attention") return { action: "gate", reason: `entry status "${e.status}"` };
   // R13: production and staging can show the same hash. Production owns it: staging never gates or overwrites a
   // placeholder production wrote; production over a staging-written one gates once and takes ownership.
@@ -109,19 +136,42 @@ export function normaliseVersion(server, version) {
 const NUMBER_KEYS = ["meeting", "movement", "handshake"];
 
 /**
+ * Where a staging candidate takes its behaviour numbers from: the newest `ok` PRODUCTION entry when one exists
+ * (production numbers are scenario-validated by the production gate; staging numbers never are, the staging gate
+ * runs no scenarios), else the newest ok staging entry, else null (built-in wa-master, no numbers).
+ * Production candidates use pickBase(index, "production") as before.
+ */
+export function pickNumbersBase(catalogIndex, server) {
+  if (server !== "staging") return pickBase(catalogIndex, server);
+  return pickBase(catalogIndex, "production") ?? pickBase(catalogIndex, "staging");
+}
+
+/**
  * Build the candidate adapter file for `hash` running `version` on `server`.
  * Base = the newest `ok` entry for that server (its file is fetched through
  * `fetchBase`, default: the catalog client, sha256-checked); its protoFamily and
- * behaviour numbers are copied. Staging with no base falls back to wa-master with
- * no numbers. Returns { ok: true, file, base } or { ok: false, reason }.
+ * behaviour numbers are copied. Staging takes the NUMBERS from the newest ok production entry when
+ * there is one (see pickNumbersBase), else the newest ok staging entry, else wa-master with
+ * no numbers; its protoFamily is always wa-master. Returns { ok: true, file, base } or { ok: false, reason }.
  */
-export async function buildCandidate({ hash, version, server, catalogIndex, indexUrl, fetch, builtins = ADAPTERS, fetchBase }) {
+export async function buildCandidate({ hash, version, server, catalogIndex, indexUrl, fetch, builtins = ADAPTERS, fetchBase, useExisting = false }) {
+  const get = fetchBase ?? ((h, entry) => fetchAdapterFile({ indexUrl, hash: h, entry, builtins, fetch }));
+  if (useExisting) {
+    // The hash is already an `ok` catalog adapter (gated on the other server): test exactly what clients apply, the
+    // catalog's own file, on this server. Nothing is built, so the file can never differ from the published bytes.
+    const entry = catalogIndex?.entries?.[hash];
+    if (entry?.status !== "ok") return { ok: false, reason: `no ok catalog entry for ${hash}` };
+    const got = await get(hash, entry);
+    if (!got?.ok) return { ok: false, reason: `adapter ${hash}: ${got?.reason ?? "could not be read"}` };
+    if (got.file?.apiVersionHash !== hash) return { ok: false, reason: `adapter ${hash}: file's apiVersionHash is ${got.file?.apiVersionHash}` };
+    return { ok: true, file: got.file, base: null, existing: true };
+  }
   const waVersion = waVersionFor(server, version);
   if (!waVersion) return { ok: false, reason: `cannot name an adapter for ${server} version "${version}"` };
-  const base = pickBase(catalogIndex, server);
+  const base = pickNumbersBase(catalogIndex, server);
   let baseFile = null;
   if (base) {
-    const got = await (fetchBase ?? ((h, entry) => fetchAdapterFile({ indexUrl, hash: h, entry, builtins, fetch })))(base.hash, base.entry);
+    const got = await get(base.hash, base.entry);
     if (!got?.ok) return { ok: false, reason: `base adapter ${base.hash}: ${got?.reason ?? "could not be read"}` };
     baseFile = got.file;
   } else if (server !== "staging") {
@@ -133,7 +183,8 @@ export async function buildCandidate({ hash, version, server, catalogIndex, inde
     waVersion,
     apiVersionHash: hash,
     server,
-    protoFamily: baseFile?.protoFamily ?? "wa-master",
+    // A staging candidate always needs the wa-master proto family, whatever the (production) numbers base uses.
+    protoFamily: server === "staging" ? "wa-master" : (baseFile?.protoFamily ?? "wa-master"),
   };
   for (const k of NUMBER_KEYS) if (baseFile?.[k] !== undefined) file[k] = structuredClone(baseFile[k]);
   const checked = validateAdapterFile(file, builtins);

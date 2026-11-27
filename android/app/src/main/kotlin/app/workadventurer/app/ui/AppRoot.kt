@@ -16,6 +16,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import app.workadventurer.app.net.NetSnapshot
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -109,7 +110,9 @@ fun AppRoot(
     // This Material version's drawer doesn't take Back itself: without this, Back with the panel open leaves the app.
     BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
 
-    val target = routeFor(state.connection)
+    val lastTarget = remember { arrayOf<Route>(Route.Join) } // the consent question keeps whatever screen is showing
+    val target = routeFor(state.connection, lastTarget[0])
+    SideEffect { lastTarget[0] = target }
     LaunchedEffect(target) {
         nav.navigate(target.path) { popUpTo(nav.graph.id) { inclusive = true } }
         drawer.close() // never leave the world panel open over the Join screen after leaving

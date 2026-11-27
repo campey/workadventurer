@@ -31,9 +31,10 @@
 import http from "node:http";
 import fs from "node:fs";
 import { WorkAdventureClient } from "./wa-client.mjs";
-import { ADAPTERS, matchVersion } from "./adapters/index.mjs";
+import { ADAPTERS, matchVersion, isBuiltinHash } from "./adapters/index.mjs";
 import { loadCached } from "./catalog/store.mjs";
 import { loadAdapterFile } from "./catalog/adapter-file.mjs";
+import { HASH_RE } from "./catalog/schema.mjs";
 import { recoverAdapter, refusalMessage } from "./catalog/recover.mjs";
 import { catalogUrl } from "./catalog/client.mjs";
 import { WaAudio, disposeLiveKitRuntime } from "./wa-audio.mjs";
@@ -300,6 +301,8 @@ try {
   process.exit(2);
 }
 
+const probedHint = HASH_RE.test(process.env.WA_PROBED_HASH ?? "") ? process.env.WA_PROBED_HASH : undefined;
+
 const newClient = () =>
   new WorkAdventureClient({
     name: cfg.name,
@@ -312,6 +315,8 @@ const newClient = () =>
     cachedFor: (h) => loadCached(h, { builtins: ADAPTERS }),
     // An explicit candidate adapter file (WA_ADAPTER_FILE); loaded at startup so a bad one is fatal.
     fileAdapter,
+    // The hash `wa join`'s pre-flight read (#185), for when this client's own home-page GET fails.
+    probedHint,
     // A listen-mode ("scribe") instance doesn't publish audio by default —
     // client.micOn is the single source of truth every mic-announce path
     // respects (#10). See wa-audio.mjs for the rest of that invariant.
@@ -334,9 +339,9 @@ async function tryAdapterRecovery() {
   }
   const outcome = await recoverAdapter({
     roomUrl: cfg.roomUrl, mode: "auto", indexUrl: catalogUrl(),
-    builtins: ADAPTERS, matchRelease: matchVersion, log,
+    builtins: ADAPTERS, isBuiltinHash, matchRelease: matchVersion, log,
   });
-  log(`adapter recovery: ${outcome.status}${outcome.adapter ? ` (${outcome.adapter.id}, ${outcome.hash})` : ""}`);
+  log(`adapter recovery: ${outcome.status}${outcome.adapter ? ` (${outcome.adapter.id}, ${outcome.hash})` : ""}${outcome.status === "unavailable" ? ` (${outcome.reason})` : ""}`);
   const refusal = refusalMessage(outcome);
   if (refusal) log(refusal);
   return outcome.status === "applied";

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { publish } from "../scripts/watch/publish.mjs";
-import { createGithubPort, assertCatalogPaths } from "../scripts/watch/github-port.mjs";
+import { createGithubPort, assertCatalogPaths, assertCatalogDeletes } from "../scripts/watch/github-port.mjs";
 import { fetchIndex } from "../src/catalog/client.mjs";
 import { rebuildIndex } from "../scripts/catalog-index.mjs";
 
@@ -27,11 +27,11 @@ function fakePort({ mergeFails = 0, failAt, main = MAIN } = {}) {
   let n = 0;
   f.mainCommit = async () => main;
   f.createBranch = async (name, sha) => { f.calls.push("createBranch"); if (failAt === "createBranch") throw new Error("boom"); f.branches.set(name, sha); };
-  f.commit = async ({ branch, message, files, parent }) => {
-    f.calls.push("commit"); assertCatalogPaths(files.map((x) => x.path));
+  f.commit = async ({ branch, message, files, deletes = [], parent }) => {
+    f.calls.push("commit"); assertCatalogPaths(files.map((x) => x.path)); assertCatalogDeletes(deletes);
     assert.equal(parent, main);
     const sha = String(++n).padStart(40, "c");
-    f.branches.set(branch, sha); f.commits.push({ branch, message, files, parent, sha });
+    f.branches.set(branch, sha); f.commits.push({ branch, message, files, deletes, parent, sha });
     return { sha };
   };
   f.findOpenPr = async (branch) => { const p = f.prs.find((x) => x.branch === branch && !x.merged); return p ? { number: p.number, headSha: p.foreignSha ?? f.branches.get(branch), headRepo: p.headRepo ?? f.repo } : null; };
@@ -376,4 +376,213 @@ test("default checkout detection: clean temp git repo works, dirty tree is stale
   port.commit = async (a) => ({ sha: "e".repeat(40) }); // parent assertion in the shared fake is MAIN
   const r2 = await publish({ port: Object.assign(port, { findOpenPr: async () => null, openPr: async () => ({ number: 1 }), merge: async () => ({ merged: true }) }), hash: HASH, adapterFile: adapter(), catalogDir: dir, sleep: async () => {} });
   assert.equal(r2.ok, true);
+});
+
+// ---------------------------------------------------------------------------
+// seenOn: an ok adapter gated on the other server (index only)
+// ---------------------------------------------------------------------------
+
+const readAdapterBytes = (dir, h) => fs.readFileSync(path.join(dir, "adapters", `${h}.json`));
+
+/** A catalog dir with the given staging/production adapters (each a copy of the seed file with its own hash). */
+function catalogWith(spec, { now } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "publish-"));
+  fs.mkdirSync(path.join(dir, "adapters"));
+  for (const [hash, { server, added }] of Object.entries(spec)) {
+    const f = { ...adapter(hash), server, waVersion: server === "staging" ? `master-${hash}` : "1.34.5", id: `wa-${hash}` };
+    fs.writeFileSync(path.join(dir, "adapters", `${hash}.json`), JSON.stringify(f, null, 2) + "\n");
+  }
+  rebuildIndex(dir, { now: now ?? new Date("2026-01-01T00:00:00Z") });
+  const idx = readIndex(dir);
+  for (const [hash, { added }] of Object.entries(spec)) if (added) idx.entries[hash].added = added;
+  fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify(idx, null, 2) + "\n");
+  return dir;
+}
+
+test("seenOn pass: index-only commit, adapter file byte-identical, record has server/version/checked/gate", async () => {
+  const dir = catalogWith({ aaaaaaa1: { server: "staging" } });
+  const bytes = readAdapterBytes(dir, "aaaaaaa1");
+  const port = fakePort();
+  const now = new Date("2026-11-26T10:00:00Z");
+  const r = await pub({ port, hash: "aaaaaaa1", catalogDir: dir, now, seenOn: { server: "production", version: "v1.35.0", gate: "passed" } });
+  assert.equal(r.ok, true);
+  assert.deepEqual(port.commits[0].files.map((f) => f.path), ["catalog/index.json"]);
+  assert.deepEqual(port.commits[0].deletes, []);
+  assert.ok(readAdapterBytes(dir, "aaaaaaa1").equals(bytes));
+  const e = readIndex(dir).entries.aaaaaaa1;
+  assert.equal(e.status, "ok");
+  assert.equal(e.server, "staging");
+  assert.deepEqual(e.seenOn, [{ server: "production", version: "v1.35.0", checked: now.toISOString(), gate: "passed" }]);
+  assert.equal(e.added, "2026-01-01T00:00:00.000Z");
+});
+
+test("seenOn fail: records the failing step text (sanitised, capped) and the fingerprint; the adapter stays ok", async () => {
+  const dir = catalogWith({ aaaaaaa1: { server: "staging" } });
+  const r = await pub({ port: fakePort(), hash: "aaaaaaa1", catalogDir: dir, seenOn: { server: "production", version: "v1.35.0", gate: "scenarios: boom\u0007 " + "x".repeat(500), commit: "b".repeat(40) } });
+  assert.equal(r.ok, true);
+  const e = readIndex(dir).entries.aaaaaaa1;
+  assert.equal(e.status, "ok");
+  assert.ok(e.file && e.sha256);
+  const rec = e.seenOn[0];
+  assert.ok(rec.gate.length <= 201 && !/[\x00-\x1f]/.test(rec.gate) && rec.gate.startsWith("scenarios: boom"));
+  assert.equal(rec.commit, "b".repeat(40));
+});
+
+test("seenOn: a later record replaces the same server's; rebuilds keep seenOn and added", async () => {
+  const dir = catalogWith({ aaaaaaa1: { server: "staging" } });
+  const port = fakePort();
+  await pub({ port, hash: "aaaaaaa1", catalogDir: dir, seenOn: { server: "production", version: "v1.35.0", gate: "x: bad", commit: "c".repeat(40) } });
+  await pub({ port: fakePort(), hash: "aaaaaaa1", catalogDir: dir, seenOn: { server: "production", version: "v1.35.1", gate: "passed" } });
+  const e = readIndex(dir).entries.aaaaaaa1;
+  assert.equal(e.seenOn.length, 1);
+  assert.equal(e.seenOn[0].gate, "passed");
+  rebuildIndex(dir);
+  assert.deepEqual(readIndex(dir).entries.aaaaaaa1.seenOn, e.seenOn);
+});
+
+test("seenOn refusals: own server, missing entry, failing record without text or fingerprint, bad server", async () => {
+  const dir = catalogWith({ aaaaaaa1: { server: "staging" } });
+  const port = fakePort();
+  const bad = async (hash, seenOn, re) => {
+    const r = await pub({ port, hash, catalogDir: dir, seenOn });
+    assert.equal(r.ok, false, JSON.stringify(seenOn));
+    assert.equal(r.stage, "validate");
+    assert.match(r.error, re);
+  };
+  await bad("aaaaaaa1", { server: "staging", version: "master@abc1234", gate: "passed" }, /OTHER server/);
+  await bad("aaaaaaa2", { server: "production", version: "v1.35.0", gate: "passed" }, /no adapter file/);
+  await bad("aaaaaaa1", { server: "production", version: "v1.35.0", gate: "boom" }, /fingerprint/);
+  await bad("aaaaaaa1", { server: "production", version: "v1.35.0", gate: "", commit: "b".repeat(40) }, /failing step text/);
+  await bad("aaaaaaa1", { server: "moon", version: "v1", gate: "passed" }, /server must be/);
+  assert.equal(port.commits.length, 0);
+});
+
+test("publish takes exactly one of adapterFile, placeholder, seenOn", async () => {
+  const dir = catalogWith({ aaaaaaa1: { server: "staging" } });
+  const r = await pub({ port: fakePort(), hash: "aaaaaaa1", catalogDir: dir, seenOn: { server: "production", version: "v1.35.0", gate: "passed" }, placeholder: { server: "staging", version: "x", gate: "x", commit: "b".repeat(40) } });
+  assert.equal(r.ok, false);
+});
+
+// ---------------------------------------------------------------------------
+// staging pruning
+// ---------------------------------------------------------------------------
+
+const stagingFile = (hash) => ({ ...adapter(hash), server: "staging", waVersion: `master-${hash}`, id: `wa-${hash}` });
+const T = (n) => `2026-11-${String(10 + n).padStart(2, "0")}T00:00:00.000Z`;
+const exists = (dir, h) => fs.existsSync(path.join(dir, "adapters", `${h}.json`));
+
+test("pruning: a new staging adapter keeps the newest five, deletes the rest in the SAME commit as the index", async () => {
+  const spec = {};
+  for (let i = 1; i <= 6; i++) spec[`0000000${i}`] = { server: "staging", added: T(i) };
+  const dir = catalogWith(spec);
+  const port = fakePort();
+  const r = await pub({ port, hash: "00000009", adapterFile: stagingFile("00000009"), catalogDir: dir, now: new Date(T(20)) });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.deleted, ["catalog/adapters/00000001.json", "catalog/adapters/00000002.json"]);
+  assert.equal(port.commits.length, 1);
+  assert.deepEqual(port.commits[0].deletes, ["catalog/adapters/00000001.json", "catalog/adapters/00000002.json"]);
+  assert.deepEqual(port.commits[0].files.map((f) => f.path), ["catalog/adapters/00000009.json", "catalog/index.json"]);
+  assert.match(port.commits[0].message, /pruned 00000001, 00000002/);
+  const idx = readIndex(dir);
+  assert.deepEqual(Object.keys(idx.entries).sort(), ["00000003", "00000004", "00000005", "00000006", "00000009"]);
+  assert.equal(idx.entries["00000009"].added, T(20));
+  assert.ok(!exists(dir, "00000001") && !exists(dir, "00000002") && exists(dir, "00000003"));
+});
+
+test("pruning: production entries, built-in hashes and entries production has seen are never pruned", async () => {
+  const spec = { "00000001": { server: "staging", added: T(1) }, "00000002": { server: "staging", added: T(2) }, "00000003": { server: "staging", added: T(3) }, "00000004": { server: "production", added: T(0) }, "00000005": { server: "staging", added: T(4) }, "00000006": { server: "staging", added: T(5) }, "00000007": { server: "staging", added: T(6) }, "00000008": { server: "staging", added: T(7) } };
+  const dir = catalogWith(spec);
+  const idx = readIndex(dir);
+  idx.entries["00000002"].seenOn = [{ server: "production", version: "v1.35.0", checked: T(8), gate: "x: failed", commit: "b".repeat(40) }];
+  fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify(idx));
+  const builtin = (h) => h === "00000003";
+  const r = await pub({ port: fakePort(), hash: "00000009", adapterFile: stagingFile("00000009"), catalogDir: dir, now: new Date(T(20)), isBuiltin: builtin });
+  assert.equal(r.ok, true);
+  // staging, newest first: 9, 8, 7, 6, 5 kept; below: 3 (built-in), 2 (production seenOn), 1 (plain) -> only 1 goes
+  assert.deepEqual(r.deleted, ["catalog/adapters/00000001.json"]);
+  assert.ok(exists(dir, "00000002") && exists(dir, "00000003") && exists(dir, "00000004"));
+});
+
+test("pruning: the entry being published is never pruned, even with an old or missing date; ties break by hash", async () => {
+  const spec = {};
+  for (let i = 1; i <= 5; i++) spec[`0000000${i}`] = { server: "staging", added: T(5) }; // five tied
+  const dir = catalogWith(spec);
+  // 00000000 sorts below every tie: published, it must stay and the lowest tied hash goes.
+  const r = await pub({ port: fakePort(), hash: "00000000", adapterFile: stagingFile("00000000"), catalogDir: dir, now: new Date(T(1)) });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.deleted, ["catalog/adapters/00000001.json"]);
+  assert.ok(exists(dir, "00000000"));
+});
+
+test("pruning: staging placeholders are dropped once a newer staging entry is ok; production placeholders stay", async () => {
+  const dir = catalogWith({ "00000001": { server: "staging", added: T(1) } });
+  const idx = readIndex(dir);
+  idx.entries["00000002"] = { status: "needs-attention", server: "staging", version: "master@abc1234", gate: "x", issue: 3, commit: "b".repeat(40) };
+  idx.entries["00000003"] = { status: "needs-attention", server: "production", version: "v1.35.0", gate: "x", issue: 4, commit: "b".repeat(40) };
+  fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify(idx));
+  const port = fakePort();
+  const r = await pub({ port, hash: "00000009", adapterFile: stagingFile("00000009"), catalogDir: dir });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.deleted ?? [], []);
+  const after = readIndex(dir).entries;
+  assert.equal(after["00000002"], undefined);
+  assert.equal(after["00000003"].status, "needs-attention");
+  assert.equal(after["00000001"].status, "ok");
+});
+
+test("pruning only follows a STAGING pass: production passes, placeholders and seenOn never delete", async () => {
+  const spec = {};
+  for (let i = 1; i <= 7; i++) spec[`0000000${i}`] = { server: "staging", added: T(i) };
+  const dir = catalogWith(spec);
+  const prod = { ...adapter("00000009"), server: "production" };
+  const a = await pub({ port: fakePort(), hash: "00000009", adapterFile: prod, catalogDir: dir });
+  assert.equal(a.ok, true);
+  assert.deepEqual(a.deleted ?? [], []);
+  const b = await pub({ port: fakePort(), hash: "0000000a", catalogDir: dir, placeholder: { server: "staging", version: "master@abc1234", gate: "x", commit: "b".repeat(40) } });
+  assert.deepEqual(b.deleted ?? [], []);
+  assert.equal(Object.keys(readIndex(dir).entries).length, 9);
+});
+
+test("pruning: a failed merge puts the deleted adapter files back", async () => {
+  const spec = {};
+  for (let i = 1; i <= 6; i++) spec[`0000000${i}`] = { server: "staging", added: T(i) };
+  const dir = catalogWith(spec);
+  const before = readAdapterBytes(dir, "00000001");
+  const idxBefore = fs.readFileSync(path.join(dir, "index.json"), "utf8");
+  const r = await pub({ port: fakePort({ mergeFails: 1 }), hash: "00000009", adapterFile: stagingFile("00000009"), catalogDir: dir });
+  assert.equal(r.ok, false);
+  assert.equal(r.stage, "merge");
+  assert.ok(readAdapterBytes(dir, "00000001").equals(before));
+  assert.equal(fs.readFileSync(path.join(dir, "index.json"), "utf8"), idxBefore);
+  assert.ok(!exists(dir, "00000009"));
+});
+
+test("assertCatalogDeletes: only catalog/adapters/<hash>.json; the index and everything else is refused", () => {
+  assertCatalogDeletes(["catalog/adapters/00000001.json"]);
+  for (const p of ["catalog/index.json", "catalog/adapters/", "catalog/adapters/x.json", "catalog/adapters/00000001.txt", "catalog/adapters/../index.json", "src/x.mjs", "/catalog/adapters/00000001.json", "catalog/adapters/sub/00000001.json"]) {
+    assert.throws(() => assertCatalogDeletes([p]), undefined, p);
+  }
+  assert.throws(() => assertCatalogDeletes(["catalog/adapters/00000001.json", "package.json"]));
+});
+
+test("REST commit: deletes become tree entries with a null sha in the same tree; illegal deletes never reach the API", async () => {
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push({ url, method: init.method, body: init.body ? JSON.parse(init.body) : null });
+    const route = url.replace("https://api.github.com/repos/campey/workadventurer", "");
+    const data = route.startsWith("/git/commits/") ? { tree: { sha: "t0" } } : route === "/git/trees" ? { sha: "t1" } : route === "/git/commits" ? { sha: "c1" } : {};
+    return { ok: true, status: 200, json: async () => data };
+  };
+  const port = createGithubPort({ repo: "campey/workadventurer", token: "tok", fetch });
+  const parent = "a".repeat(40);
+  await port.commit({ branch: "adapter/x1", message: "m", files: [{ path: "catalog/index.json", content: "{}" }], deletes: ["catalog/adapters/00000001.json"], parent });
+  const tree = calls.find((c) => c.url.endsWith("/git/trees")).body.tree;
+  assert.deepEqual(tree, [
+    { path: "catalog/index.json", mode: "100644", type: "blob", content: "{}" },
+    { path: "catalog/adapters/00000001.json", mode: "100644", type: "blob", sha: null },
+  ]);
+  const n = calls.length;
+  await assert.rejects(port.commit({ branch: "adapter/x1", message: "m", files: [], deletes: ["catalog/index.json"], parent }));
+  await assert.rejects(port.commit({ branch: "adapter/x1", message: "m", files: [{ path: "catalog/adapters/00000001.json", content: "" }], deletes: ["catalog/adapters/00000001.json"], parent }));
+  assert.equal(calls.length, n);
 });

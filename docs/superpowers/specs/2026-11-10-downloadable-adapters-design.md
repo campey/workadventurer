@@ -1,7 +1,42 @@
 # Downloadable adapters: design (#126, with #127 and #128's catalog side)
 
-Status: for approval. Epic #124. Builds on `2026-10-10-probes-fakes-scenarios-design.md` (the scenario suite that
+Status: approved and built (CLI side, #126/#127, and the Android side, #188). Epic #124. Builds on `2026-10-10-probes-fakes-scenarios-design.md` (the scenario suite that
 gates new versions) and `2026-09-10-wa-version-adapters-design.md` (today's per-version adapters).
+
+### Where the build deviated
+
+The sections below are the design as approved. What was built differs in these ways (details in
+`docs/field-notes.md` "When the watcher says needs attention" and `android/docs/field-notes.md` "How the app recovers"):
+
+- **A needs-attention placeholder's `commit` is a code fingerprint**, not a commit SHA: a hash of the client code the gate
+  tests (`bin`, `src`, `scripts`, `world-port`, `android`, `proto`, `package.json`...), so a docs-only push does not retest
+  and a code change does.
+- **The workflow is two jobs, `gate` and `publish`.** `gate` runs third-party code with read-only permissions and no
+  secret and only uploads a verdict; `publish` holds the write token, runs no gate code, and re-reads the servers and
+  rebuilds the candidate itself before trusting the verdict.
+- **The publishing PR is merged with a merge commit**, not squashed (the repo disallows squash merges; found on the first
+  real run).
+- **`decide` is server-aware, and `seenOn` records a hash on both servers.** A hash published from one server's gate and
+  later announced by the other is gated once on that server too (production includes the live scenarios); the outcome goes
+  on the index entry as `seenOn`, never on the adapter file, and a failed `seenOn` opens an issue without demoting the entry.
+- **A staging candidate takes production's behaviour numbers** (newest `ok` production entry, else staging, else
+  wa-master; `protoFamily` stays `wa-master`), because the staging gate runs no scenarios and staging numbers were
+  never validated (`dcadccc6`, corrected by hand 2026-11-27; see `docs/field-notes.md`).
+- **`ADAPTER_WATCH_ENABLED`**: scheduled and dispatch runs only happen once this repository variable is `true`; manual runs
+  always work.
+- **Android applies any `ok` entry's hash, and the handshake query only.** It does not take the entry's other behaviours.
+- **Per-entry `added`** (when the adapter was first listed `ok`) is in the index, used by Android's consent dialog and by
+  staging pruning.
+- **Android UI**: Settings (ask / auto / never) on the Join screen, and a dialog showing the server version, the server
+  hash, the adapter file URL and "Adapter added" (or "Catalog updated" for an entry without `added`).
+- **`selfcheck` runs the catalog pre-flight**, as `wa join` does.
+- **A cached adapter for the server's hash is used without asking** again.
+- **The daemon under `--keep-alive`** with a mode other than `auto` only logs the refusal and how to allow it; `wa join`
+  does the asking.
+- **Failing `seenOn` records carry `checked` and the code-fingerprint `commit`**, so they retest like a placeholder.
+- **`WA_CATALOG_URL`** overrides the catalog index URL (the gate and tests use it).
+- **Staging pruning**: the publishing PR also removes older staging entries (keeping the newest five, and never a built-in,
+  production or just-announced hash).
 
 ## Why
 
@@ -74,7 +109,8 @@ behaves as it does today.
 
 ### 1. The catalog (`catalog/`)
 
-- `catalog/index.json`: `{ "schema": 1, "updated": "<ISO time>", "entries": { "<apiVersionHash>": { "status": "ok" | "needs-attention", "server": "production" | "staging", "version": "1.34.4" or "master@10b19f83", "file": "adapters/<hash>.json", "sha256": "<of the file>", "gate": {...}, "issue": <number|null> } } }`
+- `catalog/index.json`: `{ "schema": 1, "updated": "<ISO time>", "entries": { "<apiVersionHash>": { "status": "ok" | "needs-attention", "server": "production" | "staging", "version": "1.34.4" or "master@10b19f83", "file": "adapters/<hash>.json", "sha256": "<of the file>", "gate": <capped string, null for ok entries>, "issue": <number|null>, "added": "<ISO instant, optional>", "seenOn": [ { "server", "version", "checked": "<ISO>", "gate": "passed" | "<failing step>", "commit": "<code fingerprint, failing records only>" } ] (optional) } } }`
+  `added`: when the adapter was first listed `ok` (set once by `rebuildIndex`; clients keep it only when it parses as an instant). `seenOn`: outcomes of gating an `ok` hash on the OTHER server, recorded in the index only (the adapter file never changes); clients ignore it. See `docs/field-notes.md` "When the watcher says needs attention".
 - `catalog/adapters/<hash>.json`: the adapter data, shaped like today's `wa-1.34` adapter minus code and proto path:
   `{ "schema": 1, "id", "waVersion", "apiVersionHash": "<one hash, equal to its index key>", "protoFamily": "wa-1.34", "meeting": {...}, "movement": {...}, "handshake": { "query": { "<name>": "<value>" } } }`
   (`handshake` is optional).
@@ -97,7 +133,7 @@ behaves as it does today.
 - URL: `https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json` (my call; a client setting
   `WA_CATALOG_URL` / an app setting overrides it, which the gate and tests use).
 - Seeded with the hashes we already know and have verified (production v1.34.0, .1, .2, .4; staging `d2d82672`; v1.34.3 is left out because it was never seen live). Staging is already past its seed entry: the watcher's first run produces the current one.
-- **Staging entries should be pruned (NOT implemented yet, follow-up)**: the catalog keeps the newest five staging entries, because staging produces a new hash every few days and old ones are never asked for again. Production entries are kept forever. Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
+- **Staging entries are pruned** by the publish step of a new staging adapter, in the same PR: the catalog keeps the newest five `ok` staging entries (by `added`), because staging produces a new hash every few days and old ones are never asked for again. Production entries are kept forever, and so are built-in hashes and any entry production has `seenOn` (rule and details in `docs/field-notes.md`). Built-in hashes always win over the catalog, and a test checks the seed agrees with the built-in hash lists and each `SOURCE` file.
 
 ### Handshake parameters
 
@@ -124,15 +160,14 @@ On the server's "new version" refusal (CLI: `isVersionRejection`; Android: the e
 join... please refresh"):
 
 1. Read the server's hash and release string from its home page. If that fails, behave as today (report the refusal).
-   Two pieces do not exist yet and are part of the work: the Node `probeVersion` only parses the release string (it
-   must also read the `wa-api-version` tag), and the Android app turns the error screen into a plain message and drops
-   its `code` (`PusherConnection.kt`), so it must keep a typed "new version" refusal. Reading the home page and the small
+   Two pieces were missing and are now built: the Node `probeVersion` also reads the `wa-api-version` tag, and the Android
+   app keeps a typed "new version" refusal instead of dropping the error screen's `code` (`PusherConnection.kt`). Reading the home page and the small
    index is not "downloading an adapter": consent covers fetching and applying the adapter file (my call).
 2. Fetch `index.json`. No entry for the hash: say "no adapter for this server version yet" and stop (no retry storm).
 3. Entry `needs-attention`: say "this server version isn't supported yet, it needs attention" and stop.
 4. Entry `ok`: if the user's saved choice is "auto", go on. Otherwise ask. CLI: a y / N / always prompt when attached to
    a terminal; in the daemon (no terminal) the refusal is reported with the exact command or flag to allow it. Android:
-   a dialog with Download and "Don't ask again". The connecting happens in the detached daemon, so `wa join` (which is
+   a dialog with Download and Cancel and an "Auto-download next time" checkbox (ticked + Download persists `auto`). The connecting happens in the detached daemon, so `wa join` (which is
    attached to the terminal) learns of the refusal from the daemon and does the prompt and the retry itself; under
    `--keep-alive` a bump mid-session with the choice "ask" exits with the existing refusal code rather than waiting, and
    with "auto" the daemon applies the adapter by itself (my call).
@@ -264,7 +299,7 @@ code. Decided: the adapter carries them, see "Handshake parameters".
 - The candidate builder script and the workflow, reusing `vendor-proto`, `proto-diff`, `selfcheck`, the scenario runner.
 - Documentation: field notes ("When prod bumps" becomes "When the watcher says needs attention").
 
-## Order of work (proposed)
+## Order of work (as planned)
 
 1. Catalog format, seeding, and the CLI recovery flow, with the fake pusher and a fake catalog.
 2. Android recovery flow.

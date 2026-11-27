@@ -4,7 +4,8 @@
 //               title ("Server v1.34.5 needs attention (adapter abcdef01)"); created or updated on a
 //               failure, closed with a comment by a later pass. Never a new issue per run.
 //   staging:    ONE open issue, "Staging needs attention", updated to name the newest failing hash,
-//               closed when a staging hash passes.
+//               closed when a staging hash passes. A seenOn failure (an ok hash failing its gate on the OTHER
+//               server) reports exactly like any other failure on that server.
 //
 // If several open issues match, the oldest is updated and the extras are reported (never closed
 // or duplicated). Titles and bodies are built only from validated values: the hash (HASH_RE), the
@@ -13,11 +14,12 @@
 // Nothing here throws: results are { ok, stage, ... } with stage in validate | find | create | update | close | unexpected.
 //
 // Adoption: an existing issue is only updated or closed if its body carries the hidden marker
-// `<!-- adapter-watch:<hash|staging> -->` the watcher wrote (chosen over checking the author because
-// the Actions token is an installation token and cannot call GET /user). Anyone can file an issue with
-// the label or a lookalike title, but cannot make the watcher edit or close theirs.
-// Production lookup falls back to an unlabelled open search (title `Server ... (adapter <hash>)` plus
-// the marker) so a removed label does not make the next run open a duplicate.
+// `<!-- adapter-watch:<hash|staging> -->` the watcher wrote AND it either carries the `adapter-watch` label
+// (only people with triage rights can add it) or was authored by the Actions bot (BOT_LOGIN). The marker alone
+// is not enough: anyone can paste it into a lookalike issue, and the watcher must never edit or close that.
+// Both targets fall back to an unlabelled open search (production: title `Server ... (adapter <hash>)`;
+// staging: title "Staging needs attention"; plus the marker and the author/label rule) so a removed label does
+// not make the next run open a duplicate.
 // Mentions: `@` never appears outside a code span except in the display form master@<hex>, and even
 // that is rendered in a code span; any other `@` is rewritten to "(at)".
 
@@ -28,6 +30,8 @@ export const LABEL = "adapter-watch";
 export const STAGING_TITLE = "Staging needs attention";
 const VERSION_RE = /^[\w.@-]{1,40}$/;
 const SERVERS = ["production", "staging"];
+/** The login the Actions token's issues carry (GET /issues returns user.login). */
+export const BOT_LOGIN = "github-actions[bot]";
 
 const msg = (e) => String(e?.message ?? e).slice(0, 300);
 const fail = (stage, error, extra = {}) => ({ ok: false, stage, error, ...extra });
@@ -92,12 +96,14 @@ function failureBody({ server, hash, version, runUrl, gate, candidate }) {
 /** Open issues this watcher owns for the target, oldest first: { matches, truncated }. */
 async function findOwned(port, server, hash) {
   const marker = markerFor(server, hash);
-  const mine = (i) => typeof i.body === "string" && i.body.includes(marker);
+  // Marker AND (the label OR the bot as author), checked on the issue itself (search provenance is not trusted).
+  const mine = () => (i) => typeof i.body === "string" && i.body.includes(marker)
+    && ((Array.isArray(i.labels) && i.labels.includes(LABEL)) || i.author === BOT_LOGIN);
   const shape = server === "staging" ? (t) => t === STAGING_TITLE : titleOk(hash);
-  const pick = (r) => ({ matches: r.issues.filter((i) => shape(i.title) && mine(i)).sort((a, b) => a.number - b.number), truncated: !!r.truncated });
-  let r = pick(await port.findIssues({ label: LABEL, state: "open" }));
-  if (r.matches.length === 0 && server === "production") {
-    const wide = pick(await port.findIssues({ state: "open" }));
+  const pick = (r, labelled) => ({ matches: r.issues.filter((i) => shape(i.title) && mine(labelled)(i)).sort((a, b) => a.number - b.number), truncated: !!r.truncated });
+  let r = pick(await port.findIssues({ label: LABEL, state: "open" }), true);
+  if (r.matches.length === 0) {
+    const wide = pick(await port.findIssues({ state: "open" }), false);
     r = { matches: wide.matches, truncated: r.truncated || wide.truncated };
   }
   return r;

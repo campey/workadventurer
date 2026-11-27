@@ -94,6 +94,8 @@ sealed interface InviteStatus {
 data class SessionState(
     val connection: Connection = Connection.Disconnected,
     val roomName: String = "",
+    /** Which call this is: every [Command.Join] makes it a new number, a consent answer or a reconnect never does; 0 when no call (Leave). */
+    val callId: Int = 0,
     val players: List<Player> = emptyList(), // sorted by name, case-insensitive
     val areas: List<Area> = emptyList(),
     val inAreas: List<Area> = emptyList(),
@@ -179,6 +181,7 @@ class WaSession(
 
     private val lock = Any()
     private var generation = 0
+    private var joinCount = 0 // the next call id; only a Join moves it
     private var job: Job? = null
     private var conn: PusherConnection? = null
     private var moveJob: Job? = null
@@ -199,7 +202,7 @@ class WaSession(
                 is Command.Join -> {
                     val gen = restart()
                     // Set synchronously so observers never see the previous room's (or a stale Failed) state first.
-                    _state.value = SessionState(connection = Connection.Connecting, roomName = cmd.config.roomUrl, myName = cmd.config.name, muted = !cmd.config.micOn, myStatus = myStatus)
+                    _state.value = SessionState(connection = Connection.Connecting, roomName = cmd.config.roomUrl, myName = cmd.config.name, muted = !cmd.config.micOn, myStatus = myStatus, callId = ++joinCount)
                     job = scope.launch { run(cmd.config, gen) }
                 }
                 Command.Leave -> {
@@ -397,7 +400,8 @@ class WaSession(
     }
 
     private sealed interface Recovered {
-        data class Retry(val cfg: RoomConfig) : Recovered
+        /** [cachedHash] is set when [cfg] was built from a cached adapter file: if the server refuses it too, that file is dropped. */
+        data class Retry(val cfg: RoomConfig, val cachedHash: String? = null) : Recovered
         data class Fail(val message: String) : Recovered
         data object Superseded : Recovered
     }
@@ -422,7 +426,12 @@ class WaSession(
             else -> null
         }
         // A Known that changes nothing (a built-in hash the server refused anyway) would only repeat the refusal.
-        if (next != null && next != cfg) return Recovered.Retry(next)
+        if (next != null && next != cfg) return Recovered.Retry(next, (outcome as? RecoverOutcome.Known)?.takeIf { it.fromCache }?.hash)
+        // A cached file the server refuses (even though it changes nothing) is bad: drop it so the next join asks the catalog.
+        if (outcome is RecoverOutcome.Known && outcome.fromCache) {
+            log("cached adapter ${outcome.hash} refused by the server, dropping it")
+            try { port.forget(outcome.hash) } catch (e: CancellationException) { throw e } catch (e: Exception) { log("forget failed: ${e.javaClass.simpleName}") }
+        }
         return Recovered.Fail(recoveryFailureMessage(outcome, original))
     }
 
@@ -434,6 +443,7 @@ class WaSession(
         // config is shown (the original message), never retried through recovery again.
         var recoveryTried = false
         var firstRefusal: String? = null
+        var cachedHash: String? = null // set while the retry runs on a cached adapter file
         while (true) {
             val c = factory(cfg.copy(availabilityStatus = myStatus))
             if (!adopt(gen, c)) { c.close(); return }
@@ -443,7 +453,7 @@ class WaSession(
             try {
                 c.connect()
                 everConnected = true
-                recoveryTried = false; firstRefusal = null
+                recoveryTried = false; firstRefusal = null; cachedHash = null
                 upAt = nowMs()
                 setState(gen) { it.copy(connection = Connection.Connected, areas = c.state.areas) }
                 voice = try { voiceHost(c) } catch (e: Exception) { null } // voice must never take presence down with it
@@ -464,6 +474,8 @@ class WaSession(
                     refusal = e // handled below, once this connection is closed
                 } else {
                     // Refused again with the adapted config: show the original refusal, never loop (also after an earlier success).
+                    // A cached file that the server refuses is bad (or stale): drop it so the next join asks the catalog again.
+                    cachedHash?.let { h -> log("cached adapter $h refused by the server, dropping it"); recovery?.forget(h) }
                     setState(gen) { it.copy(connection = Connection.Failed(firstRefusal ?: e.message ?: "join failed")) }
                     return
                 }
@@ -490,7 +502,7 @@ class WaSession(
                 val original = r.message ?: "join failed"
                 firstRefusal = original
                 when (val rec = recoverFor(cfg, original, gen)) {
-                    is Recovered.Retry -> { cfg = rec.cfg; continue }
+                    is Recovered.Retry -> { cfg = rec.cfg; cachedHash = rec.cachedHash; continue }
                     Recovered.Superseded -> return
                     is Recovered.Fail -> {
                         setState(gen) { it.copy(connection = Connection.Failed(rec.message)) }

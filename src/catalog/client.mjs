@@ -5,7 +5,7 @@
 // Nothing throws; every failure is { ok: false, reason }.
 
 import { createHash } from "node:crypto";
-import { HASH_RE, validateAdapterFile } from "./schema.mjs";
+import { HASH_RE, isInstant, validateAdapterFile } from "./schema.mjs";
 
 export const DEFAULT_CATALOG_URL = "https://raw.githubusercontent.com/campey/workadventurer/main/catalog/index.json";
 export const MAX_INDEX_BYTES = 1024 * 1024;
@@ -21,6 +21,18 @@ export function catalogUrl(env = process.env) {
   return env.WA_CATALOG_URL || DEFAULT_CATALOG_URL;
 }
 
+// "to <host>" for a 3xx's Location, so a repo rename is diagnosable. The host only (never the
+// path or query: it is untrusted and could carry anything), and nothing at all if it won't parse.
+// Never followed.
+function redirectHost(res, base) {
+  try {
+    const loc = res.headers.get("location");
+    return loc ? ` to ${new URL(loc, base).host}` : "";
+  } catch {
+    return "";
+  }
+}
+
 /**
  * GET a URL and read at most maxBytes of the body, as raw bytes. The one timeout
  * covers the headers and the body read. Redirects are refused, a Content-Length over
@@ -31,8 +43,8 @@ async function getCapped(url, { fetch: doFetch = globalThis.fetch, timeoutMs = D
   const signal = AbortSignal.timeout(timeoutMs);
   try {
     const res = await doFetch(url, { signal, redirect: "manual" });
-    if (res.status >= 300 && res.status < 400) return bad(`unexpected redirect (HTTP ${res.status})`);
-    if (res.type === "opaqueredirect") return bad("unexpected redirect");
+    if (res.status >= 300 && res.status < 400) return bad(`the catalog moved (HTTP ${res.status}${redirectHost(res, url)})`);
+    if (res.type === "opaqueredirect") return bad("the catalog moved");
     if (!res.ok) return bad(`HTTP ${res.status}`);
     if (res.url && new URL(res.url).origin !== new URL(url).origin) return bad("response came from a different origin");
     const declared = Number(res.headers.get("content-length"));
@@ -76,9 +88,13 @@ export async function fetchIndex({ url = catalogUrl(), fetch, timeoutMs } = {}) 
   // Keep only entries we could trust. "ok" needs a file path and a real sha256;
   // "needs-attention" is a placeholder with no usable file (any file/sha256 it carries
   // is stripped, so it can never be fetched as an adapter); other statuses are dropped.
+  // `added` (when the adapter was listed) is kept only as an ISO instant; `seenOn` is the watcher's own bookkeeping
+  // and no client reads it, so it is dropped here.
   const entries = {};
-  for (const [hash, e] of Object.entries(raw.entries)) {
-    if (!HASH_RE.test(hash) || !isObj(e)) continue;
+  for (const [hash, e0] of Object.entries(raw.entries)) {
+    if (!HASH_RE.test(hash) || !isObj(e0)) continue;
+    const { added, seenOn, ...e1 } = e0;
+    const e = isInstant(added) ? { ...e1, added } : e1;
     if (e.status === "needs-attention") {
       const { file, sha256, ...rest } = e;
       entries[hash] = rest;

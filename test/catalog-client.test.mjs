@@ -133,7 +133,24 @@ test("index: a redirect is not followed", async () => {
   handlers.set("/redir", (req, res) => { res.writeHead(302, { location: "/ok/index.json" }); res.end(); });
   const r = await fetchIndex({ url: `${base}/redir` });
   assert.equal(r.ok, false);
-  assert.match(r.reason, /redirect/i);
+  assert.match(r.reason, /catalog moved \(HTTP 302 to 127\.0\.0\.1:\d+\)/);
+});
+
+test("index: a cross-host 301 (a repo rename) names the new host only, never the path or query, and is not followed", async () => {
+  handlers.set("/renamed", (req, res) => { res.writeHead(301, { location: "https://raw.githubusercontent.com/new-owner/repo/main/catalog/index.json?token=s3cret" }); res.end(); });
+  const r = await fetchIndex({ url: `${base}/renamed` });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "index: the catalog moved (HTTP 301 to raw.githubusercontent.com)");
+});
+
+test("index: a 3xx with no usable Location still fails, without a host", async () => {
+  handlers.set("/redir-none", (req, res) => { res.writeHead(307); res.end(); });
+  handlers.set("/redir-junk", (req, res) => { res.writeHead(308, { location: "http://[bad" }); res.end(); });
+  for (const p of ["/redir-none", "/redir-junk"]) {
+    const r = await fetchIndex({ url: `${base}${p}` });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /^index: the catalog moved \(HTTP 30[78]\)$/);
+  }
 });
 
 test("adapter file: sha256 differing from the index fails", async () => {
@@ -203,7 +220,7 @@ test("adapter file: a same-origin redirect is still not followed", async () => {
   handlers.set(`/r2/adapters/${HASH}.json`, (req, res) => { res.writeHead(302, { location: `/ok/adapters/${HASH}.json` }); res.end(); });
   const r = await fetchAdapterFile({ indexUrl: `${base}/r2/index.json`, hash: HASH, entry: entryFor(text), builtins });
   assert.equal(r.ok, false);
-  assert.match(r.reason, /redirect/i);
+  assert.match(r.reason, /the catalog moved \(HTTP 302 to 127\.0\.0\.1:\d+\)/);
 });
 
 test("adapter file: an entry with a malformed sha256 is refused", async () => {

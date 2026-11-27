@@ -40,7 +40,7 @@ function fakeGithub() {
   g.findOpenPr = async () => null;
   g.openPr = async ({ branch, title }) => { g.writes.push("openPr"); g.prs.push({ number: g.prs.length + 1, branch, title }); return { number: g.prs.length }; };
   g.merge = async (num) => { g.writes.push("merge"); g.main = String(++n).padStart(40, "d"); g.tree.find((e) => e.path === "catalog").sha = `c${n}`; return { merged: true }; };
-  g.findIssues = async ({ label, state }) => ({ issues: g.issues.filter((i) => (state === "all" || i.state === state) && (!label || i.labels.includes(label))).map((i) => ({ ...i })), truncated: false });
+  g.findIssues = async ({ label, state }) => ({ issues: g.issues.filter((i) => (state === "all" || i.state === state) && (!label || i.labels.includes(label))).map((i) => ({ author: "github-actions[bot]", ...i })), truncated: false });
   g.createIssue = async ({ title, body, labels }) => { g.writes.push("createIssue"); const i = { number: 100 + g.issues.length, title, body, labels, state: "open" }; g.issues.push(i); return { number: i.number, labels }; };
   g.addLabels = async (num) => ({ labels: ["adapter-watch"] });
   g.updateIssue = async (num, { title, body }) => { g.writes.push("updateIssue"); Object.assign(g.issues.find((i) => i.number === num), { title, body }); return { number: num }; };
@@ -56,12 +56,16 @@ function setup({ pages, gateResults = {}, catalogDir = tmpCatalog(), github = fa
     codeFingerprint: () => github.codeFingerprint(),
     loadIndex: () => readIndex(catalogDir),
     readServer: async (t) => (pages[t] === undefined ? null : pages[t]),
-    vendorProto: async (server, release) => ({ apiVersionHash: vendorHash?.[server] ?? pages[server].hash, protoBuf: Buffer.from("syntax = 'proto3';") }),
-    buildCandidate: (a) => buildCandidate({ ...a, fetchBase: async () => ({ ok: true, file: baseFile }) }),
+    vendorProto: async (server, release) => ({ apiVersionHash: vendorHash?.[server] ?? (await deps.readServer(server)).hash, protoBuf: Buffer.from("syntax = 'proto3';") }),
+    // a catalog adapter of the requested hash is read from the catalog dir (as the real fetch would); anything else is the seed
+    buildCandidate: (a) => buildCandidate({ ...a, fetchBase: async (h) => {
+      try { return { ok: true, file: JSON.parse(fs.readFileSync(path.join(catalogDir, "adapters", `${h}.json`), "utf8")) }; } catch { return { ok: true, file: baseFile }; }
+    } }),
     runGate: async (a) => {
-      gateCalls.push({ server: a.server, hash: a.file.apiVersionHash, hasProto: fs.existsSync(a.candidateProto) });
-      const failAt = gateResults[a.server];
-      const runners = Object.fromEntries(["proto-diff", "selfcheck", "scenarios", "kotlin-smoke"].map((s) => [s, async () => (s === failAt ? { ok: false, detail: `${s} broke` } : { ok: true })]));
+      gateCalls.push({ server: a.server, hash: a.file.apiVersionHash, fileServer: a.file.server, hasProto: fs.existsSync(a.candidateProto), ran: [] });
+      const call = gateCalls.at(-1);
+      const failAt = typeof gateResults[a.server] === "function" ? gateResults[a.server]() : gateResults[a.server];
+      const runners = Object.fromEntries(["proto-diff", "selfcheck", "scenarios", "kotlin-smoke"].map((s) => [s, async () => { call.ran.push(s); return s === failAt ? { ok: false, detail: `${s} broke` } : { ok: true }; }]));
       return runGate({ ...a, runners });
     },
     publish: async (a) => publish({ checkoutCommit: await github.mainCommit(), sleep: async () => {}, ...a }),
@@ -682,4 +686,168 @@ test("main(): an error that contains the token is scrubbed even though the envir
     () => main(["--phase", "publish", "--verdict-dir", "x"], { GITHUB_TOKEN: "sekret", GITHUB_REPOSITORY: "a/b", GITHUB_REF: "refs/heads/sekret" }),
     (e) => /refs\/heads\/\*\*\*/.test(e.message) && !e.message.includes("sekret"),
   );
+});
+
+// ---------------------------------------------------------------------------
+// One hash on both servers (seenOn)
+// ---------------------------------------------------------------------------
+
+const BOTH = "33333333";
+const adapterBytes = (dir, h) => fs.readFileSync(path.join(dir, "adapters", `${h}.json`));
+const stagingPage = { hash: BOTH, release: "master@621f2bf2aaaaaaaa" };
+const prodPage = { hash: BOTH, release: "v1.35.0" };
+
+async function publishedOnStaging(opts = {}) {
+  const s = setup({ pages: { staging: stagingPage }, ...opts });
+  const r = await run(s, { targets: ["staging"] });
+  assert.equal(r.results[0].outcome, "pass");
+  assert.equal(readIndex(s.catalogDir).entries[BOTH].server, "staging");
+  s.gateCalls.length = 0;
+  s.github.writes.length = 0;
+  s.deps.readServer = async (t) => (t === "production" ? prodPage : stagingPage);
+  return s;
+}
+
+test("seenOn: an ok staging hash announced by production is gated there once (live scenarios), recorded in the index only, never again", async () => {
+  const s = await publishedOnStaging();
+  const bytes = adapterBytes(s.catalogDir, BOTH);
+  const r = await run(s, { targets: ["production"] });
+  assert.deepEqual(r.faults, []);
+  assert.equal(r.results[0].outcome, "pass");
+  assert.equal(s.gateCalls.length, 1);
+  assert.ok(s.gateCalls[0].ran.includes("scenarios"), "production includes the live scenarios");
+  assert.equal(s.gateCalls[0].fileServer, "staging", "the catalog's own file is what is gated");
+  assert.ok(adapterBytes(s.catalogDir, BOTH).equals(bytes), "adapter file byte-identical");
+  const e = readIndex(s.catalogDir).entries[BOTH];
+  assert.deepEqual([e.status, e.server, e.seenOn.length], ["ok", "staging", 1]);
+  assert.deepEqual([e.seenOn[0].server, e.seenOn[0].version, e.seenOn[0].gate], ["production", "v1.35.0", "passed"]);
+  assert.ok(!Number.isNaN(Date.parse(e.seenOn[0].checked)));
+  assert.equal(s.github.issues.length, 0);
+  // loop-free: many more runs (both targets) gate nothing and write nothing
+  s.gateCalls.length = 0;
+  s.github.writes.length = 0;
+  for (let i = 0; i < 4; i++) {
+    const again = await run(s);
+    assert.deepEqual(again.results.map((x) => x.outcome), ["skip", "skip"]);
+  }
+  assert.equal(s.gateCalls.length, 0);
+  assert.deepEqual(s.github.writes, []);
+});
+
+test("seenOn fail: production issue opened, adapter stays ok (no placeholder), loop-free until a retest trigger", async () => {
+  const s = await publishedOnStaging({ gateResults: { production: "scenarios" } });
+  const bytes = adapterBytes(s.catalogDir, BOTH);
+  const r = await run(s, { targets: ["production"] });
+  assert.deepEqual(r.faults, []);
+  assert.equal(r.results[0].outcome, "fail");
+  const issue = s.github.issues[0];
+  assert.equal(issue.title, `Server v1.35.0 needs attention (adapter ${BOTH})`);
+  assert.equal(issue.state, "open");
+  let e = readIndex(s.catalogDir).entries[BOTH];
+  assert.equal(e.status, "ok");
+  assert.equal(e.server, "staging");
+  assert.match(e.seenOn[0].gate, /^scenarios: scenarios broke/);
+  assert.equal(e.seenOn[0].commit, await s.github.codeFingerprint());
+  assert.ok(adapterBytes(s.catalogDir, BOTH).equals(bytes));
+  // the clients still see an ok adapter
+  assert.equal(e.file, `adapters/${BOTH}.json`);
+
+  // later runs (including the publish phase's stale-issue closer): no gate, no write, the issue stays open
+  s.gateCalls.length = 0;
+  s.github.writes.length = 0;
+  for (let i = 0; i < 4; i++) assert.equal((await run(s, { targets: ["production"] })).results[0].outcome, "skip");
+  assert.equal(s.gateCalls.length, 0);
+  assert.deepEqual(s.github.writes, []);
+  assert.equal(issue.state, "open");
+
+  // retest triggers: force, code fingerprint, version change
+  assert.equal((await run(s, { targets: ["production"], force: true })).results[0].outcome, "fail");
+  assert.equal(s.gateCalls.length, 1);
+  s.github.tree.find((x) => x.path === "src").sha = "s2";
+  assert.equal((await run(s, { targets: ["production"] })).results[0].outcome, "fail");
+  assert.equal(s.gateCalls.length, 2);
+  assert.equal((await run(s, { targets: ["production"] })).results[0].outcome, "skip");
+  s.deps.readServer = async () => ({ hash: BOTH, release: "v1.35.1" });
+  assert.equal((await run(s, { targets: ["production"] })).results[0].outcome, "fail");
+  assert.equal(s.gateCalls.length, 3);
+  assert.equal(s.github.issues.length, 1, "one issue, updated");
+  assert.match(s.github.issues[0].title, /Server v1\.35\.1 needs attention/);
+  assert.equal(readIndex(s.catalogDir).entries[BOTH].status, "ok");
+
+  // fixed: the retest passes, the issue closes, the record says passed, and it stays quiet
+  s.deps.runGate = async (a) => runGate({ ...a, runners: Object.fromEntries(["proto-diff", "selfcheck", "scenarios", "kotlin-smoke"].map((n) => [n, async () => ({ ok: true })])) });
+  assert.equal((await run(s, { targets: ["production"], force: true })).results[0].outcome, "pass");
+  assert.equal(s.github.issues[0].state, "closed");
+  e = readIndex(s.catalogDir).entries[BOTH];
+  assert.equal(e.seenOn.length, 1);
+  assert.equal(e.seenOn[0].gate, "passed");
+  s.gateCalls.length = 0;
+  assert.equal((await run(s, { targets: ["production"], force: true })).results[0].outcome, "skip");
+  assert.equal(s.gateCalls.length, 0);
+});
+
+test("seenOn: a staging server announcing an ok production hash is gated on staging once (no live scenarios)", async () => {
+  const s = setup({ pages: { production: { hash: BOTH, release: "v1.35.0" } } });
+  assert.equal((await run(s, { targets: ["production"] })).results[0].outcome, "pass");
+  s.deps.readServer = async () => ({ hash: BOTH, release: "master@621f2bf2aaaaaaaa" });
+  s.gateCalls.length = 0;
+  assert.equal((await run(s, { targets: ["staging"] })).results[0].outcome, "pass");
+  assert.equal(s.gateCalls.length, 1);
+  assert.ok(!s.gateCalls[0].ran.includes("scenarios"));
+  assert.equal(readIndex(s.catalogDir).entries[BOTH].seenOn[0].server, "staging");
+  assert.equal((await run(s, { targets: ["staging"] })).results[0].outcome, "skip");
+});
+
+test("seenOn: the dry run writes nothing", async () => {
+  const s = await publishedOnStaging();
+  const before = fs.readFileSync(path.join(s.catalogDir, "index.json"), "utf8");
+  const r = await run(s, { targets: ["production"], dryRun: true });
+  assert.equal(r.results[0].outcome, "pass");
+  assert.deepEqual(s.github.writes, []);
+  assert.equal(fs.readFileSync(path.join(s.catalogDir, "index.json"), "utf8"), before);
+});
+
+test("pruning through the whole run: the sixth staging adapter prunes the oldest in the same PR; an entry production has seen is kept beyond the newest five", async () => {
+  const s = setup({ pages: { staging: stagingPage } });
+  // six older staging adapters, the first one also run by production (it takes a slot among the newest five only by date)
+  const mk = (n) => `4000000${n}`;
+  for (let n = 1; n <= 6; n++) {
+    fs.writeFileSync(path.join(s.catalogDir, "adapters", `${mk(n)}.json`), JSON.stringify({ ...baseFile, apiVersionHash: mk(n), server: "staging", id: `wa-${mk(n)}`, waVersion: `master-${mk(n)}` }, null, 2) + "\n");
+  }
+  rebuildIndex(s.catalogDir, { now: new Date("2026-11-01T00:00:00Z") });
+  const idx = readIndex(s.catalogDir);
+  for (let n = 1; n <= 6; n++) idx.entries[mk(n)].added = `2026-11-0${n}T00:00:00.000Z`;
+  idx.entries[mk(1)].seenOn = [{ server: "production", version: "v1.35.0", checked: "2026-11-10T00:00:00.000Z", gate: "passed" }];
+  fs.writeFileSync(path.join(s.catalogDir, "index.json"), JSON.stringify(idx, null, 2) + "\n");
+  // "23c8eb8c" is a built-in production hash and stays whatever happens
+  const r = await run(s, { targets: ["staging"] });
+  assert.equal(r.results[0].outcome, "pass");
+  const after = readIndex(s.catalogDir).entries;
+  assert.ok(after[mk(1)], "production saw it: kept");
+  assert.equal(after[mk(2)], undefined, "oldest unprotected staging entry pruned");
+  assert.ok(after[mk(3)] && after[mk(4)] && after[mk(5)] && after[mk(6)] && after[BOTH]);
+  assert.ok(after["23c8eb8c"]);
+  assert.ok(!fs.existsSync(path.join(s.catalogDir, "adapters", `${mk(2)}.json`)));
+  assert.equal(s.github.writes.filter((w) => w === "commit").length, 1, "adapter, index and the deletion are one commit");
+});
+
+test("pruning keeps a hash a server announces this run even when its seenOn publish faulted", async () => {
+  const s = setup({ pages: { staging: stagingPage, production: { hash: "40000001", release: "v1.35.0" } } });
+  const mk = (n) => `4000000${n}`;
+  for (let n = 1; n <= 6; n++) {
+    fs.writeFileSync(path.join(s.catalogDir, "adapters", `${mk(n)}.json`), JSON.stringify({ ...baseFile, apiVersionHash: mk(n), server: "staging", id: `wa-${mk(n)}`, waVersion: `master-${mk(n)}` }, null, 2) + "\n");
+  }
+  rebuildIndex(s.catalogDir, { now: new Date("2026-11-01T00:00:00Z") });
+  const idx = readIndex(s.catalogDir);
+  for (let n = 1; n <= 6; n++) idx.entries[mk(n)].added = `2026-11-0${n}T00:00:00.000Z`;
+  fs.writeFileSync(path.join(s.catalogDir, "index.json"), JSON.stringify(idx, null, 2) + "\n");
+  const realPublish = s.deps.publish;
+  s.deps.publish = async (a) => (a.seenOn ? { ok: false, stage: "merge", error: "boom" } : realPublish(a));
+  const r = await run(s);
+  assert.match(r.faults[0], /^production: publish failed/);
+  assert.equal(r.results[1].outcome, "pass");
+  const after = readIndex(s.catalogDir).entries;
+  assert.ok(after[mk(1)], "announced by production: kept although it is the oldest");
+  assert.ok(fs.existsSync(path.join(s.catalogDir, "adapters", `${mk(1)}.json`)));
+  assert.equal(after[mk(2)], undefined, "the next oldest goes instead");
 });

@@ -39,6 +39,23 @@ class ConsentFormatTest {
         assertEquals(ConsentRowKind.MONO, r[3].kind)
     }
 
+    @Test fun theAdaptersAddedDateReplacesTheCatalogUpdatedRow() {
+        val r = consentRows(
+            AdapterOffer("deadbeef", "v1.2.3", "https://h/a.json", catalogUpdated = "2026-11-26T20:46:13Z", adapterAdded = "2026-11-13T12:40:05Z"),
+            utc, Locale.ENGLISH,
+        )
+        assertEquals(listOf("Server version", "Server hash", "Adapter added", "Adapter file"), r.map { it.label })
+        assertEquals("13 Nov 12:40", r[2].value)
+        assertEquals("Adapter added: 13 Nov 12:40", r[2].spoken)
+    }
+
+    @Test fun anUnparsableAddedFallsBackToTheCatalogDateThenUnknown() {
+        val bad = consentRows(AdapterOffer("deadbeef", null, catalogUpdated = "2026-11-21T14:05:09Z", adapterAdded = "soon"), utc, Locale.ENGLISH)
+        assertEquals("Catalog updated" to "21 Nov 14:05", bad[2].label to bad[2].value)
+        val none = consentRows(AdapterOffer("deadbeef", null, adapterAdded = "soon"), utc, Locale.ENGLISH)
+        assertEquals("Catalog updated" to "unknown", none[2].label to none[2].value)
+    }
+
     @Test fun missingPartsAreUnknownAndNoUrlRowWithoutOne() {
         val r = consentRows(AdapterOffer("deadbeef", null), utc, Locale.ENGLISH)
         assertEquals(listOf("unknown", "deadbeef", "unknown"), r.map { it.value })

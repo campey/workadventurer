@@ -6,7 +6,11 @@
   "server": "staging",
   "protoFamily": "wa-master",
   "meeting": {
-    "areaDwellMs": 1500,
-    "areaLingerMs": 2500
+    "areaDwellMs": 0,
+    "areaLingerMs": 0
+  },
+  "movement": {
+    "walkPxPerS": 180,
+    "runPxPerS": 460
   }
 }

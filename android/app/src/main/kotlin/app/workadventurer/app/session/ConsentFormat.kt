@@ -28,7 +28,7 @@ fun releaseDisplay(release: String?): String = release?.takeIf { PLAIN_RELEASE.m
 /** The server's API hash as shown: monospace, verbatim (it is already validated as a hex-like token). */
 fun hashDisplay(hash: String): String = hash
 
-/** The catalog's `updated` instant as local `dd MMM HH:mm`; null if absent or unparsable. */
+/** An ISO instant (the catalog's `updated`, an entry's `added`) as local `dd MMM HH:mm`; null if absent or unparsable. */
 fun formatCatalogUpdated(iso: String?, zone: ZoneId = ZoneId.systemDefault(), locale: Locale = Locale.getDefault()): String? {
     if (iso == null) return null
     return try {
@@ -50,7 +50,10 @@ fun shortUrl(url: String, max: Int = 60): String {
 fun consentRows(offer: AdapterOffer, zone: ZoneId = ZoneId.systemDefault(), locale: Locale = Locale.getDefault()): List<ConsentRow> = buildList {
     add(ConsentRow("Server version", releaseDisplay(offer.release)))
     add(ConsentRow("Server hash", hashDisplay(offer.hash), ConsentRowKind.MONO))
-    add(ConsentRow("Catalog updated", formatCatalogUpdated(offer.catalogUpdated, zone, locale) ?: UNKNOWN))
+    // The adapter's own date is the useful one; the catalog's index date is the fallback when the entry has none.
+    val added = formatCatalogUpdated(offer.adapterAdded, zone, locale)
+    if (added != null) add(ConsentRow("Adapter added", added))
+    else add(ConsentRow("Catalog updated", formatCatalogUpdated(offer.catalogUpdated, zone, locale) ?: UNKNOWN))
     offer.adapterUrl?.let { add(ConsentRow("Adapter file", it, ConsentRowKind.MONO, spoken = "Adapter file: ${shortUrl(it)}")) }
 }
 

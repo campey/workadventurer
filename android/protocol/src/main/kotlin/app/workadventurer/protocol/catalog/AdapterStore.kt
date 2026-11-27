@@ -12,6 +12,9 @@ interface AdapterStore {
 
     /** Persist the raw adapter text; may throw (the caller treats that as a failure). */
     fun save(hash: String, text: String)
+
+    /** Remove the adapter cached under [hash] (a missing one is fine). Never throws. */
+    fun delete(hash: String)
 }
 
 /** One `<hash>.json` per adapter in [dir]; writes are atomic (temp file in the same directory, then rename). */
@@ -27,6 +30,11 @@ class FileAdapterStore(private val dir: File) : AdapterStore {
         } catch (e: Exception) {
             null
         }
+    }
+
+    override fun delete(hash: String) {
+        if (!HASH_RE.matches(hash)) return
+        try { File(dir, "$hash.json").delete() } catch (e: Exception) { /* nothing more to do */ }
     }
 
     override fun save(hash: String, text: String) {

@@ -21,6 +21,9 @@ import okhttp3.OkHttpClient
  */
 fun interface AdapterRecovery {
     suspend fun recover(roomUrl: String, ask: suspend (AdapterOffer) -> AdapterAnswer): RecoverOutcome
+
+    /** The server refused the config built from the cached adapter for [hash]: drop that file so the next join consults the catalog. */
+    suspend fun forget(hash: String) {}
 }
 
 /** Where the "adapter updates" preference lives (SharedPreferences in the app, memory in tests). */
@@ -29,8 +32,8 @@ interface AdapterSettings {
 }
 
 /**
- * The production [AdapterRecovery]: reads the preference at call time, runs [recoverAdapter] off the caller's thread (the JSON parse,
- * meta scan and sha256 would otherwise run on the session's dispatcher) and remembers "Don't ask again" as `auto`.
+ * The production [AdapterRecovery]: reads the preference at call time, runs [recoverAdapter] on the caller's dispatcher (the library itself moves the JSON parse,
+ * meta scan and sha256 to Default and disk to IO; only the preference read hops to IO here) and remembers "Don't ask again" as `auto`.
  * [run] is [recoverAdapter] unless a test swaps it.
  */
 class CatalogAdapterRecovery(
@@ -38,7 +41,7 @@ class CatalogAdapterRecovery(
     private val store: AdapterStore,
     private val client: OkHttpClient,
     private val indexUrl: String = DEFAULT_CATALOG_URL,
-    private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val run: suspend (
         roomUrl: String, mode: AdapterUpdates, ask: suspend (AdapterOffer) -> AdapterAnswer, onAlways: () -> Unit,
     ) -> RecoverOutcome = { roomUrl, mode, ask, onAlways ->
@@ -49,9 +52,12 @@ class CatalogAdapterRecovery(
     },
 ) : AdapterRecovery {
     override suspend fun recover(roomUrl: String, ask: suspend (AdapterOffer) -> AdapterAnswer): RecoverOutcome =
-        withContext(dispatcher) {
-            run(roomUrl, settings.updates, ask, { settings.updates = AdapterUpdates.AUTO })
-        }
+        // Only the preference read (SharedPreferences, disk) goes to IO; the library moves its own CPU and IO work, and [ask] stays on the caller's dispatcher.
+        run(roomUrl, withContext(dispatcher) { settings.updates }, ask, { settings.updates = AdapterUpdates.AUTO })
+
+    override suspend fun forget(hash: String) {
+        withContext(Dispatchers.IO) { store.delete(hash) }
+    }
 
     companion object {
         val BUILTIN_HASHES: Set<String> = (Wa133.API_VERSION_HASHES + WaStaging.API_VERSION_HASH).toSet()
@@ -60,6 +66,8 @@ class CatalogAdapterRecovery(
 
 /** What the user reads when the server refused our version and recovery did not produce a retry. Never includes unsanitised catalog text. */
 fun recoveryFailureMessage(outcome: RecoverOutcome, original: String): String = when (outcome) {
+    is RecoverOutcome.VersionUnreadable ->
+        "This server doesn't publish its version, so the app can't check for an update."
     is RecoverOutcome.Unavailable ->
         "This server runs a newer version than this app supports, and the app couldn't check for updates right now. Try again later."
     is RecoverOutcome.NoEntry ->
@@ -75,5 +83,5 @@ fun recoveryFailureMessage(outcome: RecoverOutcome, original: String): String = 
     is RecoverOutcome.Known, is RecoverOutcome.Applied -> original
 }
 
-/** A Connecting that follows the consent question is the same join carrying on, not a new call: logs and traffic totals must not restart. */
-fun startsNewCall(previous: Connection?, now: Connection): Boolean = now == Connection.Connecting && previous !is Connection.NeedsConsent
+/** A Connecting starts a new call only when its call id is one this log has not seen: an answer to the consent question keeps the id, a Join changes it. */
+fun startsNewCall(seenCallId: Int, now: Connection, callId: Int): Boolean = now == Connection.Connecting && callId != seenCallId
